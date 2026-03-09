@@ -12,7 +12,7 @@ repository = "https://github.com/imazen/zentiff"
 [dependencies]
 tiff = { version = "0.11", default-features = false }
 thiserror = { version = "2.0", default-features = false }
-whereat = { version = "0.1", default-features = false }
+whereat = { version = "0.1.3", default-features = false }
 enough = { version = "0.4", default-features = false }
 zenpixels = { version = "0.1", path = "../zenpixels/zenpixels", default-features = false, features = ["buffer"] }
 zencodec-types = { version = "0.1", path = "../zencodec-types", optional = true }
