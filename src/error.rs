@@ -74,4 +74,5 @@ impl From<zenpixels::BufferError> for TiffError {
     }
 }
 
-pub type Result<T> = core::result::Result<T, TiffError>;
+/// Result type alias for zentiff operations with location tracking.
+pub type Result<T> = core::result::Result<T, whereat::At<TiffError>>;

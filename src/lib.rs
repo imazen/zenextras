@@ -16,7 +16,7 @@
 //!
 //! // Encode
 //! let encoded = encode(&output.pixels.as_slice(), &TiffEncodeConfig::default(), &Unstoppable)?;
-//! # Ok::<(), zentiff::TiffError>(())
+//! # Ok::<(), whereat::At<zentiff::TiffError>>(())
 //! ```
 //!
 //! # Supported formats
@@ -42,6 +42,9 @@
 extern crate alloc;
 extern crate std;
 
+// Crate info for whereat error tracing
+whereat::define_at_crate_info!();
+
 mod decode;
 mod encode;
 mod error;
@@ -51,4 +54,4 @@ pub use encode::{Compression, Predictor, TiffEncodeConfig, encode, encode_into};
 pub use error::TiffError;
 
 /// Result type alias for zentiff operations.
-pub type Result<T> = core::result::Result<T, TiffError>;
+pub type Result<T> = core::result::Result<T, whereat::At<TiffError>>;

@@ -2,6 +2,7 @@
 
 use alloc::vec::Vec;
 use enough::Stop;
+use whereat::{ResultAtExt, at};
 use zenpixels::{ChannelType, PixelBuffer, PixelDescriptor};
 
 use crate::error::{Result, TiffError};
@@ -79,21 +80,22 @@ impl TiffDecodeConfig {
         self
     }
 
+    #[track_caller]
     fn validate(&self, width: u32, height: u32, bytes_per_pixel: u32) -> Result<()> {
         if let Some(max_px) = self.max_pixels {
             let pixels = width as u64 * height as u64;
             if pixels > max_px {
-                return Err(TiffError::LimitExceeded(alloc::format!(
+                return Err(at!(TiffError::LimitExceeded(alloc::format!(
                     "pixel count {pixels} exceeds limit {max_px}"
-                )));
+                ))));
             }
         }
         if let Some(max_mem) = self.max_memory_bytes {
             let estimated = width as u64 * height as u64 * bytes_per_pixel as u64;
             if estimated > max_mem {
-                return Err(TiffError::LimitExceeded(alloc::format!(
+                return Err(at!(TiffError::LimitExceeded(alloc::format!(
                     "estimated memory {estimated} bytes exceeds limit {max_mem}"
-                )));
+                ))));
             }
         }
         Ok(())
@@ -110,11 +112,12 @@ impl Default for TiffDecodeConfig {
 }
 
 /// Probe TIFF metadata without decoding pixels.
+#[track_caller]
 pub fn probe(data: &[u8]) -> Result<TiffInfo> {
     let cursor = std::io::Cursor::new(data);
-    let mut decoder = tiff::decoder::Decoder::new(cursor)?;
-    let (width, height) = decoder.dimensions()?;
-    let color_type = decoder.colortype()?;
+    let mut decoder = tiff::decoder::Decoder::new(cursor).map_err(|e| at!(TiffError::from(e)))?;
+    let (width, height) = decoder.dimensions().map_err(|e| at!(TiffError::from(e)))?;
+    let color_type = decoder.colortype().map_err(|e| at!(TiffError::from(e)))?;
 
     Ok(TiffInfo {
         width,
@@ -147,30 +150,31 @@ pub fn probe(data: &[u8]) -> Result<TiffInfo> {
 ///
 /// The `cancel` signal is checked before the decode; pass `&Unstoppable` when
 /// cancellation is not needed.
+#[track_caller]
 pub fn decode(
     data: &[u8],
     config: &TiffDecodeConfig,
     cancel: &dyn Stop,
 ) -> Result<TiffDecodeOutput> {
-    cancel.check()?;
+    cancel.check().map_err(|e| at!(TiffError::from(e)))?;
 
     let cursor = std::io::Cursor::new(data);
-    let mut decoder = tiff::decoder::Decoder::new(cursor)?;
-    let (width, height) = decoder.dimensions()?;
-    let color_type = decoder.colortype()?;
+    let mut decoder = tiff::decoder::Decoder::new(cursor).map_err(|e| at!(TiffError::from(e)))?;
+    let (width, height) = decoder.dimensions().map_err(|e| at!(TiffError::from(e)))?;
+    let color_type = decoder.colortype().map_err(|e| at!(TiffError::from(e)))?;
 
     // Check limits before allocating
     let output_bpp = output_bytes_per_pixel(color_type);
     config.validate(width, height, output_bpp as u32)?;
 
-    cancel.check()?;
+    cancel.check().map_err(|e| at!(TiffError::from(e)))?;
 
-    let result = decoder.read_image()?;
+    let result = decoder.read_image().map_err(|e| at!(TiffError::from(e)))?;
 
-    cancel.check()?;
+    cancel.check().map_err(|e| at!(TiffError::from(e)))?;
 
     let (is_float, is_signed) = result_format_flags(&result);
-    let (pixels, _descriptor) = convert_to_pixel_buffer(width, height, color_type, result)?;
+    let (pixels, _descriptor) = convert_to_pixel_buffer(width, height, color_type, result).at()?;
 
     let info = TiffInfo {
         width,
@@ -273,6 +277,7 @@ fn descriptor_for(ct: tiff::ColorType, is_float: bool) -> PixelDescriptor {
 }
 
 /// Convert tiff DecodingResult into a PixelBuffer.
+#[track_caller]
 fn convert_to_pixel_buffer(
     width: u32,
     height: u32,
@@ -292,10 +297,11 @@ fn convert_to_pixel_buffer(
         tiff::ColorType::CMYKA(_) => {
             return convert_cmyk(width, height, color_type, result, true);
         }
-        _ => result_to_bytes(result, descriptor)?,
+        _ => result_to_bytes(result, descriptor).at()?,
     };
 
-    let buf = PixelBuffer::from_vec(raw_bytes, width, height, descriptor)?;
+    let buf = PixelBuffer::from_vec(raw_bytes, width, height, descriptor)
+        .map_err(|e| at!(TiffError::from(e)))?;
     Ok((buf, descriptor))
 }
 
@@ -312,6 +318,7 @@ fn vec_to_bytes<T: bytemuck::Pod>(v: Vec<T>) -> Vec<u8> {
 ///
 /// For integer types wider than the target, values are truncated/scaled down.
 /// For float types, values are converted to the target type.
+#[track_caller]
 fn result_to_bytes(
     result: tiff::decoder::DecodingResult,
     descriptor: PixelDescriptor,
@@ -394,9 +401,9 @@ fn result_to_bytes(
 
         // Catch-all
         (_other, _) => {
-            return Err(TiffError::Unsupported(alloc::format!(
+            return Err(at!(TiffError::Unsupported(alloc::format!(
                 "cannot convert TIFF sample type to {target_ct:?}"
-            )));
+            ))));
         }
     };
 
@@ -404,6 +411,7 @@ fn result_to_bytes(
 }
 
 /// Convert CMYK/CMYKA to RGBA.
+#[track_caller]
 fn convert_cmyk(
     width: u32,
     height: u32,
@@ -419,7 +427,9 @@ fn convert_cmyk(
             let pixel_count = data.len() / src_channels;
             let mut rgba = Vec::new();
             rgba.try_reserve(pixel_count * 4).map_err(|_| {
-                TiffError::LimitExceeded("CMYK conversion allocation failed".into())
+                at!(TiffError::LimitExceeded(
+                    "CMYK conversion allocation failed".into()
+                ))
             })?;
 
             for i in 0..pixel_count {
@@ -441,7 +451,8 @@ fn convert_cmyk(
             }
 
             let desc = PixelDescriptor::RGBA8;
-            let buf = PixelBuffer::from_vec(rgba, width, height, desc)?;
+            let buf = PixelBuffer::from_vec(rgba, width, height, desc)
+                .map_err(|e| at!(TiffError::from(e)))?;
             Ok((buf, desc))
         }
         DR::U16(data) => {
@@ -449,7 +460,9 @@ fn convert_cmyk(
             let pixel_count = data.len() / src_channels;
             let mut rgba: Vec<u16> = Vec::new();
             rgba.try_reserve(pixel_count * 4).map_err(|_| {
-                TiffError::LimitExceeded("CMYK conversion allocation failed".into())
+                at!(TiffError::LimitExceeded(
+                    "CMYK conversion allocation failed".into()
+                ))
             })?;
 
             let max = u16::MAX as f64;
@@ -472,7 +485,8 @@ fn convert_cmyk(
             }
 
             let desc = PixelDescriptor::RGBA16;
-            let buf = PixelBuffer::from_vec(vec_to_bytes(rgba), width, height, desc)?;
+            let buf = PixelBuffer::from_vec(vec_to_bytes(rgba), width, height, desc)
+                .map_err(|e| at!(TiffError::from(e)))?;
             Ok((buf, desc))
         }
         DR::F32(data) => {
@@ -480,7 +494,9 @@ fn convert_cmyk(
             let pixel_count = data.len() / src_channels;
             let mut rgba: Vec<f32> = Vec::new();
             rgba.try_reserve(pixel_count * 4).map_err(|_| {
-                TiffError::LimitExceeded("CMYK conversion allocation failed".into())
+                at!(TiffError::LimitExceeded(
+                    "CMYK conversion allocation failed".into()
+                ))
             })?;
 
             for i in 0..pixel_count {
@@ -502,12 +518,13 @@ fn convert_cmyk(
             }
 
             let desc = PixelDescriptor::RGBAF32;
-            let buf = PixelBuffer::from_vec(vec_to_bytes(rgba), width, height, desc)?;
+            let buf = PixelBuffer::from_vec(vec_to_bytes(rgba), width, height, desc)
+                .map_err(|e| at!(TiffError::from(e)))?;
             Ok((buf, desc))
         }
-        _ => Err(TiffError::Unsupported(
+        _ => Err(at!(TiffError::Unsupported(
             "unsupported sample type for CMYK conversion".into(),
-        )),
+        ))),
     }
 }
 

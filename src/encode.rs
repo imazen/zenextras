@@ -2,6 +2,7 @@
 
 use alloc::vec::Vec;
 use enough::Stop;
+use whereat::{ResultAtExt, at};
 use zenpixels::{ChannelLayout, ChannelType, PixelDescriptor, PixelSlice};
 
 use crate::error::{Result, TiffError};
@@ -22,23 +23,24 @@ pub enum Compression {
 }
 
 impl Compression {
+    #[track_caller]
     fn to_tiff(self) -> Result<tiff::encoder::Compression> {
         match self {
             Self::Uncompressed => Ok(tiff::encoder::Compression::Uncompressed),
             #[cfg(feature = "lzw")]
             Self::Lzw => Ok(tiff::encoder::Compression::Lzw),
             #[cfg(not(feature = "lzw"))]
-            Self::Lzw => Err(TiffError::Unsupported(
+            Self::Lzw => Err(at!(TiffError::Unsupported(
                 "LZW compression requires the `lzw` feature".into(),
-            )),
+            ))),
             #[cfg(feature = "deflate")]
             Self::Deflate => Ok(tiff::encoder::Compression::Deflate(
                 tiff::encoder::DeflateLevel::default(),
             )),
             #[cfg(not(feature = "deflate"))]
-            Self::Deflate => Err(TiffError::Unsupported(
+            Self::Deflate => Err(at!(TiffError::Unsupported(
                 "Deflate compression requires the `deflate` feature".into(),
-            )),
+            ))),
             Self::PackBits => Ok(tiff::encoder::Compression::Packbits),
         }
     }
@@ -124,12 +126,13 @@ impl Default for TiffEncodeConfig {
 ///
 /// The `cancel` signal is checked before encoding; pass `&Unstoppable` when
 /// cancellation is not needed.
+#[track_caller]
 pub fn encode(
     pixels: &PixelSlice<'_>,
     config: &TiffEncodeConfig,
     cancel: &dyn Stop,
 ) -> Result<Vec<u8>> {
-    cancel.check()?;
+    cancel.check().map_err(|e| at!(TiffError::from(e)))?;
 
     let desc = pixels.descriptor();
     let width = pixels.width();
@@ -142,31 +145,34 @@ pub fn encode(
     let mut buf = std::io::Cursor::new(Vec::new());
 
     if config.big_tiff {
-        let enc = tiff::encoder::TiffEncoder::new_big(&mut buf)?;
+        let enc =
+            tiff::encoder::TiffEncoder::new_big(&mut buf).map_err(|e| at!(TiffError::from(e)))?;
         let mut enc = enc.with_compression(compression).with_predictor(predictor);
-        write_image(&mut enc, width, height, &desc, &data)?;
+        write_image(&mut enc, width, height, &desc, &data).at()?;
     } else {
-        let enc = tiff::encoder::TiffEncoder::new(&mut buf)?;
+        let enc = tiff::encoder::TiffEncoder::new(&mut buf).map_err(|e| at!(TiffError::from(e)))?;
         let mut enc = enc.with_compression(compression).with_predictor(predictor);
-        write_image(&mut enc, width, height, &desc, &data)?;
+        write_image(&mut enc, width, height, &desc, &data).at()?;
     }
 
     Ok(buf.into_inner())
 }
 
 /// Encode a PixelSlice to TIFF, appending to the provided output buffer.
+#[track_caller]
 pub fn encode_into(
     pixels: &PixelSlice<'_>,
     config: &TiffEncodeConfig,
     cancel: &dyn Stop,
     output: &mut Vec<u8>,
 ) -> Result<()> {
-    let encoded = encode(pixels, config, cancel)?;
+    let encoded = encode(pixels, config, cancel).at()?;
     output.extend_from_slice(&encoded);
     Ok(())
 }
 
 /// Write the image using the appropriate tiff encoder colortype.
+#[track_caller]
 fn write_image<W: std::io::Write + std::io::Seek, K: tiff::encoder::TiffKind>(
     enc: &mut tiff::encoder::TiffEncoder<W, K>,
     width: u32,
@@ -182,64 +188,76 @@ fn write_image<W: std::io::Write + std::io::Seek, K: tiff::encoder::TiffKind>(
     match (layout, ct) {
         // Gray
         (ChannelLayout::Gray, ChannelType::U8) => {
-            enc.write_image::<colortype::Gray8>(width, height, data)?;
+            enc.write_image::<colortype::Gray8>(width, height, data)
+                .map_err(|e| at!(TiffError::from(e)))?;
         }
         (ChannelLayout::Gray, ChannelType::U16) => {
             let samples: &[u16] = bytemuck::cast_slice(data);
-            enc.write_image::<colortype::Gray16>(width, height, samples)?;
+            enc.write_image::<colortype::Gray16>(width, height, samples)
+                .map_err(|e| at!(TiffError::from(e)))?;
         }
         (ChannelLayout::Gray, ChannelType::F32) => {
             let samples: &[f32] = bytemuck::cast_slice(data);
-            enc.write_image::<colortype::Gray32Float>(width, height, samples)?;
+            enc.write_image::<colortype::Gray32Float>(width, height, samples)
+                .map_err(|e| at!(TiffError::from(e)))?;
         }
 
         // GrayAlpha — tiff crate doesn't have a GrayAlpha encoder colortype,
         // so we expand to RGBA.
         (ChannelLayout::GrayAlpha, ChannelType::U8) => {
             let rgba = expand_graya_to_rgba_u8(data);
-            enc.write_image::<colortype::RGBA8>(width, height, &rgba)?;
+            enc.write_image::<colortype::RGBA8>(width, height, &rgba)
+                .map_err(|e| at!(TiffError::from(e)))?;
         }
         (ChannelLayout::GrayAlpha, ChannelType::U16) => {
             let samples: &[u16] = bytemuck::cast_slice(data);
             let rgba = expand_graya_to_rgba_u16(samples);
-            enc.write_image::<colortype::RGBA16>(width, height, &rgba)?;
+            enc.write_image::<colortype::RGBA16>(width, height, &rgba)
+                .map_err(|e| at!(TiffError::from(e)))?;
         }
         (ChannelLayout::GrayAlpha, ChannelType::F32) => {
             let samples: &[f32] = bytemuck::cast_slice(data);
             let rgba = expand_graya_to_rgba_f32(samples);
-            enc.write_image::<colortype::RGBA32Float>(width, height, &rgba)?;
+            enc.write_image::<colortype::RGBA32Float>(width, height, &rgba)
+                .map_err(|e| at!(TiffError::from(e)))?;
         }
 
         // RGB
         (ChannelLayout::Rgb, ChannelType::U8) => {
-            enc.write_image::<colortype::RGB8>(width, height, data)?;
+            enc.write_image::<colortype::RGB8>(width, height, data)
+                .map_err(|e| at!(TiffError::from(e)))?;
         }
         (ChannelLayout::Rgb, ChannelType::U16) => {
             let samples: &[u16] = bytemuck::cast_slice(data);
-            enc.write_image::<colortype::RGB16>(width, height, samples)?;
+            enc.write_image::<colortype::RGB16>(width, height, samples)
+                .map_err(|e| at!(TiffError::from(e)))?;
         }
         (ChannelLayout::Rgb, ChannelType::F32) => {
             let samples: &[f32] = bytemuck::cast_slice(data);
-            enc.write_image::<colortype::RGB32Float>(width, height, samples)?;
+            enc.write_image::<colortype::RGB32Float>(width, height, samples)
+                .map_err(|e| at!(TiffError::from(e)))?;
         }
 
         // RGBA
         (ChannelLayout::Rgba, ChannelType::U8) => {
-            enc.write_image::<colortype::RGBA8>(width, height, data)?;
+            enc.write_image::<colortype::RGBA8>(width, height, data)
+                .map_err(|e| at!(TiffError::from(e)))?;
         }
         (ChannelLayout::Rgba, ChannelType::U16) => {
             let samples: &[u16] = bytemuck::cast_slice(data);
-            enc.write_image::<colortype::RGBA16>(width, height, samples)?;
+            enc.write_image::<colortype::RGBA16>(width, height, samples)
+                .map_err(|e| at!(TiffError::from(e)))?;
         }
         (ChannelLayout::Rgba, ChannelType::F32) => {
             let samples: &[f32] = bytemuck::cast_slice(data);
-            enc.write_image::<colortype::RGBA32Float>(width, height, samples)?;
+            enc.write_image::<colortype::RGBA32Float>(width, height, samples)
+                .map_err(|e| at!(TiffError::from(e)))?;
         }
 
         _ => {
-            return Err(TiffError::Unsupported(alloc::format!(
+            return Err(at!(TiffError::Unsupported(alloc::format!(
                 "cannot encode {layout:?}/{ct:?} to TIFF"
-            )));
+            ))));
         }
     }
 
