@@ -186,13 +186,15 @@ pub fn decode(
     cancel.check().map_err(|e| at!(TiffError::from(e)))?;
 
     let (is_float, is_signed) = result_format_flags(&result);
+    let color_map = decoder.color_map().map(|m| m.to_vec());
 
     // For planar images, interleave planes into contiguous pixel data.
     if num_planes > 1 {
         result = interleave_planes(result, width, height, num_planes, color_type).at()?;
     }
 
-    let (pixels, _descriptor) = convert_to_pixel_buffer(width, height, color_type, result).at()?;
+    let (pixels, _descriptor) =
+        convert_to_pixel_buffer(width, height, color_type, result, color_map.as_deref()).at()?;
 
     let info = TiffInfo {
         width,
@@ -221,6 +223,7 @@ fn result_format_flags(result: &tiff::decoder::DecodingResult) -> (bool, bool) {
 fn output_bytes_per_pixel(ct: tiff::ColorType) -> usize {
     let channels = match ct {
         tiff::ColorType::CMYK(_) | tiff::ColorType::CMYKA(_) => 4, // converted to RGBA
+        tiff::ColorType::Palette(_) => 3,                          // expanded to RGB
         tiff::ColorType::Multiband { num_samples: 2, .. } => 2,    // GrayAlpha
         _ => ct.num_samples() as usize,
     };
@@ -305,6 +308,7 @@ fn convert_to_pixel_buffer(
     height: u32,
     color_type: tiff::ColorType,
     result: tiff::decoder::DecodingResult,
+    color_map: Option<&[u16]>,
 ) -> Result<(PixelBuffer, PixelDescriptor)> {
     use tiff::decoder::DecodingResult as DR;
 
@@ -313,6 +317,11 @@ fn convert_to_pixel_buffer(
     let descriptor = descriptor_for(color_type, is_float);
 
     let raw_bytes: Vec<u8> = match color_type {
+        tiff::ColorType::Palette(bits) => {
+            let map = color_map
+                .ok_or_else(|| at!(TiffError::Decode("palette image missing color map".into())))?;
+            return expand_palette(width, height, bits, result, map);
+        }
         tiff::ColorType::CMYK(_) => {
             return convert_cmyk(width, height, color_type, result, false);
         }
@@ -858,6 +867,119 @@ fn convert_cmyk(
             "unsupported sample type for CMYK conversion".into(),
         ))),
     }
+}
+
+/// Expand palette indices to RGB using the TIFF color map.
+///
+/// The color map has 3 × 2^bits entries as u16 values, laid out as
+/// [R0..Rn, G0..Gn, B0..Bn]. Each entry is scaled from u16 to u8 (>> 8).
+#[track_caller]
+fn expand_palette(
+    width: u32,
+    height: u32,
+    bits: u8,
+    result: tiff::decoder::DecodingResult,
+    color_map: &[u16],
+) -> Result<(PixelBuffer, PixelDescriptor)> {
+    use tiff::decoder::DecodingResult as DR;
+
+    let num_entries = 1usize << bits;
+    if color_map.len() < num_entries * 3 {
+        return Err(at!(TiffError::Decode(alloc::format!(
+            "palette color map too short: {} entries, expected {}",
+            color_map.len(),
+            num_entries * 3
+        ))));
+    }
+
+    let pixel_count = width as usize * height as usize;
+
+    // Extract raw index values depending on bit depth
+    let indices: Vec<usize> = match (bits, result) {
+        (1..=7, DR::U8(packed)) => {
+            // Sub-byte: extract raw indices from packed bits (no scaling)
+            unpack_palette_indices(&packed, width, height, bits)
+        }
+        (8, DR::U8(data)) => {
+            // 8-bit: indices are the raw bytes
+            data.into_iter().map(|v| v as usize).collect()
+        }
+        (9..=16, DR::U16(data)) => {
+            // 16-bit palette indices
+            data.into_iter().map(|v| v as usize).collect()
+        }
+        _ => {
+            return Err(at!(TiffError::Unsupported(alloc::format!(
+                "unsupported palette bit depth: {bits}"
+            ))));
+        }
+    };
+
+    if indices.len() < pixel_count {
+        return Err(at!(TiffError::Decode(alloc::format!(
+            "palette data too short: {} indices for {} pixels",
+            indices.len(),
+            pixel_count
+        ))));
+    }
+
+    let mut rgb = Vec::with_capacity(pixel_count * 3);
+    for &idx in &indices[..pixel_count] {
+        if idx >= num_entries {
+            return Err(at!(TiffError::Decode(alloc::format!(
+                "palette index {idx} out of range (max {})",
+                num_entries - 1
+            ))));
+        }
+        // Color map layout: [R0..Rn, G0..Gn, B0..Bn]
+        rgb.push((color_map[idx] >> 8) as u8);
+        rgb.push((color_map[num_entries + idx] >> 8) as u8);
+        rgb.push((color_map[2 * num_entries + idx] >> 8) as u8);
+    }
+
+    let desc = PixelDescriptor::RGB8;
+    let buf =
+        PixelBuffer::from_vec(rgb, width, height, desc).map_err(|e| at!(TiffError::from(e)))?;
+    Ok((buf, desc))
+}
+
+/// Extract raw palette indices from sub-byte packed data (no scaling).
+///
+/// Unlike `unpack_subbyte`, this returns the raw index values without
+/// scaling to 0-255, since they will be used for palette lookup.
+fn unpack_palette_indices(packed: &[u8], width: u32, height: u32, bits: u8) -> Vec<usize> {
+    let samples_per_row = width as usize;
+    let pixel_count = samples_per_row * height as usize;
+    let mut out = Vec::with_capacity(pixel_count);
+
+    let bits_per_row = samples_per_row * bits as usize;
+    let packed_row_bytes = bits_per_row.div_ceil(8);
+
+    for row in 0..height as usize {
+        let row_start = row * packed_row_bytes;
+        let row_data = &packed[row_start..row_start + packed_row_bytes];
+
+        let mut bit_offset = 0usize;
+        for _ in 0..samples_per_row {
+            let byte_idx = bit_offset / 8;
+            let bit_in_byte = bit_offset % 8;
+
+            let raw = if bit_in_byte + bits as usize <= 8 {
+                let shift = 8 - bit_in_byte - bits as usize;
+                ((row_data[byte_idx] >> shift) & ((1u8 << bits) - 1)) as usize
+            } else {
+                let combined = ((row_data[byte_idx] as u16) << 8)
+                    | row_data.get(byte_idx + 1).copied().unwrap_or(0) as u16;
+                let shift = 16 - bit_in_byte - bits as usize;
+                (((combined >> shift) & ((1u16 << bits) - 1)) as u8) as usize
+            };
+
+            out.push(raw);
+            bit_offset += bits as usize;
+        }
+    }
+
+    out
 }
 
 #[cfg(test)]

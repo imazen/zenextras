@@ -348,7 +348,7 @@ dependencies = [
 [[package]]
 name = "tiff"
 version = "0.11.3"
-source = "git+https://github.com/lilith/image-tiff.git?branch=feat%2Fextended-bit-depths#925f8ca20a4a5e0395772a41cad042d37c2d8996"
+source = "git+https://github.com/lilith/image-tiff.git?branch=feat%2Fall-fixes#829144aade22625d347bd95047df9213490ec599"
 dependencies = [
  "fax",
  "flate2",

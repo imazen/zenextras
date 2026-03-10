@@ -37,4 +37,4 @@ opt-level = 2
 [patch.crates-io]
 zenpixels = { path = "../zenpixels/zenpixels" }
 whereat = { path = "../whereat" }
-tiff = { git = "https://github.com/lilith/image-tiff.git", branch = "feat/extended-bit-depths" }
+tiff = { git = "https://github.com/lilith/image-tiff.git", branch = "feat/all-fixes" }
