@@ -19,6 +19,7 @@ whereat = { version = "0.1.4", default-features = false }
 enough = { version = "0.4.2", default-features = false }
 zenpixels = { version = "0.2.0", default-features = false }
 zencodec = { version = "0.1.1", optional = true }
+zennode = { version = "0.1", path = "../zennode/zennode", default-features = false, features = ["derive"], optional = true }
 bytemuck = { version = "1.25.0", default-features = false, features = ["extern_crate_alloc"] }
 
 [dev-dependencies]
@@ -35,6 +36,8 @@ lzw = ["tiff/lzw"]
 webp = ["tiff/webp"]
 zstd = ["tiff/zstd"]
 zencodec = ["dep:zencodec"]
+# zennode node definitions (EncodeTiff schema with RIAPI keys)
+zennode = ["dep:zennode"]
 # Palette TIFF support requires tiff crate's color_map() API, which is
 # not available in tiff 0.11.x (only on git main). Enable this feature
 # once tiff 0.12+ is released. Not included in all-codecs or default.
