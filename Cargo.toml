@@ -1,0 +1,28 @@
+[package]
+name = "zenpdf"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT OR Apache-2.0"
+description = "PDF page renderer via hayro with page selection and render bounds"
+categories = ["multimedia::images"]
+keywords = ["pdf", "render", "rasterize", "hayro"]
+repository = "https://github.com/imazen/zenpdf"
+documentation = "https://docs.rs/zenpdf"
+readme = "README.md"
+
+[dependencies]
+hayro = { version = "0.5", default-features = true }
+hayro-syntax = "0.5"
+rgb = { version = "0.8", default-features = false, features = ["as-bytes"] }
+thiserror = { version = "2.0", default-features = false }
+whereat = { version = "0.1.3", path = "../whereat", default-features = false }
+zencodec = { path = "../zencodec", optional = true }
+zenpixels = { path = "../zenpixels/zenpixels", default-features = false, features = ["rgb", "std"] }
+
+[dev-dependencies]
+enough = "0.4"
+
+[features]
+default = []
+zencodec = ["dep:zencodec"]
