@@ -12,4 +12,4 @@ pub use render::{
     render_pages,
 };
 #[cfg(feature = "zencodec")]
-pub use zencodec_impl::{PDF_FORMAT, PdfAnimationFrameDecoder, PdfDecoderConfig};
+pub use zencodec_impl::{PDF_FORMAT, PdfDecoderConfig};

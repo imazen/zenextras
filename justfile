@@ -4,12 +4,12 @@ default:
 # Run all tests
 test:
     cargo test --all-targets
-    cargo test --all-targets --features zencodec
+    cargo test --all-targets --no-default-features
 
 # Run clippy
 clippy:
     cargo clippy --all-targets -- -D warnings
-    cargo clippy --all-targets --features zencodec -- -D warnings
+    cargo clippy --all-targets --no-default-features -- -D warnings
 
 # Format code
 fmt:
@@ -22,7 +22,7 @@ fmt-check:
 # Feature permutation checks
 feature-check:
     cargo test --all-targets
-    cargo test --all-targets --features zencodec
+    cargo test --all-targets --no-default-features
     cargo check --all-targets --all-features
 
 # Build release

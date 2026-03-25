@@ -28,5 +28,5 @@ enough = "0.4.2"
 all-features = true
 
 [features]
-default = []
+default = ["zencodec"]
 zencodec = ["dep:zencodec"]

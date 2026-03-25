@@ -33,6 +33,11 @@ pub enum PdfError {
     #[cfg(feature = "zencodec")]
     #[error("sink error: {0}")]
     Sink(#[source] zencodec::decode::SinkError),
+
+    /// A resource limit was exceeded.
+    #[cfg(feature = "zencodec")]
+    #[error("limit exceeded: {0}")]
+    LimitExceeded(#[from] zencodec::LimitExceeded),
 }
 
 pub type Result<T> = core::result::Result<T, PdfError>;

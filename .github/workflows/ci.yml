@@ -33,11 +33,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
 
-      - name: Test (default features)
+      - name: Test (default features, includes zencodec)
         run: cargo test
 
-      - name: Test (all features)
-        run: cargo test --all-features
+      - name: Test (no default features)
+        run: cargo test --no-default-features
 
   feature-perms:
     name: Feature permutations
