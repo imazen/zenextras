@@ -25,8 +25,8 @@ use zencodec::decode::{
 };
 use zencodec::enough::Stop;
 use zencodec::{
-    ImageFormat, ImageFormatDefinition, ImageInfo, ImageSequence, ResourceLimits, Unsupported,
-    UnsupportedOperation,
+    ImageFormat, ImageFormatDefinition, ImageInfo, ImageSequence, ResourceLimits, StopToken,
+    Unsupported, UnsupportedOperation,
 };
 use zenpixels::{PixelBuffer, PixelDescriptor};
 
@@ -161,7 +161,7 @@ impl zencodec::decode::DecoderConfig for PdfDecoderConfig {
 /// Per-operation PDF decode job.
 pub struct PdfDecodeJob<'a> {
     config: &'a PdfDecoderConfig,
-    stop: Option<&'a dyn Stop>,
+    stop: Option<StopToken>,
     limits: ResourceLimits,
     start_frame: u32,
 }
@@ -172,7 +172,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for PdfDecodeJob<'a> {
     type StreamDec = Unsupported<PdfError>;
     type AnimationFrameDec = PdfAnimationFrameDecoder;
 
-    fn with_stop(mut self, stop: &'a dyn Stop) -> Self {
+    fn with_stop(mut self, stop: StopToken) -> Self {
         self.stop = Some(stop);
         self
     }

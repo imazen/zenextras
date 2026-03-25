@@ -308,12 +308,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "imgref"
-version = "1.12.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e7c5cedc30da3a610cac6b4ba17597bdf7152cf974e8aab3afb3d54455e371c8"
-
-[[package]]
 name = "kurbo"
 version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -711,9 +705,9 @@ dependencies = [
 
 [[package]]
 name = "zencodec"
-version = "0.1.0"
+version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bef17621ad124f749d37dc97fb7b67cd10915a9c58c2583dee278681e19bda05"
+checksum = "99ba55a38b9c8fcd685bddc640c6b9891108c026aa24ee8af206628d1a3e561b"
 dependencies = [
  "almost-enough",
  "enough",
@@ -742,7 +736,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0828926cd37f826702d167dc46e15dde519279d20a30d458acabc122043c8325"
 dependencies = [
  "bytemuck",
- "imgref",
  "rgb",
  "whereat",
 ]

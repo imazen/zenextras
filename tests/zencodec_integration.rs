@@ -17,7 +17,7 @@ fn probe() {
     assert_eq!(info.width, 595);
     assert_eq!(info.height, 841);
     assert!(info.has_alpha);
-    assert_eq!(info.frame_count, Some(1));
+    assert_eq!(info.frame_count(), Some(1));
 }
 
 #[test]
