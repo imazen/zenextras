@@ -89,7 +89,7 @@ These are upstream limitations in the [`tiff`](https://crates.io/crates/tiff) cr
 
 - **Planar TIFF workaround.** `Decoder::read_image()` only reads the first plane for planar TIFFs. zentiff works around this by using `read_image_to_buffer()` and interleaving planes manually. This workaround is tested and functional.
 
-- **Deprecated decoder API.** zentiff uses `Decoder::new()` which is slated for deprecation in favor of `open()` + `next_image()`. Will need migration when the old API is removed.
+- **Pending decoder API migration.** The upstream `tiff` crate is moving from `Decoder::new()` to `Decoder::open()` + `next_image()`. zentiff will migrate when `tiff` 0.12 releases with the new API.
 
 - **Multi-page decode is probe-only.** Page count is reported in `TiffInfo`, but the decode API only reads the first page. Multi-page decode would require exposing page selection (tracked for a future release).
 

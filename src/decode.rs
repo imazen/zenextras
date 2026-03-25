@@ -584,7 +584,7 @@ fn extract_metadata<R: std::io::Read + std::io::Seek>(
 
 /// Probe TIFF metadata without decoding pixels.
 #[track_caller]
-#[allow(deprecated)] // Decoder::new deprecated in favor of open+next_image
+// TODO: migrate to Decoder::open() + next_image() when tiff 0.12 releases
 pub fn probe(data: &[u8]) -> Result<TiffInfo> {
     let cursor = std::io::Cursor::new(data);
     let mut decoder = tiff::decoder::Decoder::new(cursor).map_err(|e| at!(TiffError::from(e)))?;
@@ -641,7 +641,7 @@ pub fn probe(data: &[u8]) -> Result<TiffInfo> {
 /// The `cancel` signal is checked before the decode; pass `&Unstoppable` when
 /// cancellation is not needed.
 #[track_caller]
-#[allow(deprecated)] // Decoder::new deprecated in favor of open+next_image
+// TODO: migrate to Decoder::open() + next_image() when tiff 0.12 releases
 pub fn decode(
     data: &[u8],
     config: &TiffDecodeConfig,

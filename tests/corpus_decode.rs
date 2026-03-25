@@ -84,7 +84,6 @@ fn diagnose_buffer_failures(dir: &std::path::Path) {
     for path in &paths {
         let data = std::fs::read(path).unwrap();
         let cursor = Cursor::new(&data);
-        #[allow(deprecated)]
         let mut dec = match Decoder::new(cursor) {
             Ok(d) => d,
             Err(_) => continue,
