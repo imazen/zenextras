@@ -6,8 +6,11 @@ use zencodec::decode::{AnimationFrameDecoder, Decode, DecodeJob, DecoderConfig};
 use zenpdf::{PdfDecoderConfig, RenderBounds};
 
 fn test_pdf() -> Vec<u8> {
-    std::fs::read("/tmp/test.pdf")
-        .expect("test PDF not found — generate with fpdf2 (see tests/basic.rs)")
+    std::fs::read(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/test.pdf"
+    ))
+    .expect("test PDF not found at tests/fixtures/test.pdf")
 }
 
 #[test]
