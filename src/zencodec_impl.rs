@@ -7,7 +7,7 @@
 //! | `DecoderConfig` | [`PdfDecoderConfig`] |
 //! | `DecodeJob<'a>` | [`PdfDecodeJob`] |
 //! | `Decode` | [`PdfDecoder`] (renders one page) |
-//! | `FullFrameDecoder` | [`PdfFullFrameDecoder`] (pages as frames) |
+//! | `AnimationFrameDecoder` | [`PdfAnimationFrameDecoder`] (pages as frames) |
 //! | `StreamingDecode` | `Unsupported` (PDFs render full pages) |
 //!
 //! Use `with_start_frame_index()` on the job to select which page to render
@@ -20,8 +20,8 @@ use alloc::vec::Vec;
 
 use rgb::Rgba;
 use zencodec::decode::{
-    DecodeCapabilities, DecodeOutput, DecodePolicy, FullFrame, FullFrameDecoder, OutputInfo,
-    OwnedFullFrame, SinkError,
+    AnimationFrame, AnimationFrameDecoder, DecodeCapabilities, DecodeOutput, DecodePolicy,
+    OutputInfo, OwnedAnimationFrame, SinkError,
 };
 use zencodec::enough::Stop;
 use zencodec::{
@@ -170,7 +170,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for PdfDecodeJob<'a> {
     type Error = PdfError;
     type Dec = PdfDecoder;
     type StreamDec = Unsupported<PdfError>;
-    type FullFrameDec = PdfFullFrameDecoder;
+    type AnimationFrameDec = PdfAnimationFrameDecoder;
 
     fn with_stop(mut self, stop: &'a dyn Stop) -> Self {
         self.stop = Some(stop);
@@ -200,7 +200,10 @@ impl<'a> zencodec::decode::DecodeJob<'a> for PdfDecodeJob<'a> {
         };
         Ok(ImageInfo::new(w as u32, h as u32, pdf_image_format())
             .with_alpha(true)
-            .with_sequence(ImageSequence::Multi { image_count: Some(count), random_access: true }))
+            .with_sequence(ImageSequence::Multi {
+                image_count: Some(count),
+                random_access: true,
+            }))
     }
 
     fn output_info(&self, data: &[u8]) -> Result<OutputInfo, PdfError> {
@@ -246,11 +249,11 @@ impl<'a> zencodec::decode::DecodeJob<'a> for PdfDecodeJob<'a> {
         Err(UnsupportedOperation::RowLevelDecode.into())
     }
 
-    fn full_frame_decoder(
+    fn animation_frame_decoder(
         self,
         data: Cow<'a, [u8]>,
         _preferred: &[PixelDescriptor],
-    ) -> Result<PdfFullFrameDecoder, PdfError> {
+    ) -> Result<PdfAnimationFrameDecoder, PdfError> {
         let data = data.into_owned();
         let count = render::page_count(&data)?;
         let start = self.start_frame.min(count);
@@ -261,8 +264,11 @@ impl<'a> zencodec::decode::DecodeJob<'a> for PdfDecodeJob<'a> {
         };
         let info = ImageInfo::new(w as u32, h as u32, pdf_image_format())
             .with_alpha(true)
-            .with_sequence(ImageSequence::Multi { image_count: Some(count), random_access: true });
-        Ok(PdfFullFrameDecoder {
+            .with_sequence(ImageSequence::Multi {
+                image_count: Some(count),
+                random_access: true,
+            });
+        Ok(PdfAnimationFrameDecoder {
             data,
             info,
             current_page: start,
@@ -306,7 +312,10 @@ impl zencodec::decode::Decode for PdfDecoder {
 
         let info = ImageInfo::new(w, h, pdf_image_format())
             .with_alpha(true)
-            .with_sequence(ImageSequence::Multi { image_count: Some(count), random_access: true });
+            .with_sequence(ImageSequence::Multi {
+                image_count: Some(count),
+                random_access: true,
+            });
 
         let pixels: PixelBuffer = rendered.buffer.erase();
         Ok(DecodeOutput::new(pixels, info))
@@ -314,11 +323,11 @@ impl zencodec::decode::Decode for PdfDecoder {
 }
 
 // ---------------------------------------------------------------------------
-// FullFrameDecoder (pages as frames)
+// AnimationFrameDecoder (pages as frames)
 // ---------------------------------------------------------------------------
 
 /// PDF full-frame decoder that yields one page per frame.
-pub struct PdfFullFrameDecoder {
+pub struct PdfAnimationFrameDecoder {
     data: Vec<u8>,
     info: ImageInfo,
     current_page: u32,
@@ -326,11 +335,11 @@ pub struct PdfFullFrameDecoder {
     bounds: RenderBounds,
     background: [u8; 4],
     render_annotations: bool,
-    /// Holds the last rendered page so `FullFrame` can borrow it.
+    /// Holds the last rendered page so `AnimationFrame` can borrow it.
     frame_buf: Option<PixelBuffer<Rgba<u8>>>,
 }
 
-impl FullFrameDecoder for PdfFullFrameDecoder {
+impl AnimationFrameDecoder for PdfAnimationFrameDecoder {
     type Error = PdfError;
 
     fn wrap_sink_error(err: SinkError) -> PdfError {
@@ -352,7 +361,7 @@ impl FullFrameDecoder for PdfFullFrameDecoder {
     fn render_next_frame(
         &mut self,
         _stop: Option<&dyn Stop>,
-    ) -> Result<Option<FullFrame<'_>>, PdfError> {
+    ) -> Result<Option<AnimationFrame<'_>>, PdfError> {
         if self.current_page >= self.page_count {
             return Ok(None);
         }
@@ -363,13 +372,13 @@ impl FullFrameDecoder for PdfFullFrameDecoder {
         self.frame_buf = Some(rendered.buffer);
 
         let slice = self.frame_buf.as_ref().unwrap().as_slice().erase();
-        Ok(Some(FullFrame::new(slice, 0, idx)))
+        Ok(Some(AnimationFrame::new(slice, 0, idx)))
     }
 
     fn render_next_frame_owned(
         &mut self,
         _stop: Option<&dyn Stop>,
-    ) -> Result<Option<OwnedFullFrame>, PdfError> {
+    ) -> Result<Option<OwnedAnimationFrame>, PdfError> {
         if self.current_page >= self.page_count {
             return Ok(None);
         }
@@ -386,7 +395,7 @@ impl FullFrameDecoder for PdfFullFrameDecoder {
         self.current_page += 1;
 
         let pixels: PixelBuffer = rendered.buffer.erase();
-        Ok(Some(OwnedFullFrame::new(pixels, 0, idx)))
+        Ok(Some(OwnedAnimationFrame::new(pixels, 0, idx)))
     }
 
     fn render_next_frame_to_sink(

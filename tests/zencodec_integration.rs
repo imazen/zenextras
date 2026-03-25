@@ -2,7 +2,7 @@
 
 use std::borrow::Cow;
 
-use zencodec::decode::{Decode, DecodeJob, DecoderConfig, FullFrameDecoder};
+use zencodec::decode::{AnimationFrameDecoder, Decode, DecodeJob, DecoderConfig};
 use zenpdf::{PdfDecoderConfig, RenderBounds};
 
 fn test_pdf() -> Vec<u8> {
@@ -47,12 +47,12 @@ fn one_shot_with_bounds() {
 }
 
 #[test]
-fn full_frame_decoder_pages_as_frames() {
+fn animation_frame_decoder_pages_as_frames() {
     let dec = PdfDecoderConfig::new().with_bounds(RenderBounds::Scale(0.25));
     let data = test_pdf();
     let mut ffd = dec
         .job()
-        .full_frame_decoder(Cow::Borrowed(&data), &[])
+        .animation_frame_decoder(Cow::Borrowed(&data), &[])
         .unwrap();
 
     assert_eq!(ffd.frame_count(), Some(1));
@@ -68,12 +68,12 @@ fn full_frame_decoder_pages_as_frames() {
 }
 
 #[test]
-fn full_frame_decoder_owned() {
+fn animation_frame_decoder_owned() {
     let dec = PdfDecoderConfig::new().with_bounds(RenderBounds::Scale(0.25));
     let data = test_pdf();
     let mut ffd = dec
         .job()
-        .full_frame_decoder(Cow::Borrowed(&data), &[])
+        .animation_frame_decoder(Cow::Borrowed(&data), &[])
         .unwrap();
 
     let frame = ffd.render_next_frame_owned(None).unwrap().unwrap();
