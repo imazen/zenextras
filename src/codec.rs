@@ -231,14 +231,16 @@ pub struct TiffCodecEncoder {
 }
 
 impl TiffCodecEncoder {
-    fn check_limits(&self, width: u32, height: u32) -> Result<(), TiffError> {
+    fn check_limits(&self, pixels: &PixelSlice<'_>) -> Result<(), TiffError> {
         if let Some(ref limits) = self.limits {
-            let pixels = width as u64 * height as u64;
+            let width = pixels.width();
+            let height = pixels.rows();
+            let pixel_count = width as u64 * height as u64;
             if let Some(max_px) = limits.max_pixels
-                && pixels > max_px
+                && pixel_count > max_px
             {
                 return Err(TiffError::LimitExceeded(format!(
-                    "pixel count {pixels} exceeds limit {max_px}"
+                    "pixel count {pixel_count} exceeds limit {max_px}"
                 )));
             }
             if let Some(max_w) = limits.max_width
@@ -254,6 +256,15 @@ impl TiffCodecEncoder {
                 return Err(TiffError::LimitExceeded(format!(
                     "height {height} exceeds limit {max_h}"
                 )));
+            }
+            if let Some(max_mem) = limits.max_memory_bytes {
+                let bpp = pixels.descriptor().bytes_per_pixel() as u64;
+                let estimated = pixel_count * bpp;
+                if estimated > max_mem {
+                    return Err(TiffError::LimitExceeded(format!(
+                        "estimated memory {estimated} bytes exceeds limit {max_mem}"
+                    )));
+                }
             }
         }
         Ok(())
@@ -273,9 +284,7 @@ impl zencodec::encode::Encoder for TiffCodecEncoder {
             None => &enough::Unstoppable,
         };
 
-        let w = pixels.width();
-        let h = pixels.rows();
-        self.check_limits(w, h)?;
+        self.check_limits(&pixels)?;
 
         let encoded =
             crate::encode(&pixels, &self.config.inner, stop).map_err(|e| e.decompose().0)?;
@@ -374,6 +383,8 @@ impl TiffDecodeJob<'_> {
             TiffDecodeConfig {
                 max_pixels: limits.max_pixels.or(base.max_pixels),
                 max_memory_bytes: limits.max_memory_bytes.or(base.max_memory_bytes),
+                max_width: limits.max_width.or(base.max_width),
+                max_height: limits.max_height.or(base.max_height),
             }
         } else {
             base.clone()

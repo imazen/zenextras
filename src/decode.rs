@@ -83,7 +83,7 @@ pub struct TiffDecodeOutput {
 /// Decode configuration for TIFF operations.
 ///
 /// Controls resource limits. The default is safe for general use:
-/// 100 MP pixel count, 4 GiB memory.
+/// 100 MP pixel count, 4 GiB memory, no individual width/height limits.
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 pub struct TiffDecodeConfig {
@@ -91,6 +91,10 @@ pub struct TiffDecodeConfig {
     pub max_pixels: Option<u64>,
     /// Maximum memory allocation in bytes. `None` = no limit.
     pub max_memory_bytes: Option<u64>,
+    /// Maximum image width. `None` = no limit.
+    pub max_width: Option<u32>,
+    /// Maximum image height. `None` = no limit.
+    pub max_height: Option<u32>,
 }
 
 impl TiffDecodeConfig {
@@ -106,6 +110,8 @@ impl TiffDecodeConfig {
         Self {
             max_pixels: None,
             max_memory_bytes: None,
+            max_width: None,
+            max_height: None,
         }
     }
 
@@ -123,8 +129,36 @@ impl TiffDecodeConfig {
         self
     }
 
+    /// Set maximum image width.
+    #[must_use]
+    pub const fn with_max_width(mut self, max: u32) -> Self {
+        self.max_width = Some(max);
+        self
+    }
+
+    /// Set maximum image height.
+    #[must_use]
+    pub const fn with_max_height(mut self, max: u32) -> Self {
+        self.max_height = Some(max);
+        self
+    }
+
     #[track_caller]
     fn validate(&self, width: u32, height: u32, bytes_per_pixel: u32) -> Result<()> {
+        if let Some(max_w) = self.max_width
+            && width > max_w
+        {
+            return Err(at!(TiffError::LimitExceeded(alloc::format!(
+                "width {width} exceeds limit {max_w}"
+            ))));
+        }
+        if let Some(max_h) = self.max_height
+            && height > max_h
+        {
+            return Err(at!(TiffError::LimitExceeded(alloc::format!(
+                "height {height} exceeds limit {max_h}"
+            ))));
+        }
         if let Some(max_px) = self.max_pixels {
             let pixels = width as u64 * height as u64;
             if pixels > max_px {
@@ -150,6 +184,8 @@ impl Default for TiffDecodeConfig {
         Self {
             max_pixels: Some(Self::DEFAULT_MAX_PIXELS),
             max_memory_bytes: Some(Self::DEFAULT_MAX_MEMORY),
+            max_width: None,
+            max_height: None,
         }
     }
 }
