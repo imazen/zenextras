@@ -118,6 +118,8 @@ jobs:
   semver:
     name: Semver Check
     runs-on: ubuntu-latest
+    # Only meaningful after the crate is published to crates.io
+    continue-on-error: true
     if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     steps:
       - uses: actions/checkout@v6
