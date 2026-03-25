@@ -5,6 +5,7 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
@@ -15,6 +16,9 @@ env:
   CI: true
 
 jobs:
+  # ==========================================================================
+  # Cross-platform testing (6-platform matrix)
+  # ==========================================================================
   test:
     name: Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -33,12 +37,15 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
 
-      - name: Test (default features, includes zencodec)
+      - name: Test (default features)
         run: cargo test
 
       - name: Test (no default features)
         run: cargo test --no-default-features
 
+  # ==========================================================================
+  # Feature permutations
+  # ==========================================================================
   feature-perms:
     name: Feature permutations
     runs-on: ubuntu-latest
@@ -50,9 +57,15 @@ jobs:
       - name: Check (no default features)
         run: cargo check --no-default-features
 
-      - name: Check (zencodec)
-        run: cargo check --features zencodec
+      - name: Check (all features)
+        run: cargo check --all-features
 
+      - name: Test (all features)
+        run: cargo test --all-features
+
+  # ==========================================================================
+  # Clippy
+  # ==========================================================================
   clippy:
     name: Clippy
     runs-on: ubuntu-latest
@@ -63,9 +76,15 @@ jobs:
           components: clippy
       - uses: Swatinem/rust-cache@v2
 
-      - name: Clippy
+      - name: Clippy (all features)
         run: cargo clippy --all-targets --all-features -- -D warnings
 
+      - name: Clippy (no default features)
+        run: cargo clippy --all-targets --no-default-features -- -D warnings
+
+  # ==========================================================================
+  # Format
+  # ==========================================================================
   fmt:
     name: Format
     runs-on: ubuntu-latest
@@ -78,6 +97,9 @@ jobs:
       - name: Format check
         run: cargo fmt --all -- --check
 
+  # ==========================================================================
+  # MSRV
+  # ==========================================================================
   msrv:
     name: MSRV
     runs-on: ubuntu-latest
@@ -89,3 +111,61 @@ jobs:
 
       - name: Check MSRV
         run: cargo hack check --rust-version
+
+  # ==========================================================================
+  # Semver check
+  # ==========================================================================
+  semver:
+    name: Semver Check
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@cargo-semver-checks
+
+      - name: Check semver
+        run: cargo semver-checks check-release
+
+  # ==========================================================================
+  # Documentation
+  # ==========================================================================
+  docs:
+    name: Docs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build docs
+        run: cargo doc --all-features --no-deps
+        env:
+          RUSTDOCFLAGS: -D warnings
+
+  # ==========================================================================
+  # Code coverage
+  # ==========================================================================
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@cargo-llvm-cov
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Generate coverage
+        run: cargo llvm-cov --all-features --lcov --output-path lcov.info
+
+      - name: Upload to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          files: lcov.info
+          fail_ci_if_error: false
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
