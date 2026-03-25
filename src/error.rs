@@ -80,5 +80,12 @@ impl From<whereat::At<zenpixels::BufferError>> for TiffError {
     }
 }
 
+#[cfg(feature = "zencodec")]
+impl From<zencodec::UnsupportedOperation> for TiffError {
+    fn from(op: zencodec::UnsupportedOperation) -> Self {
+        TiffError::Unsupported(alloc::format!("{op}"))
+    }
+}
+
 /// Result type alias for zentiff operations with location tracking.
 pub type Result<T> = core::result::Result<T, whereat::At<TiffError>>;
