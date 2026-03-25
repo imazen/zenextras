@@ -33,12 +33,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
 
-      - name: Remove [patch.crates-io] for CI
-        shell: bash
-        run: |
-          sed -e '/\[patch.crates-io\]/,$d' \
-            Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
-          rm -f Cargo.lock
 
       - name: Test (default features)
         run: cargo test
@@ -66,12 +60,6 @@ jobs:
           components: clippy
       - uses: Swatinem/rust-cache@v2
 
-      - name: Remove [patch.crates-io] for CI
-        shell: bash
-        run: |
-          sed -e '/\[patch.crates-io\]/,$d' \
-            Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
-          rm -f Cargo.lock
 
       - name: Clippy (all-codecs)
         run: cargo clippy --all-targets --features all-codecs -- -D warnings
@@ -97,12 +85,6 @@ jobs:
       - uses: taiki-e/install-action@cargo-hack
       - uses: Swatinem/rust-cache@v2
 
-      - name: Remove [patch.crates-io] for CI
-        shell: bash
-        run: |
-          sed -e '/\[patch.crates-io\]/,$d' \
-            Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
-          rm -f Cargo.lock
 
       - name: Check MSRV
         run: cargo hack check --rust-version
