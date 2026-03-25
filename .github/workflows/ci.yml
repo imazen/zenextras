@@ -39,6 +39,20 @@ jobs:
       - name: Test (all features)
         run: cargo test --all-features
 
+  feature-perms:
+    name: Feature permutations
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Check (no default features)
+        run: cargo check --no-default-features
+
+      - name: Check (zencodec)
+        run: cargo check --features zencodec
+
   clippy:
     name: Clippy
     runs-on: ubuntu-latest
