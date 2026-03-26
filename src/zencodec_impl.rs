@@ -129,7 +129,7 @@ static DECODE_DESCRIPTORS: &[PixelDescriptor] = &[PixelDescriptor::RGBA8_SRGB];
 
 impl zencodec::decode::DecoderConfig for PdfDecoderConfig {
     type Error = PdfError;
-    type Job = PdfDecodeJob;
+    type Job<'a> = PdfDecodeJob;
 
     fn formats() -> &'static [ImageFormat] {
         &PDF_FORMATS
@@ -143,7 +143,7 @@ impl zencodec::decode::DecoderConfig for PdfDecoderConfig {
         &PDF_DECODE_CAPS
     }
 
-    fn job(self) -> PdfDecodeJob {
+    fn job<'a>(self) -> Self::Job<'a> {
         PdfDecodeJob {
             config: self,
             stop: None,
