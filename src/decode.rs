@@ -745,7 +745,12 @@ pub fn decode(
     info.is_signed = is_signed;
 
     #[cfg(feature = "_palette")]
-    let color_map = decoder.color_map().map(|m| m.to_vec());
+    let color_map = decoder
+        .find_tag(Tag::ColorMap)
+        .map_err(|e| at!(TiffError::from(e)))?
+        .map(|v| v.into_u16_vec())
+        .transpose()
+        .map_err(|e| at!(TiffError::from(e)))?;
     #[cfg(not(feature = "_palette"))]
     let color_map: Option<Vec<u16>> = None;
 
