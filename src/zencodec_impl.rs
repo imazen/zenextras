@@ -129,7 +129,7 @@ static DECODE_DESCRIPTORS: &[PixelDescriptor] = &[PixelDescriptor::RGBA8_SRGB];
 
 impl zencodec::decode::DecoderConfig for PdfDecoderConfig {
     type Error = PdfError;
-    type Job<'a> = PdfDecodeJob<'a>;
+    type Job = PdfDecodeJob;
 
     fn formats() -> &'static [ImageFormat] {
         &PDF_FORMATS
@@ -143,7 +143,7 @@ impl zencodec::decode::DecoderConfig for PdfDecoderConfig {
         &PDF_DECODE_CAPS
     }
 
-    fn job(&self) -> PdfDecodeJob<'_> {
+    fn job(self) -> PdfDecodeJob {
         PdfDecodeJob {
             config: self,
             stop: None,
@@ -158,14 +158,14 @@ impl zencodec::decode::DecoderConfig for PdfDecoderConfig {
 // ---------------------------------------------------------------------------
 
 /// Per-operation PDF decode job.
-pub struct PdfDecodeJob<'a> {
-    config: &'a PdfDecoderConfig,
+pub struct PdfDecodeJob {
+    config: PdfDecoderConfig,
     stop: Option<StopToken>,
     limits: ResourceLimits,
     start_frame: u32,
 }
 
-impl<'a> PdfDecodeJob<'a> {
+impl PdfDecodeJob {
     fn check_limits_on_probe(&self, info: &ImageInfo) -> Result<(), PdfError> {
         self.limits.check_image_info(info)?;
         Ok(())
@@ -182,7 +182,7 @@ impl<'a> PdfDecodeJob<'a> {
     }
 }
 
-impl<'a> zencodec::decode::DecodeJob<'a> for PdfDecodeJob<'a> {
+impl<'a> zencodec::decode::DecodeJob<'a> for PdfDecodeJob {
     type Error = PdfError;
     type Dec = PdfDecoder;
     type StreamDec = Unsupported<PdfError>;
