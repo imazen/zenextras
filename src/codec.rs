@@ -338,7 +338,7 @@ impl TiffDecoderCodecConfig {
 
 impl zencodec::decode::DecoderConfig for TiffDecoderCodecConfig {
     type Error = TiffError;
-    type Job<'a> = TiffDecodeJob<'a>;
+    type Job = TiffDecodeJob;
 
     fn formats() -> &'static [ImageFormat] {
         &[ImageFormat::Tiff]
@@ -352,7 +352,7 @@ impl zencodec::decode::DecoderConfig for TiffDecoderCodecConfig {
         &TIFF_DECODE_CAPS
     }
 
-    fn job(&self) -> TiffDecodeJob<'_> {
+    fn job(self) -> TiffDecodeJob {
         TiffDecodeJob {
             config: self,
             stop: None,
@@ -366,15 +366,15 @@ impl zencodec::decode::DecoderConfig for TiffDecoderCodecConfig {
 // ── TiffDecodeJob ─────────────────────────────────────────────────────
 
 /// Per-operation TIFF decode job.
-pub struct TiffDecodeJob<'a> {
-    config: &'a TiffDecoderCodecConfig,
+pub struct TiffDecodeJob {
+    config: TiffDecoderCodecConfig,
     stop: Option<zencodec::StopToken>,
     limits: Option<ResourceLimits>,
     max_input_bytes: Option<u64>,
     policy: Option<DecodePolicy>,
 }
 
-impl TiffDecodeJob<'_> {
+impl TiffDecodeJob {
     /// Build a `TiffDecodeConfig` that merges zencodec `ResourceLimits` with
     /// the base config's limits, preferring the per-job limits.
     fn effective_decode_config(&self) -> TiffDecodeConfig {
@@ -407,7 +407,7 @@ impl TiffDecodeJob<'_> {
     }
 }
 
-impl<'a> zencodec::decode::DecodeJob<'a> for TiffDecodeJob<'a> {
+impl<'a> zencodec::decode::DecodeJob<'a> for TiffDecodeJob {
     type Error = TiffError;
     type Dec = TiffCodecDecoder<'a>;
     type StreamDec = zencodec::Unsupported<TiffError>;
@@ -459,9 +459,10 @@ impl<'a> zencodec::decode::DecodeJob<'a> for TiffDecodeJob<'a> {
                 data.len()
             )));
         }
+        let decode_config = self.effective_decode_config();
         Ok(TiffCodecDecoder {
             config: self.config,
-            decode_config: self.effective_decode_config(),
+            decode_config,
             data,
             stop: self.stop,
             policy: self.policy,
@@ -504,7 +505,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for TiffDecodeJob<'a> {
 
 /// Single-image TIFF decoder implementing [`zencodec::decode::Decode`].
 pub struct TiffCodecDecoder<'a> {
-    config: &'a TiffDecoderCodecConfig,
+    config: TiffDecoderCodecConfig,
     decode_config: TiffDecodeConfig,
     data: Cow<'a, [u8]>,
     stop: Option<zencodec::StopToken>,
