@@ -526,26 +526,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "zennode"
-version = "0.1.0"
-dependencies = [
- "zennode-derive",
-]
-
-[[package]]
-name = "zennode-derive"
-version = "0.1.0"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
-]
-
-[[package]]
 name = "zenpixels"
-version = "0.2.0"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0828926cd37f826702d167dc46e15dde519279d20a30d458acabc122043c8325"
+checksum = "4705187b555bc476109a2113ca007282fdf327bcc9edb4c692ae1e4d489bc9b2"
 dependencies = [
  "bytemuck",
  "whereat",
@@ -562,7 +546,6 @@ dependencies = [
  "tiff",
  "whereat",
  "zencodec",
- "zennode",
  "zenpixels",
 ]
 
