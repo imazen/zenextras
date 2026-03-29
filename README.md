@@ -1,11 +1,4 @@
-# zentiff
-
-[![CI](https://img.shields.io/github/actions/workflow/status/imazen/zentiff/ci.yml?branch=main&style=for-the-badge)](https://github.com/imazen/zentiff/actions/workflows/ci.yml)
-[![Crates.io](https://img.shields.io/crates/v/zentiff?style=for-the-badge)](https://crates.io/crates/zentiff)
-[![docs.rs](https://img.shields.io/docsrs/zentiff?style=for-the-badge)](https://docs.rs/zentiff)
-[![Codecov](https://img.shields.io/codecov/c/github/imazen/zentiff?style=for-the-badge)](https://codecov.io/gh/imazen/zentiff)
-[![License](https://img.shields.io/crates/l/zentiff?style=for-the-badge)](LICENSE-MIT)
-[![MSRV](https://img.shields.io/badge/MSRV-1.93-blue?style=for-the-badge)](https://doc.rust-lang.org/cargo/reference/manifest.html#the-rust-version-field)
+# zentiff ![CI](https://img.shields.io/github/actions/workflow/status/imazen/zentiff/ci.yml?branch=main&style=flat-square) ![Codecov](https://img.shields.io/codecov/c/github/imazen/zentiff?style=flat-square) ![MSRV](https://img.shields.io/badge/MSRV-1.93-blue?style=flat-square) ![License](https://img.shields.io/crates/l/zentiff?style=flat-square)
 
 TIFF decoding and encoding with [zenpixels](https://crates.io/crates/zenpixels) integration. Wraps the [`tiff`](https://crates.io/crates/tiff) crate, providing a pixel-buffer-oriented API that plugs into the zen\* codec ecosystem.
 
@@ -60,7 +53,7 @@ Extracts ICC profiles, EXIF (re-serialized from sub-IFD), XMP, IPTC, resolution 
 
 ## zencodec integration
 
-With the `zencodec` feature (enabled by default), zentiff implements both [`zencodec::decode::DecoderConfig`](https://docs.rs/zencodec) and [`zencodec::encode::EncoderConfig`](https://docs.rs/zencodec) for codec-agnostic image pipelines.
+With the `zencodec` feature, zentiff implements both [`zencodec::decode::DecoderConfig`](https://docs.rs/zencodec) and [`zencodec::encode::EncoderConfig`](https://docs.rs/zencodec) for codec-agnostic image pipelines.
 
 Resource limits, cooperative cancellation, and decode policy (metadata suppression) are all supported through the zencodec trait flow.
 
@@ -71,11 +64,12 @@ Resource limits, cooperative cancellation, and decode policy (metadata suppressi
 | `std` | Yes | Standard library support (required for I/O) |
 | `deflate` | Yes | DEFLATE/zlib compression |
 | `lzw` | Yes | LZW compression |
-| `zencodec` | Yes | zencodec encode/decode trait integration |
+| `zencodec` | No | zencodec encode/decode trait integration |
 | `fax` | No | CCITT fax compression (Group 3/4) |
 | `jpeg` | No | JPEG-in-TIFF compression |
 | `webp` | No | WebP-in-TIFF compression |
 | `zstd` | No | Zstandard compression |
+| `zennode` | No | zennode node definitions (EncodeTiff schema with RIAPI keys) |
 | `all-codecs` | No | Enables all compression codecs |
 | `_palette` | No | Palette TIFF decode (blocked on `tiff` 0.12, see below) |
 
