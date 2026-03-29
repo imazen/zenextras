@@ -559,8 +559,8 @@ fn tiff_info_to_image_info(tiff: &TiffInfo) -> ImageInfo {
 
     let orientation = tiff
         .orientation
-        .map(Orientation::from_exif)
-        .unwrap_or(Orientation::Normal);
+        .and_then(|v| Orientation::from_exif(v as u8))
+        .unwrap_or_default();
 
     let mut info = ImageInfo::new(tiff.width, tiff.height, ImageFormat::Tiff)
         .with_alpha(has_alpha)
