@@ -1,4 +1,4 @@
-# zentiff ![CI](https://img.shields.io/github/actions/workflow/status/imazen/zentiff/ci.yml?branch=main&style=flat-square) ![Codecov](https://img.shields.io/codecov/c/github/imazen/zentiff?style=flat-square) ![MSRV](https://img.shields.io/badge/MSRV-1.93-blue?style=flat-square) ![License](https://img.shields.io/crates/l/zentiff?style=flat-square)
+# zentiff [![CI](https://img.shields.io/github/actions/workflow/status/imazen/zentiff/ci.yml?branch=main&style=flat-square)](https://github.com/imazen/zentiff/actions/workflows/ci.yml) [![Codecov](https://img.shields.io/codecov/c/github/imazen/zentiff?style=flat-square)](https://codecov.io/gh/imazen/zentiff) [![MSRV](https://img.shields.io/badge/MSRV-1.93-blue?style=flat-square)](https://doc.rust-lang.org/cargo/reference/manifest.html#the-rust-version-field) [![License](https://img.shields.io/crates/l/zentiff?style=flat-square)](https://github.com/imazen/zentiff#license)
 
 TIFF decoding and encoding with [zenpixels](https://crates.io/crates/zenpixels) integration. Wraps the [`tiff`](https://crates.io/crates/tiff) crate, providing a pixel-buffer-oriented API that plugs into the zen\* codec ecosystem.
 
