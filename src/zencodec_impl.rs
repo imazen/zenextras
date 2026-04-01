@@ -262,6 +262,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for PdfDecodeJob {
             background: self.config.background,
             render_annotations: self.config.render_annotations,
             page,
+            page_count: count,
         })
     }
 
@@ -302,12 +303,14 @@ pub struct PdfDecoder {
     background: [u8; 4],
     render_annotations: bool,
     page: u32,
+    page_count: u32,
 }
 
 impl zencodec::decode::Decode for PdfDecoder {
     type Error = PdfError;
 
     fn decode(self) -> Result<DecodeOutput, PdfError> {
+        let count = self.page_count;
         let config = crate::render::PdfConfig {
             pages: crate::render::PageSelection::Single(self.page),
             bounds: self.bounds,
@@ -315,11 +318,11 @@ impl zencodec::decode::Decode for PdfDecoder {
             render_annotations: self.render_annotations,
             limits: crate::render::RenderLimits::default(),
         };
-        let mut pages = render::render_pages(&self.data, &config)?;
+        // Use render_pages_owned to avoid copying the already-owned Vec<u8>.
+        let mut pages = render::render_pages_owned(self.data, &config)?;
         let rendered = pages.remove(0);
         let w = rendered.buffer.width();
         let h = rendered.buffer.height();
-        let count = render::page_count(&self.data)?;
 
         let info = ImageInfo::new(w, h, pdf_image_format())
             .with_alpha(true)

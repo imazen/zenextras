@@ -172,6 +172,17 @@ pub fn render_page(data: &[u8], page_index: u32, bounds: &RenderBounds) -> Resul
 /// allocation occurs. Use [`RenderLimits::unlimited()`] to opt out.
 pub fn render_pages(data: &[u8], config: &PdfConfig) -> Result<Vec<RenderedPage>> {
     let pdf = open_pdf(data)?;
+    render_pages_inner(&pdf, config)
+}
+
+/// Like [`render_pages`] but accepts owned data, avoiding a copy when the
+/// caller already has a `Vec<u8>` (e.g., from the zencodec decode path).
+pub(crate) fn render_pages_owned(data: Vec<u8>, config: &PdfConfig) -> Result<Vec<RenderedPage>> {
+    let pdf = open_pdf_owned(data)?;
+    render_pages_inner(&pdf, config)
+}
+
+fn render_pages_inner(pdf: &Pdf, config: &PdfConfig) -> Result<Vec<RenderedPage>> {
     let pages = pdf.pages();
     let count = pages.len() as u32;
 
@@ -240,7 +251,13 @@ pub fn render_pages(data: &[u8], config: &PdfConfig) -> Result<Vec<RenderedPage>
 // ---------------------------------------------------------------------------
 
 fn open_pdf(data: &[u8]) -> Result<Pdf> {
-    let arc_data: Arc<dyn AsRef<[u8]> + Send + Sync> = Arc::new(data.to_vec());
+    // Unavoidable copy: Pdf::new requires Arc<dyn AsRef<[u8]> + Send + Sync>.
+    open_pdf_owned(data.to_vec())
+}
+
+/// Parse a PDF from already-owned data, avoiding a second copy.
+pub(crate) fn open_pdf_owned(data: Vec<u8>) -> Result<Pdf> {
+    let arc_data: Arc<dyn AsRef<[u8]> + Send + Sync> = Arc::new(data);
     Pdf::new(arc_data).map_err(|e| PdfError::InvalidPdf(format!("{e:?}")))
 }
 
