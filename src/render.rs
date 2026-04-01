@@ -378,15 +378,19 @@ fn pixmap_to_buffer(
     w: u32,
     h: u32,
 ) -> Result<PixelBuffer<Rgba<u8>>> {
-    let unpremul = pixmap.take_unpremultiplied();
-    let mut pixels = Vec::with_capacity(unpremul.len());
-    for p in &unpremul {
-        pixels.push(Rgba {
+    // take_unpremultiplied() returns Vec<color::Rgba8> which is layout-identical
+    // to rgb::Rgba<u8> (both #[repr(C)], same field order r/g/b/a as u8).
+    // into_iter().map().collect() allows the compiler to reuse the allocation
+    // when source and target have the same size (4 bytes each).
+    let pixels: Vec<Rgba<u8>> = pixmap
+        .take_unpremultiplied()
+        .into_iter()
+        .map(|p| Rgba {
             r: p.r,
             g: p.g,
             b: p.b,
             a: p.a,
-        });
-    }
+        })
+        .collect();
     Ok(PixelBuffer::from_pixels(pixels, w, h)?)
 }
