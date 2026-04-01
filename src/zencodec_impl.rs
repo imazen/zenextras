@@ -234,7 +234,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for PdfDecodeJob {
         } else {
             (0.0, 0.0)
         };
-        let (w, h) = compute_output_dims(&self.config.bounds, pw, ph);
+        let (w, h) = compute_output_dims(&self.config.bounds, pw, ph)?;
         let info = OutputInfo::full_decode(w, h, PixelDescriptor::RGBA8_SRGB);
         self.check_limits_on_output(&info)?;
         Ok(info)
@@ -253,7 +253,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for PdfDecodeJob {
         } else {
             (0.0, 0.0)
         };
-        let (w, h) = compute_output_dims(&self.config.bounds, pw, ph);
+        let (w, h) = compute_output_dims(&self.config.bounds, pw, ph)?;
         let out_info = OutputInfo::full_decode(w, h, PixelDescriptor::RGBA8_SRGB);
         self.check_limits_on_output(&out_info)?;
         Ok(PdfDecoder {
@@ -337,25 +337,42 @@ impl zencodec::decode::Decode for PdfDecoder {
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn compute_output_dims(bounds: &RenderBounds, page_w: f32, page_h: f32) -> (u32, u32) {
-    match *bounds {
-        RenderBounds::Scale(s) => ((page_w * s).floor() as u32, (page_h * s).floor() as u32),
+fn compute_output_dims(
+    bounds: &RenderBounds,
+    page_w: f32,
+    page_h: f32,
+) -> Result<(u32, u32), PdfError> {
+    // Guard against zero-area pages that would cause division by zero or NaN
+    // when computing scale factors in FitWidth/FitHeight/FitBox/Exact modes.
+    if !page_w.is_finite() || !page_h.is_finite() || page_w <= 0.0 || page_h <= 0.0 {
+        return Err(PdfError::ZeroDimensions { page: 0 });
+    }
+
+    let (raw_w, raw_h) = match *bounds {
+        RenderBounds::Scale(s) => (page_w * s, page_h * s),
         RenderBounds::Dpi(dpi) => {
             let s = dpi / 72.0;
-            ((page_w * s).floor() as u32, (page_h * s).floor() as u32)
+            (page_w * s, page_h * s)
         }
         RenderBounds::FitWidth(tw) => {
             let s = tw as f32 / page_w;
-            (tw, (page_h * s).floor() as u32)
+            (tw as f32, page_h * s)
         }
         RenderBounds::FitHeight(th) => {
             let s = th as f32 / page_h;
-            ((page_w * s).floor() as u32, th)
+            (page_w * s, th as f32)
         }
         RenderBounds::FitBox { width, height } => {
             let s = (width as f32 / page_w).min(height as f32 / page_h);
-            ((page_w * s).floor() as u32, (page_h * s).floor() as u32)
+            (page_w * s, page_h * s)
         }
-        RenderBounds::Exact { width, height } => (width, height),
+        RenderBounds::Exact { width, height } => return Ok((width, height)),
+    };
+
+    // Validate that results are finite and positive before casting to u32.
+    if !raw_w.is_finite() || !raw_h.is_finite() || raw_w < 1.0 || raw_h < 1.0 {
+        return Err(PdfError::ZeroDimensions { page: 0 });
     }
+
+    Ok((raw_w.floor() as u32, raw_h.floor() as u32))
 }

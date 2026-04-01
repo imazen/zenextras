@@ -202,6 +202,12 @@ pub fn render_pages(data: &[u8], config: &PdfConfig) -> Result<Vec<RenderedPage>
         let page = &pages[idx as usize];
         let (page_w, page_h) = page.render_dimensions();
 
+        // Reject zero-area or non-finite page dimensions early, before any
+        // scale computation that could produce NaN or Inf.
+        if !page_w.is_finite() || !page_h.is_finite() || page_w <= 0.0 || page_h <= 0.0 {
+            return Err(PdfError::ZeroDimensions { page: idx });
+        }
+
         let settings = compute_render_settings(
             &config.bounds,
             page_w,
