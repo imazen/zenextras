@@ -20,6 +20,14 @@ pub enum PdfError {
     #[error("render bounds produced zero-size output for page {page}")]
     ZeroDimensions { page: u32 },
 
+    /// Too many pages requested (exceeds `RenderLimits::max_pages`).
+    #[error("requested {requested} pages, limit is {limit}")]
+    TooManyPages { requested: usize, limit: usize },
+
+    /// Per-page pixel count exceeds `RenderLimits::max_pixels_per_page`.
+    #[error("page would produce {pixels} pixels, limit is {limit}")]
+    PixelLimitExceeded { pixels: u64, limit: u64 },
+
     /// Pixel buffer construction failed.
     #[error("pixel buffer error: {0}")]
     Buffer(#[from] whereat::At<BufferError>),

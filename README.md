@@ -44,6 +44,7 @@ let config = PdfConfig {
     bounds: RenderBounds::Dpi(300.0),
     background: [255, 255, 255, 255], // opaque white
     render_annotations: true,
+    ..PdfConfig::default()
 };
 
 let pages = render_pages(&pdf_data, &config).unwrap();

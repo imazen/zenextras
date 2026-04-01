@@ -313,6 +313,7 @@ impl zencodec::decode::Decode for PdfDecoder {
             bounds: self.bounds,
             background: self.background,
             render_annotations: self.render_annotations,
+            limits: crate::render::RenderLimits::default(),
         };
         let mut pages = render::render_pages(&self.data, &config)?;
         let rendered = pages.remove(0);

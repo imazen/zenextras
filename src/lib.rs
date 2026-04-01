@@ -8,8 +8,8 @@ mod zencodec_impl;
 
 pub use error::{PdfError, Result};
 pub use render::{
-    PageSelection, PdfConfig, RenderBounds, RenderedPage, page_count, page_dimensions, render_page,
-    render_pages,
+    PageSelection, PdfConfig, RenderBounds, RenderLimits, RenderedPage, page_count,
+    page_dimensions, render_page, render_pages,
 };
 #[cfg(feature = "zencodec")]
 pub use zencodec_impl::{PDF_FORMAT, PdfDecoderConfig};
