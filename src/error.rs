@@ -14,6 +14,9 @@ pub enum SvgError {
     /// An unsupported operation was requested.
     #[cfg(feature = "zencodec")]
     Unsupported(zencodec::UnsupportedOperation),
+    /// Operation was stopped via cooperative cancellation.
+    #[cfg(feature = "zencodec")]
+    Stopped(enough::StopReason),
     /// I/O error (optimization, SVGZ compression).
     #[cfg(feature = "optimize")]
     Io(std::io::Error),
@@ -28,6 +31,8 @@ impl fmt::Display for SvgError {
             Self::LimitExceeded(msg) => write!(f, "resource limit exceeded: {msg}"),
             #[cfg(feature = "zencodec")]
             Self::Unsupported(op) => write!(f, "unsupported operation: {op}"),
+            #[cfg(feature = "zencodec")]
+            Self::Stopped(reason) => write!(f, "stopped: {reason}"),
             #[cfg(feature = "optimize")]
             Self::Io(e) => write!(f, "I/O error: {e}"),
         }
@@ -48,6 +53,20 @@ impl std::error::Error for SvgError {
 impl From<zencodec::UnsupportedOperation> for SvgError {
     fn from(op: zencodec::UnsupportedOperation) -> Self {
         Self::Unsupported(op)
+    }
+}
+
+#[cfg(feature = "zencodec")]
+impl From<zencodec::LimitExceeded> for SvgError {
+    fn from(e: zencodec::LimitExceeded) -> Self {
+        Self::LimitExceeded(e.to_string())
+    }
+}
+
+#[cfg(feature = "zencodec")]
+impl From<enough::StopReason> for SvgError {
+    fn from(reason: enough::StopReason) -> Self {
+        Self::Stopped(reason)
     }
 }
 
