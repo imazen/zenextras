@@ -52,10 +52,8 @@ fn contains_svg_tag(data: &[u8]) -> bool {
         .any(|w| starts_with_ignore_ascii_case(w, b"<svg"))
 }
 
-#[cfg(feature = "zencodec")]
 pub use self::codec_format::*;
 
-#[cfg(feature = "zencodec")]
 mod codec_format {
     use zencodec::{ImageFormat, ImageFormatDefinition};
 
