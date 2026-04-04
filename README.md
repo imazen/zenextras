@@ -8,7 +8,9 @@ SVG rendering and lossless optimization with zencodec integration.
 - **Optimize** SVGs losslessly: strip comments, metadata, whitespace; compress to SVGZ
 - **zencodec** decoder trait integration for use in zen image pipelines
 - Configurable DPI, scale, target dimensions, fit modes
-- Resource limits (max pixels, max dimensions)
+- Resource limits (max pixels, max dimensions, max input bytes)
+- Cooperative cancellation via stop tokens
+- Decompression bomb protection for SVGZ inputs
 
 ## Usage
 
@@ -42,6 +44,40 @@ let minified = optimize(svg, &OptimizeOptions::minify()).unwrap();
 
 // Maximum compression: minify + SVGZ
 let compressed = optimize(svg, &OptimizeOptions::max_compression()).unwrap();
+
+// With input size limit (decompression bomb protection)
+let safe = optimize(svg, &OptimizeOptions::minify().with_max_input_bytes(10 * 1024 * 1024)).unwrap();
+```
+
+### zencodec Integration
+
+```rust,ignore
+use zensvg::SvgDecoderConfig;
+use zencodec::decode::{DecoderConfig, DecodeJob};
+use zencodec::ResourceLimits;
+use std::borrow::Cow;
+
+let config = SvgDecoderConfig::new()
+    .with_dpi(144.0)
+    .with_scale(2.0);
+
+let mut job = config.job()
+    .with_limits(ResourceLimits::none()
+        .with_max_pixels(16_000_000)
+        .with_max_input_bytes(10 * 1024 * 1024));
+
+let info = job.probe(svg_data)?;
+let decoder = job.decoder(Cow::Borrowed(svg_data), &[])?;
+let output = decoder.decode()?;
+```
+
+SVG-specific settings are accessible through the extensions API:
+
+```rust,ignore
+// Downcast extensions to SvgDecoderConfig for SVG-specific tuning
+if let Some(config) = job.extensions_mut().and_then(|e| e.downcast_mut::<SvgDecoderConfig>()) {
+    config.render_options_mut().background = Some([255, 255, 255, 255]);
+}
 ```
 
 ## Feature Flags
