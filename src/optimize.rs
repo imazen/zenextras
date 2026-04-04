@@ -6,6 +6,12 @@
 //! - Collapse redundant whitespace
 //! - Remove metadata elements (`<metadata>`, `<desc>`, `<title>`)
 //! - Optional SVGZ (gzip) compression
+//!
+//! # Resource Limits
+//!
+//! Use [`OptimizeOptions::max_input_bytes`] to reject oversized inputs before
+//! processing. This prevents decompression bombs (large SVGZ) from consuming
+//! unbounded memory.
 
 use std::io::Write;
 
@@ -30,6 +36,11 @@ pub struct OptimizeOptions {
     pub svgz: bool,
     /// Gzip compression level for SVGZ output (0-9, default: 6).
     pub compression_level: u32,
+    /// Maximum input size in bytes. `None` = no limit (default).
+    ///
+    /// Checked before decompression for SVGZ, and before XML processing for
+    /// plain SVG. Prevents decompression bombs from consuming memory.
+    pub max_input_bytes: Option<u64>,
 }
 
 impl Default for OptimizeOptions {
@@ -41,6 +52,7 @@ impl Default for OptimizeOptions {
             strip_processing_instructions: true,
             svgz: false,
             compression_level: 6,
+            max_input_bytes: None,
         }
     }
 }
@@ -59,6 +71,12 @@ impl OptimizeOptions {
     pub fn minify() -> Self {
         Self::default()
     }
+
+    /// Set maximum input size in bytes.
+    pub fn with_max_input_bytes(mut self, max: u64) -> Self {
+        self.max_input_bytes = Some(max);
+        self
+    }
 }
 
 /// Metadata element names to strip.
@@ -71,11 +89,24 @@ const METADATA_ELEMENTS: &[&[u8]] = &[b"metadata", b"desc", b"title"];
 /// - Remove metadata elements
 /// - Collapse whitespace
 /// - Optionally compress to SVGZ (gzip)
+///
+/// Returns `Err(SvgError::LimitExceeded)` if the input exceeds
+/// [`OptimizeOptions::max_input_bytes`].
 pub fn optimize(svg_data: &[u8], options: &OptimizeOptions) -> Result<Vec<u8>, SvgError> {
+    // Check input size limit before any processing
+    if let Some(max) = options.max_input_bytes {
+        if svg_data.len() as u64 > max {
+            return Err(SvgError::LimitExceeded(format!(
+                "input size {} exceeds limit {max}",
+                svg_data.len()
+            )));
+        }
+    }
+
     // Handle SVGZ input: decompress first
     let decompressed;
     let input = if is_gzip(svg_data) {
-        decompressed = decompress_gzip(svg_data)?;
+        decompressed = decompress_gzip(svg_data, options.max_input_bytes)?;
         &decompressed
     } else {
         svg_data
@@ -95,17 +126,36 @@ fn is_gzip(data: &[u8]) -> bool {
     data.len() >= 2 && data[0] == 0x1f && data[1] == 0x8b
 }
 
-/// Decompress gzip data.
-fn decompress_gzip(data: &[u8]) -> Result<Vec<u8>, SvgError> {
+/// Decompress gzip data with an optional size limit on the decompressed output.
+fn decompress_gzip(data: &[u8], max_bytes: Option<u64>) -> Result<Vec<u8>, SvgError> {
     use flate2::read::GzDecoder;
     use std::io::Read;
 
     let mut decoder = GzDecoder::new(data);
-    let mut output = Vec::new();
-    decoder
-        .read_to_end(&mut output)
-        .map_err(|e| SvgError::Parse(format!("SVGZ decompression failed: {e}")))?;
-    Ok(output)
+
+    match max_bytes {
+        Some(max) => {
+            // Read with limit to prevent decompression bombs
+            let mut output = Vec::new();
+            decoder
+                .take(max + 1)
+                .read_to_end(&mut output)
+                .map_err(|e| SvgError::Parse(format!("SVGZ decompression failed: {e}")))?;
+            if output.len() as u64 > max {
+                return Err(SvgError::LimitExceeded(format!(
+                    "decompressed SVGZ size exceeds limit {max}"
+                )));
+            }
+            Ok(output)
+        }
+        None => {
+            let mut output = Vec::new();
+            decoder
+                .read_to_end(&mut output)
+                .map_err(|e| SvgError::Parse(format!("SVGZ decompression failed: {e}")))?;
+            Ok(output)
+        }
+    }
 }
 
 /// Compress data with gzip.
@@ -164,12 +214,12 @@ fn optimize_xml(input: &[u8], options: &OptimizeOptions) -> Result<Vec<u8>, SvgE
                 skip_depth += 1;
             }
 
-            Ok(Event::End(ref e)) if skip_depth > 0 => {
+            Ok(Event::End(_)) if skip_depth > 0 => {
                 skip_depth -= 1;
                 // Don't write the end tag of stripped elements
             }
 
-            Ok(ref event) if skip_depth > 0 => {
+            Ok(_) if skip_depth > 0 => {
                 // Skip content inside stripped metadata elements
             }
 
@@ -294,6 +344,7 @@ mod tests {
             strip_processing_instructions: false,
             svgz: false,
             compression_level: 6,
+            max_input_bytes: None,
         };
         let result = optimize(input, &opts).unwrap();
         let output = String::from_utf8(result).unwrap();
@@ -324,5 +375,50 @@ mod tests {
             result.len(),
             input.len()
         );
+    }
+
+    #[test]
+    fn max_input_bytes_rejects_oversized() {
+        let input = br#"<svg xmlns="http://www.w3.org/2000/svg"><rect/></svg>"#;
+        let opts = OptimizeOptions {
+            max_input_bytes: Some(10), // too small
+            ..Default::default()
+        };
+        let result = optimize(input, &opts);
+        assert!(matches!(result, Err(SvgError::LimitExceeded(_))));
+    }
+
+    #[test]
+    fn max_input_bytes_allows_within_limit() {
+        let input = br#"<svg><rect/></svg>"#;
+        let opts = OptimizeOptions {
+            max_input_bytes: Some(1024),
+            ..Default::default()
+        };
+        let result = optimize(input, &opts);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn svgz_decompression_bomb_protection() {
+        // Create a valid SVGZ that decompresses to something larger than the limit
+        let big_svg = format!(
+            r#"<svg xmlns="http://www.w3.org/2000/svg">{}</svg>"#,
+            " ".repeat(10_000)
+        );
+        let compressed = compress_gzip(big_svg.as_bytes(), 9).unwrap();
+        let opts = OptimizeOptions {
+            max_input_bytes: Some(1_000), // decompressed is ~10KB, limit is 1KB
+            ..Default::default()
+        };
+        let result = optimize(&compressed, &opts);
+        assert!(matches!(result, Err(SvgError::LimitExceeded(_))));
+    }
+
+    #[test]
+    fn builder_with_max_input_bytes() {
+        let opts = OptimizeOptions::minify().with_max_input_bytes(1024 * 1024);
+        assert_eq!(opts.max_input_bytes, Some(1024 * 1024));
+        assert!(opts.strip_comments);
     }
 }
