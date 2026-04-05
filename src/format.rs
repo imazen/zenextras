@@ -10,7 +10,7 @@ pub fn detect_svg(data: &[u8]) -> bool {
     }
 
     // Plain SVG: look for <svg or <?xml in the first 1024 bytes
-    let search_len = data.len().min(1024);
+    let search_len = data.len().min(256);
     let search = &data[..search_len];
 
     // Skip leading whitespace/BOM
@@ -70,7 +70,7 @@ mod codec_format {
         false, // no animation (SMIL not supported by resvg)
         true,  // lossless (vector)
         false, // no lossy mode
-        1024,  // magic bytes needed (need to scan for <svg tag)
+        256,   // magic bytes needed (scan for <svg tag)
         super::detect_svg,
     );
 
