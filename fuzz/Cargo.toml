@@ -1,0 +1,29 @@
+[package]
+name = "zensvg-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.zensvg]
+path = ".."
+default-features = false
+
+[[bin]]
+name = "fuzz_render"
+path = "fuzz_targets/fuzz_render.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_parse"
+path = "fuzz_targets/fuzz_parse.rs"
+test = false
+doc = false
+bench = false
