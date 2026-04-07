@@ -4,9 +4,11 @@
 # Rust build artifacts
 target/
 
-# Fuzz build artifacts and crashes
+# Fuzz build artifacts, crashes, and coverage
 fuzz/target/
 fuzz/artifacts/
+fuzz/coverage/
+*.profraw
 
 # Profiling
 perf.data
