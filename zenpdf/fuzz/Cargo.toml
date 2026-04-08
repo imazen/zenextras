@@ -1,0 +1,28 @@
+[package]
+name = "zenpdf-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.zenpdf]
+path = ".."
+
+[[bin]]
+name = "fuzz_render"
+path = "fuzz_targets/fuzz_render.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_render_pages"
+path = "fuzz_targets/fuzz_render_pages.rs"
+test = false
+doc = false
+bench = false

@@ -1,0 +1,58 @@
+# PDF file structure
+"%PDF-"
+"%%EOF"
+"obj"
+"endobj"
+"stream"
+"endstream"
+"xref"
+"trailer"
+"startxref"
+
+# Common dictionary keys
+"/Type"
+"/Page"
+"/Pages"
+"/Catalog"
+"/Resources"
+"/Font"
+"/Image"
+"/XObject"
+"/MediaBox"
+"/Contents"
+"/Parent"
+"/Kids"
+"/Count"
+"/Length"
+"/Filter"
+"/Subtype"
+"/BaseFont"
+
+# Filters
+"/FlateDecode"
+"/ASCIIHexDecode"
+"/ASCII85Decode"
+"/LZWDecode"
+"/DCTDecode"
+"/CCITTFaxDecode"
+
+# Value types
+"true"
+"false"
+"null"
+"R"
+
+# Delimiters
+"<<"
+">>"
+"["
+"]"
+"("
+")"
+"<"
+">"
+
+# Cross-reference
+"0 0 obj"
+"0000000000 65535 f"
+"0000000000 00000 n"
