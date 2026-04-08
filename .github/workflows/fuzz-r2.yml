@@ -1,0 +1,94 @@
+# Continuous fuzzing with R2-backed corpus.
+#
+# This workflow is DISABLED by default. To enable:
+#   1. Add R2 credentials to repo secrets:
+#      - R2_ACCOUNT_ID
+#      - R2_BUCKET (= codec-corpus)
+#      - R2_ACCESS_KEY_ID
+#      - R2_SECRET_ACCESS_KEY
+#   2. Uncomment the `on:` block below.
+#   3. Adjust max_total_time if you want longer runs.
+#
+# What it does:
+#   - Pulls the latest corpus from R2 for the matrix target
+#   - Runs the fuzzer for max_total_time seconds
+#   - Pushes any new corpus entries back to R2
+#   - Uploads any crash artifacts as workflow artifacts
+#   - Fails the job if a crash was found
+
+name: fuzz-r2
+
+# on:
+#   schedule:
+#     - cron: '0 4 * * *'   # 04:00 UTC daily
+#   workflow_dispatch:
+
+on:
+  workflow_dispatch:
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - crate: zentiff
+            target: fuzz_decode
+          - crate: zentiff
+            target: fuzz_decode_limits
+          - crate: zentiff
+            target: fuzz_probe
+          - crate: zensvg
+            target: fuzz_parse
+          - crate: zensvg
+            target: fuzz_render
+          - crate: zenpdf
+            target: fuzz_render
+          - crate: zenpdf
+            target: fuzz_render_pages
+    env:
+      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+      R2_BUCKET: ${{ secrets.R2_BUCKET }}
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      MAX_TOTAL_TIME: 600  # 10 minutes per target
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install nightly + cargo-fuzz
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rust-src
+
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+
+      - name: Install AWS CLI
+        run: pip install --user awscli
+
+      - name: Pull corpus from R2
+        run: ./scripts/fuzz-corpus.sh pull ${{ matrix.crate }} ${{ matrix.target }}
+
+      - name: Run fuzzer
+        id: fuzz
+        run: |
+          cd ${{ matrix.crate }}
+          cargo +nightly fuzz run ${{ matrix.target }} -- \
+            -max_total_time=${{ env.MAX_TOTAL_TIME }} \
+            -print_final_stats=1 \
+            2>&1 | tee /tmp/fuzz-${{ matrix.crate }}-${{ matrix.target }}.log
+
+      - name: Push new corpus entries to R2
+        if: always()
+        run: ./scripts/fuzz-corpus.sh push ${{ matrix.crate }} ${{ matrix.target }}
+
+      - name: Upload crash artifacts
+        if: failure()
+        uses: actions/upload-artifact@v5
+        with:
+          name: fuzz-crash-${{ matrix.crate }}-${{ matrix.target }}
+          path: |
+            ${{ matrix.crate }}/fuzz/artifacts/
+            /tmp/fuzz-${{ matrix.crate }}-${{ matrix.target }}.log
+          retention-days: 90

@@ -27,3 +27,5 @@ path = "fuzz_targets/fuzz_parse.rs"
 test = false
 doc = false
 bench = false
+
+[workspace]
