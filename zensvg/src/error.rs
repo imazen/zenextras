@@ -1,0 +1,77 @@
+use core::fmt;
+
+/// Errors that can occur during SVG operations.
+#[derive(Debug)]
+pub enum SvgError {
+    /// SVG parsing failed.
+    Parse(String),
+    /// Rendering failed (e.g., zero-size image, allocation failure).
+    Render(String),
+    /// The input data is not valid SVG.
+    NotSvg,
+    /// Resource limit exceeded.
+    LimitExceeded(String),
+    /// An unsupported operation was requested.
+    Unsupported(zencodec::UnsupportedOperation),
+    /// Operation was stopped via cooperative cancellation.
+    Stopped(enough::StopReason),
+    /// I/O error (optimization, SVGZ compression).
+    #[cfg(feature = "optimize")]
+    Io(std::io::Error),
+}
+
+impl fmt::Display for SvgError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Parse(msg) => write!(f, "SVG parse error: {msg}"),
+            Self::Render(msg) => write!(f, "SVG render error: {msg}"),
+            Self::NotSvg => f.write_str("input is not valid SVG"),
+            Self::LimitExceeded(msg) => write!(f, "resource limit exceeded: {msg}"),
+            Self::Unsupported(op) => write!(f, "unsupported operation: {op}"),
+            Self::Stopped(reason) => write!(f, "stopped: {reason}"),
+            #[cfg(feature = "optimize")]
+            Self::Io(e) => write!(f, "I/O error: {e}"),
+        }
+    }
+}
+
+impl std::error::Error for SvgError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            #[cfg(feature = "optimize")]
+            Self::Io(e) => Some(e),
+            _ => None,
+        }
+    }
+}
+
+impl From<zencodec::UnsupportedOperation> for SvgError {
+    fn from(op: zencodec::UnsupportedOperation) -> Self {
+        Self::Unsupported(op)
+    }
+}
+
+impl From<zencodec::LimitExceeded> for SvgError {
+    fn from(e: zencodec::LimitExceeded) -> Self {
+        Self::LimitExceeded(e.to_string())
+    }
+}
+
+impl From<enough::StopReason> for SvgError {
+    fn from(reason: enough::StopReason) -> Self {
+        Self::Stopped(reason)
+    }
+}
+
+#[cfg(feature = "optimize")]
+impl From<std::io::Error> for SvgError {
+    fn from(e: std::io::Error) -> Self {
+        Self::Io(e)
+    }
+}
+
+impl From<usvg::Error> for SvgError {
+    fn from(e: usvg::Error) -> Self {
+        Self::Parse(e.to_string())
+    }
+}
