@@ -18,7 +18,7 @@ usvg = "0.47.0"
 tiny-skia = "0.12.0"
 
 # zencodec integration
-zencodec = "0.1.12"
+zencodec = "0.1.13"
 zenpixels = "0.2.2"
 enough = "0.4.3"
 
