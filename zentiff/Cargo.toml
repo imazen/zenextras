@@ -1,0 +1,47 @@
+[package]
+name = "zentiff"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.93"
+license = "AGPL-3.0-only OR LicenseRef-Imazen-Commercial"
+description = "TIFF decoding and encoding wrapper with zenpixels integration"
+categories = ["multimedia::images", "multimedia::encoding"]
+keywords = ["tiff", "image", "decoder", "encoder", "codec"]
+repository = "https://github.com/imazen/zentiff"
+documentation = "https://docs.rs/zentiff"
+readme = "README.md"
+exclude = ["CLAUDE.md", ".github/", "justfile"]
+
+[dependencies]
+tiff = { version = "0.11.3", default-features = false }
+thiserror = { version = "2.0.18", default-features = false }
+whereat = { version = "0.1.5", default-features = false }
+enough = { version = "0.4.3", default-features = false }
+zenpixels = { version = "0.2.2", default-features = false }
+zencodec = { version = "0.1.11", optional = true }
+bytemuck = { version = "1.25.0", default-features = false, features = ["extern_crate_alloc"] }
+
+[dev-dependencies]
+codec-corpus = "1.0.3"
+
+[features]
+default = ["std", "deflate", "lzw"]
+all-codecs = ["deflate", "fax", "jpeg", "lzw", "webp", "zstd"]
+std = ["tiff/default", "enough/std", "whereat/std"]
+deflate = ["tiff/deflate"]
+fax = ["tiff/fax"]
+jpeg = ["tiff/jpeg"]
+lzw = ["tiff/lzw"]
+webp = ["tiff/webp"]
+zstd = ["tiff/zstd"]
+zencodec = ["dep:zencodec"]
+# Palette TIFF support requires tiff crate's color_map() API, which is
+# not available in tiff 0.11.x (only on git main). Enable this feature
+# once tiff 0.12+ is released. Not included in all-codecs or default.
+_palette = []
+
+[package.metadata.docs.rs]
+features = ["all-codecs", "zencodec"]
+
+[profile.test]
+opt-level = 2

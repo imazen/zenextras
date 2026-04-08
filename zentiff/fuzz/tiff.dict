@@ -1,0 +1,106 @@
+# TIFF dictionary for fuzzing
+
+# Little-endian TIFF magic
+"\x49\x49\x2A\x00"
+# Big-endian TIFF magic
+"\x4D\x4D\x00\x2A"
+# BigTIFF little-endian magic
+"\x49\x49\x2B\x00"
+# BigTIFF big-endian magic
+"\x4D\x4D\x00\x2B"
+
+# Common IFD tag IDs (little-endian u16)
+# ImageWidth (256)
+"\x00\x01"
+# ImageLength (257)
+"\x01\x01"
+# BitsPerSample (258)
+"\x02\x01"
+# Compression (259)
+"\x03\x01"
+# PhotometricInterpretation (262)
+"\x06\x01"
+# StripOffsets (273)
+"\x11\x01"
+# SamplesPerPixel (277)
+"\x15\x01"
+# RowsPerStrip (278)
+"\x16\x01"
+# StripByteCounts (279)
+"\x17\x01"
+# XResolution (282)
+"\x1A\x01"
+# YResolution (283)
+"\x1B\x01"
+# PlanarConfiguration (284)
+"\x1C\x01"
+# ResolutionUnit (296)
+"\x28\x01"
+# TileWidth (322)
+"\x42\x01"
+# TileLength (323)
+"\x43\x01"
+# TileOffsets (324)
+"\x44\x01"
+# TileByteCounts (325)
+"\x45\x01"
+# SampleFormat (339)
+"\x53\x01"
+# ICCProfile (34675)
+"\x73\x87"
+# ExifIFD (34665)
+"\x69\x87"
+# XMP (700)
+"\xBC\x02"
+
+# IFD field types (little-endian u16)
+# BYTE
+"\x01\x00"
+# SHORT
+"\x03\x00"
+# LONG
+"\x04\x00"
+# RATIONAL
+"\x05\x00"
+
+# Compression values (little-endian u16)
+# None
+"\x01\x00"
+# LZW
+"\x05\x00"
+# JPEG (old-style)
+"\x06\x00"
+# Deflate (Adobe)
+"\x08\x00"
+# PackBits
+"\x80\x00"
+# JPEG (new-style, TIFF 6.0)
+"\x07\x00"
+# Zstd
+"\xC5\x32"
+
+# PhotometricInterpretation values
+# MinIsWhite
+"\x00\x00"
+# MinIsBlack
+"\x01\x00"
+# RGB
+"\x02\x00"
+# Palette
+"\x03\x00"
+# YCbCr
+"\x06\x00"
+
+# Common dimension values
+"\x01\x00\x00\x00"
+"\x08\x00\x00\x00"
+"\x00\x01\x00\x00"
+"\x00\x04\x00\x00"
+
+# Predictor values
+# None
+"\x01\x00"
+# Horizontal differencing
+"\x02\x00"
+# Floating point
+"\x03\x00"

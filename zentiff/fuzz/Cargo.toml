@@ -1,0 +1,41 @@
+[package]
+name = "zentiff-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+enough = { version = "0.4.3", default-features = false }
+
+[dependencies.zentiff]
+path = ".."
+features = ["all-codecs"]
+
+# Prevent this from interfering with workspaces
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "fuzz_decode"
+path = "fuzz_targets/fuzz_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_probe"
+path = "fuzz_targets/fuzz_probe.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_decode_limits"
+path = "fuzz_targets/fuzz_decode_limits.rs"
+test = false
+doc = false
+bench = false
