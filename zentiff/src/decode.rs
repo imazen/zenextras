@@ -734,9 +734,22 @@ pub fn decode(
     let num_planes = layout.planes;
 
     let mut result = tiff::decoder::DecodingResult::U8(Vec::new());
-    decoder
-        .read_image_to_buffer(&mut result)
-        .map_err(|e| at!(TiffError::from(e)))?;
+    // Wrap in catch_unwind to handle panics from transitive dependencies
+    // (e.g., fax crate's CCITT Group 4 decoder can panic on malformed data
+    // due to arithmetic overflow in bit consumption — fax#20).
+    let decode_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        decoder.read_image_to_buffer(&mut result)
+    }));
+    match decode_result {
+        Ok(inner) => {
+            inner.map_err(|e| at!(TiffError::from(e)))?;
+        }
+        Err(_) => {
+            return Err(at!(TiffError::Decode(
+                "tiff decoder panicked on malformed data".into()
+            )));
+        }
+    }
 
     cancel.check().map_err(|e| at!(TiffError::from(e)))?;
 

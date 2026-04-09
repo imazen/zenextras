@@ -19,6 +19,9 @@ features = ["all-codecs"]
 [workspace]
 members = ["."]
 
+[patch.crates-io]
+fax = { path = "../../../fax" }
+
 [[bin]]
 name = "fuzz_decode"
 path = "fuzz_targets/fuzz_decode.rs"
