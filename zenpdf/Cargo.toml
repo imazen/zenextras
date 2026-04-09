@@ -10,7 +10,7 @@ keywords = ["pdf", "render", "rasterize", "hayro"]
 repository = "https://github.com/imazen/zenpdf"
 documentation = "https://docs.rs/zenpdf"
 readme = "README.md"
-exclude = ["CLAUDE.md", ".github/", "justfile"]
+exclude = ["CLAUDE.md", "CONTEXT-HANDOFF.md", "FEEDBACK.md", ".claude/", ".superwork/", ".zenbench/", "copter-report/", ".github/", "Cross.toml", "justfile", "Cargo.toml.original.txt", "fuzz/"]
 
 [dependencies]
 hayro = { version = "0.5.0", default-features = true }

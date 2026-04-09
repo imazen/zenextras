@@ -8,6 +8,20 @@ description = "SVG rendering and lossless optimization with zencodec integration
 categories = ["multimedia::images", "graphics"]
 keywords = ["svg", "svgz", "render", "optimize", "image"]
 repository = "https://github.com/imazen/zensvg"
+exclude = [
+    "CLAUDE.md",
+    "CONTEXT-HANDOFF.md",
+    "FEEDBACK.md",
+    ".claude/",
+    ".superwork/",
+    ".zenbench/",
+    "copter-report/",
+    ".github/",
+    "Cross.toml",
+    "justfile",
+    "Cargo.toml.original.txt",
+    "fuzz/",
+]
 
 [lib]
 name = "zensvg"
