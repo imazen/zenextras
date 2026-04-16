@@ -8,20 +8,7 @@ description = "JPEG 2000 decoder for the zen codec ecosystem, wrapping hayro-jpe
 categories = ["multimedia::images"]
 keywords = ["image", "codec", "jpeg2000", "jp2", "j2k"]
 repository = "https://github.com/imazen/zenjp2"
-exclude = [
-    "CLAUDE.md",
-    "CONTEXT-HANDOFF.md",
-    "FEEDBACK.md",
-    ".claude/",
-    ".superwork/",
-    ".zenbench/",
-    "copter-report/",
-    ".github/",
-    "Cross.toml",
-    "justfile",
-    "Cargo.toml.original.txt",
-    "fuzz/",
-]
+include = ["/src/**", "/README.md", "/CHANGELOG.md", "/LICENSE*"]
 
 [dependencies]
 hayro-jpeg2000 = { version = "0.3.4", default-features = false, features = ["std"] }

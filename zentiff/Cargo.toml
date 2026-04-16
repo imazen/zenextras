@@ -10,7 +10,7 @@ keywords = ["tiff", "image", "decoder", "encoder", "codec"]
 repository = "https://github.com/imazen/zentiff"
 documentation = "https://docs.rs/zentiff"
 readme = "README.md"
-exclude = ["CLAUDE.md", "CONTEXT-HANDOFF.md", "FEEDBACK.md", ".claude/", ".superwork/", ".zenbench/", "copter-report/", ".github/", "Cross.toml", "justfile", "Cargo.toml.original.txt", "fuzz/"]
+include = ["/src/**", "/README.md", "/CHANGELOG.md", "/LICENSE*", "/tests/**/*.rs"]
 
 [dependencies]
 tiff = { version = "0.11.3", default-features = false }
