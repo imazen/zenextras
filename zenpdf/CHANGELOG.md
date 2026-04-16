@@ -11,6 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 <!-- Breaking changes that will ship together in the next minor (0.x) release.
      Add items here as you discover them. Do NOT ship these piecemeal — batch them. -->
 
+### Changed
+- Bump `zencodec` dependency to 0.1.13 (a80049d).
+- Expand `Cargo.toml` `exclude` list to keep tooling noise (`.claude/`, `.superwork/`, `.zenbench/`, `copter-report/`, `Cross.toml`, `Cargo.toml.original.txt`, `fuzz/`) out of published packages (8e3902a).
+
+### Added
+- R2-backed fuzz corpus management with `fuzz/CORPUS.md` describing the workflow (b40075d).
+- Pinned `fuzz/Cargo.lock` recovered during the subtree merge (cf490b5).
+
 ## [0.1.0] - 2026-04-15
 
 Initial release. zenpdf renders PDF pages to raster buffers via the
