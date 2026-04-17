@@ -7,9 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### QUEUED BREAKING CHANGES
-<!-- Breaking changes that will ship together in the next minor (0.x) release.
-     Add items here as you discover them. Do NOT ship these piecemeal — batch them. -->
+## [0.2.0] - 2026-04-17
+
+### BREAKING CHANGES
+- `PdfConfig` gained pub field `limits: RenderLimits`
 
 ### Changed
 - Bump `zencodec` dependency to 0.1.13 (a80049d).
@@ -54,5 +55,6 @@ render bounds, and zencodec integration.
 - Badges, defaults, and dependency bumps prepared for publish (a06afb1)
 - Lockfile updated for zenpixels 0.2.2 (de9d54b)
 
-[Unreleased]: https://github.com/imazen/zenpdf/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/imazen/zenextras/compare/zenpdf-v0.2.0...HEAD
+[0.2.0]: https://github.com/imazen/zenextras/releases/tag/zenpdf-v0.2.0
 [0.1.0]: https://github.com/imazen/zenpdf/releases/tag/v0.1.0
