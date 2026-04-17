@@ -963,11 +963,7 @@ fn unpack_subbyte(packed: &[u8], width: u32, height: u32, bits: u8, num_channels
             };
 
             // Scale to 0-255
-            let scaled = if max_val == 0 {
-                0
-            } else {
-                (raw as u16 * 255 / max_val) as u8
-            };
+            let scaled = (raw as u16 * 255).checked_div(max_val).unwrap_or(0) as u8;
             out.push(scaled);
 
             bit_offset += bits as usize;
