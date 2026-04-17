@@ -10,6 +10,11 @@ semantic versioning.
 <!-- Breaking changes that will ship together in the next major (or minor for 0.x) release.
      Add items here as you discover them. Do NOT ship these piecemeal — batch them. -->
 
+## [0.1.2] - 2026-04-17
+
+### Changed
+- Bump `zencodec` dependency to 0.1.19 (release prep)
+
 ## [0.1.1] - 2026-04-10
 
 ### Fixed
