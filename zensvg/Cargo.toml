@@ -20,7 +20,7 @@ tiny-skia = "0.12.0"
 
 # zencodec integration
 zencodec = "0.1.13"
-zenpixels = "0.2.2"
+zenpixels = "0.2.10"
 enough = "0.4.3"
 
 # SVG optimization (optional)
