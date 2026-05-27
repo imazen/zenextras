@@ -62,7 +62,9 @@ jobs:
           components: rust-src
 
       - name: Install cargo-fuzz
-        run: cargo install cargo-fuzz --locked
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-fuzz
 
       - name: Install AWS CLI
         run: pip install --user awscli
@@ -74,7 +76,7 @@ jobs:
         id: fuzz
         run: |
           cd ${{ matrix.crate }}
-          cargo +nightly fuzz run ${{ matrix.target }} -- \
+          cargo +nightly fuzz run --target x86_64-unknown-linux-gnu ${{ matrix.target }} -- \
             -max_total_time=${{ env.MAX_TOTAL_TIME }} \
             -print_final_stats=1 \
             2>&1 | tee /tmp/fuzz-${{ matrix.crate }}-${{ matrix.target }}.log
