@@ -1,29 +1,39 @@
 # Continuous fuzzing with R2-backed corpus.
 #
-# This workflow is DISABLED by default. To enable:
-#   1. Add R2 credentials to repo secrets:
-#      - R2_ACCOUNT_ID
-#      - R2_BUCKET (= codec-corpus)
-#      - R2_ACCESS_KEY_ID
-#      - R2_SECRET_ACCESS_KEY
-#   2. Uncomment the `on:` block below.
-#   3. Adjust max_total_time if you want longer runs.
+# Corpus distribution: this workflow uses Cloudflare R2's anonymous
+# public read endpoint (no auth, no secrets). The bucket must have
+# a public R2 URL enabled in the Cloudflare dashboard ("Settings →
+# R2.dev subdomain") OR a custom domain pointing at it.
 #
-# What it does:
-#   - Pulls the latest corpus from R2 for the matrix target
-#   - Runs the fuzzer for max_total_time seconds
-#   - Pushes any new corpus entries back to R2
-#   - Uploads any crash artifacts as workflow artifacts
-#   - Fails the job if a crash was found
+# Layout under the public base (matches `fuzz-corpus.sh`'s S3 layout
+# minus the bucket prefix):
+#
+#   <PUBLIC_BASE>/fuzz/<crate>/<target>.tar.gz
+#
+# A per-(crate,target) tarball is the simplest distribution: R2's
+# public dev URL does NOT support directory listing (`ListBucket`)
+# anonymously, so we can't `aws s3 sync` against it. Curl + tarball
+# works with zero bucket-side config beyond enabling the public URL.
+#
+# Owner action items (one-time setup):
+#   1. Enable the bucket's R2.dev public URL in the Cloudflare
+#      dashboard (or wire up a custom domain).
+#   2. Set the `ZENEXTRAS_R2_PUBLIC_BASE` repository variable
+#      (Settings → Secrets and variables → Actions → Variables) to
+#      that URL. Example: `https://pub-abcdef123456.r2.dev`.
+#   3. Owner pushes corpus tarballs from a dev box via
+#      `scripts/fuzz-corpus.sh push` then `tar czf` + authed upload
+#      (CI is read-only).
+#
+# Until ZENEXTRAS_R2_PUBLIC_BASE is set, the "Pull corpus" step
+# emits a warning and proceeds with an empty corpus (the fuzzer
+# starts from in-tree seed inputs).
 
 name: fuzz-r2
 
-# on:
-#   schedule:
-#     - cron: '0 4 * * *'   # 04:00 UTC daily
-#   workflow_dispatch:
-
 on:
+  schedule:
+    - cron: '0 4 * * *'   # 04:00 UTC daily
   workflow_dispatch:
 
 jobs:
@@ -48,11 +58,12 @@ jobs:
           - crate: zenpdf
             target: fuzz_render_pages
     env:
-      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
-      R2_BUCKET: ${{ secrets.R2_BUCKET }}
-      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
       MAX_TOTAL_TIME: 600  # 10 minutes per target
+      # Public R2 base URL. Set via repo Actions variables; if unset
+      # the pull step skips the download and the fuzzer starts from
+      # in-tree seed inputs only. Format: `https://pub-XXX.r2.dev`
+      # or a custom domain (no trailing slash).
+      ZENEXTRAS_R2_PUBLIC_BASE: ${{ vars.ZENEXTRAS_R2_PUBLIC_BASE }}
     steps:
       - uses: actions/checkout@v5
 
@@ -66,11 +77,28 @@ jobs:
         with:
           tool: cargo-fuzz
 
-      - name: Install AWS CLI
-        run: pip install --user awscli
-
-      - name: Pull corpus from R2
-        run: ./scripts/fuzz-corpus.sh pull ${{ matrix.crate }} ${{ matrix.target }}
+      - name: Pull corpus tarball from R2 (anonymous)
+        run: |
+          set -euo pipefail
+          CRATE='${{ matrix.crate }}'
+          TARGET='${{ matrix.target }}'
+          OUT_DIR="${CRATE}/fuzz/corpus/${TARGET}"
+          mkdir -p "${OUT_DIR}"
+          if [ -z "${ZENEXTRAS_R2_PUBLIC_BASE:-}" ]; then
+            echo "::warning::ZENEXTRAS_R2_PUBLIC_BASE is unset — starting from in-tree seeds only."
+            exit 0
+          fi
+          URL="${ZENEXTRAS_R2_PUBLIC_BASE%/}/fuzz/${CRATE}/${TARGET}.tar.gz"
+          echo "Fetching ${URL}"
+          # `--fail` exits nonzero on 404/403; `--retry 3` smooths
+          # transient blips. Missing tarballs are *not* fatal — the
+          # bucket may not yet have one for a brand-new target.
+          if curl -fsSL --retry 3 --retry-delay 2 -o /tmp/corpus.tar.gz "${URL}"; then
+            tar -xzf /tmp/corpus.tar.gz -C "${OUT_DIR}"
+            echo "Pulled $(ls "${OUT_DIR}" | wc -l) corpus entries."
+          else
+            echo "::warning::No corpus tarball at ${URL} — starting from in-tree seeds only."
+          fi
 
       - name: Run fuzzer
         id: fuzz
@@ -81,9 +109,9 @@ jobs:
             -print_final_stats=1 \
             2>&1 | tee /tmp/fuzz-${{ matrix.crate }}-${{ matrix.target }}.log
 
-      - name: Push new corpus entries to R2
-        if: always()
-        run: ./scripts/fuzz-corpus.sh push ${{ matrix.crate }} ${{ matrix.target }}
+      # No push step: CI uses anonymous public read. The corpus is
+      # owner-curated and pushed manually from a dev box via the
+      # legacy `scripts/fuzz-corpus.sh push` flow with auth.
 
       - name: Upload crash artifacts
         if: failure()
