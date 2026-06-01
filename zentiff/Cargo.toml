@@ -19,11 +19,12 @@ whereat = { version = "0.1.5", default-features = false }
 enough = { version = "0.4.3", default-features = false }
 zenpixels = { version = "0.2.10", default-features = false }
 zencodec = { version = "0.1.21", optional = true }
-# Orientation baking (apply_orientation) for the zencodec adapter's bake path.
-# image-tiff itself has no orientation bake (see decode.rs Orientation TODO);
-# the zencodec adapter resolves OrientationHint by physically rotating the
-# decoded buffer with this crate. Gated under `zencodec` so the no_std core
-# stays dependency-free.
+# Two zencodec-adapter uses, gated under `zencodec` so the no_std core stays
+# dependency-free: (1) orientation baking (apply_orientation) for the bake
+# path — image-tiff itself has no orientation bake (see decode.rs Orientation
+# TODO), so the adapter resolves OrientationHint by physically rotating the
+# decoded buffer; (2) synthesizing an ICC profile from CICP primaries when
+# lowering a CICP-only source for a format (TIFF) with no CICP carrier.
 zenpixels-convert = { version = "0.2.13", default-features = false, optional = true }
 bytemuck = { version = "1.25.0", default-features = false, features = ["extern_crate_alloc"] }
 
