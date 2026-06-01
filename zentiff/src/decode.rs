@@ -284,41 +284,69 @@ fn count_pages<R: std::io::Read + std::io::Seek>(decoder: &mut tiff::decoder::De
     count
 }
 
-/// Extract the EXIF sub-IFD as raw tag/value bytes.
+/// IFD0 descriptive (0th-IFD) tags re-folded into the re-extracted EXIF blob.
 ///
-/// TIFF stores EXIF as a pointer to a sub-IFD (Tag 34665). We read the
-/// sub-IFD directory and re-serialize its tag entries as raw bytes.
-/// This preserves the EXIF data in a form that downstream consumers
-/// (e.g., image-rs, kamadak-exif) can parse.
+/// On encode, zentiff *decomposes* an EXIF blob: descriptive IFD0 tags (camera
+/// identity, dates, rights, free-text) are routed to the output TIFF's IFD0, the
+/// real EXIF tags to the EXIF sub-IFD (34665), and GPS to the GPS sub-IFD. To
+/// surface those IFD0 descriptive tags again in the re-extracted blob (so a
+/// round-trip is faithful), decode reads them back from IFD0 and merges them with
+/// the EXIF sub-IFD tags. Mirrors `encode::is_ifd0_descriptive_tag`.
+const IFD0_DESCRIPTIVE_TAGS: &[Tag] = &[
+    Tag::Unknown(0x010D), // DocumentName
+    Tag::ImageDescription,
+    Tag::Make,
+    Tag::Model,
+    Tag::Software,
+    Tag::DateTime,
+    Tag::Artist,
+    Tag::HostComputer,
+    Tag::Copyright,
+];
+
+/// Extract the EXIF metadata as a standalone TIFF byte blob.
+///
+/// TIFF stores EXIF as a pointer to a sub-IFD (Tag 34665) plus descriptive tags
+/// in IFD0. We gather both — the IFD0 descriptive tags and the EXIF sub-IFD's
+/// tags — and re-serialize them as a standalone TIFF blob downstream consumers
+/// (e.g., image-rs, kamadak-exif) can parse. Returns `None` if neither is present.
 fn read_exif_bytes<R: std::io::Read + std::io::Seek>(
     decoder: &mut tiff::decoder::Decoder<R>,
 ) -> Option<Vec<u8>> {
-    let exif_tag = Tag::ExifDirectory;
-    let ptr_val = match decoder.find_tag(exif_tag) {
-        Ok(Some(v)) => v,
-        _ => return None,
-    };
-    let ptr = match ptr_val.into_ifd_pointer() {
-        Ok(p) => p,
-        Err(_) => return None,
-    };
-    let dir = match decoder.read_directory(ptr) {
-        Ok(d) => d,
-        Err(_) => return None,
-    };
-    // Re-serialize the EXIF IFD into a minimal TIFF-structured byte blob.
-    // This creates a standalone TIFF header + single IFD that EXIF parsers
-    // can consume.
-    serialize_exif_ifd(decoder, &dir)
+    // IFD0 descriptive tags (read from the current/main directory).
+    let mut entries: Vec<(Tag, Value)> = Vec::new();
+    for &tag in IFD0_DESCRIPTIVE_TAGS {
+        if let Ok(Some(v)) = decoder.find_tag(tag) {
+            entries.push((tag, v));
+        }
+    }
+
+    // EXIF sub-IFD tags (follow the 34665 pointer, if present).
+    if let Ok(Some(ptr_val)) = decoder.find_tag(Tag::ExifDirectory)
+        && let Ok(ptr) = ptr_val.into_ifd_pointer()
+        && let Ok(dir) = decoder.read_directory(ptr)
+    {
+        let ifd_dec = decoder.read_directory_tags(&dir);
+        for (tag, value) in ifd_dec.tag_iter().filter_map(|r| r.ok()) {
+            entries.push((tag, value));
+        }
+    }
+
+    if entries.is_empty() {
+        return None;
+    }
+    // TIFF requires ascending tag order within an IFD.
+    entries.sort_by_key(|(tag, _)| tag.to_u16());
+    serialize_exif_ifd(decoder, entries)
 }
 
-/// Serialize an EXIF IFD directory into a standalone TIFF byte blob.
+/// Serialize a list of EXIF/TIFF tag entries into a standalone TIFF byte blob.
 ///
 /// Format: TIFF header (8 bytes) + IFD entry count (2 bytes) + entries
 /// (12 bytes each) + next IFD offset (4 bytes) + data.
 fn serialize_exif_ifd<R: std::io::Read + std::io::Seek>(
     decoder: &mut tiff::decoder::Decoder<R>,
-    dir: &tiff::Directory,
+    entries: Vec<(Tag, Value)>,
 ) -> Option<Vec<u8>> {
     let byte_order = decoder.byte_order();
     let is_le = matches!(byte_order, tiff::tags::ByteOrder::LittleEndian);
@@ -349,10 +377,6 @@ fn serialize_exif_ifd<R: std::io::Read + std::io::Seek>(
     }
     write_u16(&mut buf, 42); // TIFF magic
     write_u32(&mut buf, 8); // Offset to first IFD (immediately after header)
-
-    // Read tag entries from the directory using IfdDecoder
-    let ifd_dec = decoder.read_directory_tags(dir);
-    let entries: Vec<(Tag, Value)> = ifd_dec.tag_iter().filter_map(|r| r.ok()).collect();
 
     let entry_count = entries.len() as u16;
     write_u16(&mut buf, entry_count);

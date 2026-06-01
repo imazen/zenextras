@@ -7,12 +7,14 @@
 
 use alloc::borrow::Cow;
 use alloc::format;
+use alloc::vec::Vec;
 use enough::Stop;
 use zencodec::decode::{DecodeCapabilities, DecodeOutput, DecodePolicy, OutputInfo};
-use zencodec::encode::{EncodeCapabilities, EncodeOutput};
+use zencodec::encode::{EncodeCapabilities, EncodeOutput, EncodePolicy};
 use zencodec::{
-    ImageFormat, ImageInfo, ImageSequence, Metadata, Orientation, Resolution, ResolutionUnit,
-    ResourceLimits,
+    Cicp, ColorAuthority, ColorEmitPolicy, IccDisposition, ImageFormat, ImageInfo, ImageSequence,
+    Metadata, Orientation, Resolution, ResolutionUnit, ResourceLimits, SourceColor,
+    resolve_color_emit,
 };
 use zenpixels::{PixelDescriptor, PixelSlice};
 
@@ -52,6 +54,12 @@ static TIFF_ENCODE_CAPS: EncodeCapabilities = EncodeCapabilities::new()
     .with_native_16bit(true)
     .with_native_f32(true)
     .with_native_alpha(true)
+    // Metadata carriers TIFF can embed on encode (tags 34675 / 34665 / 700).
+    // No CICP carrier: TIFF has no standardized CICP/nclx box, so `cicp` stays
+    // false and a CICP-only source is lowered to a synthesized ICC instead.
+    .with_icc(true)
+    .with_exif(true)
+    .with_xmp(true)
     .with_enforces_max_pixels(true);
 
 static TIFF_DECODE_CAPS: DecodeCapabilities = DecodeCapabilities::new()
@@ -65,6 +73,8 @@ static TIFF_DECODE_CAPS: DecodeCapabilities = DecodeCapabilities::new()
     .with_native_f32(true)
     .with_native_alpha(true)
     .with_hdr(true)
+    // Multi-page TIFF: decode reports `ImageSequence::Multi` for >1 IFD.
+    .with_multi_image(true)
     .with_enforces_max_pixels(true)
     .with_enforces_max_memory(true);
 
@@ -175,7 +185,8 @@ impl zencodec::encode::EncoderConfig for TiffEncoderCodecConfig {
             config: self,
             stop: None,
             limits: None,
-            _metadata: None,
+            metadata: None,
+            policy: EncodePolicy::none(),
         }
     }
 }
@@ -187,7 +198,8 @@ pub struct TiffEncodeJob {
     config: TiffEncoderCodecConfig,
     stop: Option<zencodec::StopToken>,
     limits: Option<ResourceLimits>,
-    _metadata: Option<Metadata>,
+    metadata: Option<Metadata>,
+    policy: EncodePolicy,
 }
 
 impl zencodec::encode::EncodeJob for TiffEncodeJob {
@@ -200,8 +212,17 @@ impl zencodec::encode::EncodeJob for TiffEncodeJob {
         self
     }
 
+    fn with_policy(mut self, policy: EncodePolicy) -> Self {
+        self.policy = policy;
+        self
+    }
+
+    // `with_metadata` is deprecated in favor of `with_metadata_policy`, but the
+    // codec must still implement it (the provided `with_metadata_policy` filters
+    // then delegates here). Store the (already-filtered) metadata to embed.
+    #[allow(deprecated)]
     fn with_metadata(mut self, meta: Metadata) -> Self {
-        self._metadata = Some(meta);
+        self.metadata = Some(meta);
         self
     }
 
@@ -215,6 +236,8 @@ impl zencodec::encode::EncodeJob for TiffEncodeJob {
             config: self.config,
             stop: self.stop,
             limits: self.limits,
+            metadata: self.metadata,
+            policy: self.policy,
         })
     }
 
@@ -232,6 +255,8 @@ pub struct TiffCodecEncoder {
     config: TiffEncoderCodecConfig,
     stop: Option<zencodec::StopToken>,
     limits: Option<ResourceLimits>,
+    metadata: Option<Metadata>,
+    policy: EncodePolicy,
 }
 
 impl TiffCodecEncoder {
@@ -290,8 +315,104 @@ impl zencodec::encode::Encoder for TiffCodecEncoder {
 
         self.check_limits(&pixels)?;
 
-        let encoded = crate::encode(&pixels, &self.config.inner, stop)?;
+        let channel_count = pixels.descriptor().channels() as u8;
+        let encode_meta = lower_metadata(self.metadata.as_ref(), &self.policy, channel_count);
+
+        let encoded =
+            crate::encode::encode_with_meta(&pixels, &self.config.inner, &encode_meta, stop)?;
         Ok(EncodeOutput::new(encoded, ImageFormat::Tiff))
+    }
+}
+
+/// Lower the requested [`Metadata`] (already filtered by any
+/// [`with_metadata_policy`](zencodec::encode::EncodeJob::with_metadata_policy))
+/// plus the color-emit policy into the format-agnostic
+/// [`crate::encode::TiffEncodeMeta`] the encoder writes.
+///
+/// Color: TIFF has no CICP carrier ([`EncodeCapabilities`]`cicp == false`), so
+/// [`resolve_color_emit`] is asked what to do with the ICC channel — a
+/// CICP-only source resolves to [`IccDisposition::SynthesizeFrom`], which we
+/// lower to a profile via the transfer-aware
+/// [`zenpixels_convert::icc_profiles::synthesize_icc_for_cicp`] (so an HDR transfer
+/// is never mis-tagged with an SDR-TRC profile); `plan.cicp` itself is discarded
+/// because there is nowhere to write it.
+fn lower_metadata(
+    meta: Option<&Metadata>,
+    policy: &EncodePolicy,
+    channel_count: u8,
+) -> crate::encode::TiffEncodeMeta {
+    let Some(meta) = meta else {
+        return crate::encode::TiffEncodeMeta::default();
+    };
+
+    // --- Color (ICC) via resolve_color_emit ------------------------------
+    let mut src = SourceColor::default().with_channel_count(channel_count);
+    if let Some(c) = meta.cicp {
+        src = src.with_cicp(c).with_color_authority(ColorAuthority::Cicp);
+    }
+    if let Some(icc) = &meta.icc_profile {
+        src = src
+            .with_icc_profile(icc.clone())
+            .with_color_authority(ColorAuthority::Icc);
+    }
+
+    let color_policy = policy.resolve_color(ColorEmitPolicy::Balanced);
+    let plan = resolve_color_emit(&src, &TIFF_ENCODE_CAPS, color_policy);
+
+    // Coarse `embed_icc` gate (best-effort) overrides the plan toward dropping.
+    let icc: Option<Vec<u8>> = if policy.resolve_icc(true) {
+        match plan.icc {
+            IccDisposition::KeepSource => meta.icc_profile.as_deref().map(|b| b.to_vec()),
+            IccDisposition::SynthesizeFrom(cicp) => synth_icc_from_cicp(cicp),
+            IccDisposition::Drop => None,
+            // `IccDisposition` is `#[non_exhaustive]`; a future disposition we
+            // don't understand must not emit unknown ICC bytes — drop instead.
+            _ => None,
+        }
+    } else {
+        None
+    };
+
+    // --- EXIF / XMP (already retention-filtered by the policy layer) ------
+    let exif: Option<Vec<u8>> = if policy.resolve_exif(true) {
+        meta.exif.as_deref().map(|b| b.to_vec())
+    } else {
+        None
+    };
+    let xmp: Option<Vec<u8>> = if policy.resolve_xmp(true) {
+        meta.xmp.as_deref().map(|b| b.to_vec())
+    } else {
+        None
+    };
+
+    // --- Orientation → IFD0 tag 274 --------------------------------------
+    let orientation = match meta.orientation {
+        Orientation::Identity => None,
+        o => Some(o.to_exif() as u16),
+    };
+
+    crate::encode::TiffEncodeMeta {
+        icc,
+        xmp,
+        exif,
+        orientation,
+    }
+}
+
+/// Materialize an ICC profile for a full CICP (primaries **and** transfer) via
+/// the transfer-aware [`synthesize_icc_for_cicp`]. Returns `None` for the
+/// sRGB/BT.709 default and whenever no faithful profile is available
+/// (`NeedsCms`/`CmsUnsupported`) — TIFF has no CICP carrier, so the caller simply
+/// embeds no ICC rather than a mis-tagged one (a BT.2020-PQ source must not get
+/// the SDR-TRC Rec.2020 profile that the primaries-only lookup would have
+/// returned).
+///
+/// [`synthesize_icc_for_cicp`]: zenpixels_convert::icc_profiles::synthesize_icc_for_cicp
+fn synth_icc_from_cicp(cicp: Cicp) -> Option<Vec<u8>> {
+    use zenpixels_convert::icc_profiles::SynthesizedIcc;
+    match zenpixels_convert::icc_profiles::synthesize_icc_for_cicp(cicp) {
+        SynthesizedIcc::Profile(bytes) => Some(bytes.into_owned()),
+        _ => None,
     }
 }
 
@@ -564,6 +685,10 @@ fn tiff_info_to_image_info(tiff: &TiffInfo) -> ImageInfo {
         .and_then(|v| Orientation::from_exif(v as u8))
         .unwrap_or_default();
 
+    // `with_bit_depth` / `with_channel_count` populate `source_color.bit_depth`
+    // and `source_color.channel_count` (they are convenience setters for those
+    // SourceColor fields — `ImageInfo` has no separate top-level copies), so the
+    // color-emit resolver and any consumer see the source's depth/channels.
     let mut info = ImageInfo::new(tiff.width, tiff.height, ImageFormat::Tiff)
         .with_alpha(has_alpha)
         .with_orientation(orientation)
