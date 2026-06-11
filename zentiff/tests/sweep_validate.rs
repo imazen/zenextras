@@ -129,10 +129,10 @@ fn sweep_cells_decode_exactly_and_steps_are_live() {
     let none_i = idx("tiff-none");
     let bands_i = 0usize;
     for id in ["tiff-lzw", "tiff-deflate"] {
-        if let Some(ci) = p.cells.iter().position(|c| c.id == id) {
-            if bytes[ci][bands_i] > bytes[none_i][bands_i] {
-                failures.push(format!("{id} larger than uncompressed on bands256"));
-            }
+        if let Some(ci) = p.cells.iter().position(|c| c.id == id)
+            && bytes[ci][bands_i] > bytes[none_i][bands_i]
+        {
+            failures.push(format!("{id} larger than uncompressed on bands256"));
         }
     }
     let _ = idx;
