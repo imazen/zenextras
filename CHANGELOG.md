@@ -8,9 +8,21 @@ member entries here reference those files.
 
 ### [Unreleased]
 
+#### Added
+
+- GitHub Actions CI (`.github/workflows/ci.yml`): 6-platform test matrix
+  (Linux x64/aarch64, macOS arm64/x64, Windows x64/arm64), i686 via `cross`
+  (QEMU), wasm32-wasip1 check of zentiff's `no_std` core, clippy
+  (`--all-features -D warnings`), rustfmt, and MSRV (1.93) jobs. Tests run
+  with default features and `--all-features`; `--no-default-features` cores
+  are checked. Previously the only workflow was scheduled fuzzing
+  (`fuzz-r2.yml`) — pushes ran no tests.
+
 ## zentiff
 
-### Added
+### [Unreleased]
+
+#### Added
 
 - `sweep` module: variant-generation playbook adoption — all-trial-class
   axes (compression × predictor × BigTIFF, ≤16 cells), build-feature
@@ -22,15 +34,12 @@ member entries here reference those files.
   documented PackBits' byte-level-RLE loss on RGB band content.
   Adoption record: `zentiff/docs/VARIANT_GENERATION.md`.
 
-#### Added
+#### Changed
 
-- GitHub Actions CI (`.github/workflows/ci.yml`): 6-platform test matrix
-  (Linux x64/aarch64, macOS arm64/x64, Windows x64/arm64), i686 via `cross`
-  (QEMU), wasm32-wasip1 check of zentiff's `no_std` core, clippy
-  (`--all-features -D warnings`), rustfmt, and MSRV (1.93) jobs. Tests run
-  with default features and `--all-features`; `--no-default-features` cores
-  are checked. Previously the only workflow was scheduled fuzzing
-  (`fuzz-r2.yml`) — pushes ran no tests.
+- zencodec floor bumped 0.1.21 → 0.1.22; the adapter's local `hint_bakes`
+  shim (inlined while 0.1.21 was the published ceiling) is replaced by the
+  real `OrientationHint::bakes()` at all call sites, per the shim's own
+  removal note. No behavior change.
 
 ## zensvg
 

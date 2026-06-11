@@ -588,7 +588,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for TiffDecodeJob {
             .orientation
             .and_then(|v| Orientation::from_exif(v as u8))
             .unwrap_or(Orientation::Identity);
-        let resolved = if hint_bakes(self.orientation) {
+        let resolved = if self.orientation.bakes() {
             resolve_orientation(self.orientation, intrinsic)
         } else {
             Orientation::Identity
@@ -800,24 +800,11 @@ fn tiff_info_to_image_info(tiff: &TiffInfo) -> ImageInfo {
 // decode.rs); the rotation is the adapter's responsibility, mirroring zenwebp's
 // and zenavif's EXIF-orientation handling.
 
-/// Whether `hint` puts the decoder on the bake path (transform the pixels) vs.
-/// the preserve path (leave them stored-orientation).
-///
-/// This is the local equivalent of
-/// [`OrientationHint::bakes()`](zencodec::OrientationHint::bakes) — inlined so
-/// the adapter does not require an unreleased `zencodec` (the published 0.1.21
-/// predates `bakes()`). [`Preserve`](OrientationHint::Preserve) is the only hint
-/// that leaves pixels untouched; every other hint bakes. Once `zencodec` ships
-/// `bakes()`, these call sites can switch to `hint.bakes()` directly.
-fn hint_bakes(hint: OrientationHint) -> bool {
-    !matches!(hint, OrientationHint::Preserve)
-}
-
 /// Resolve the net [`Orientation`] to bake into the *stored* pixels for `hint`,
 /// given the image's intrinsic EXIF `intrinsic` orientation.
 ///
 /// - [`Preserve`](OrientationHint::Preserve): nothing to bake — returns
-///   [`Identity`](Orientation::Identity) (callers gate on [`hint_bakes`] first,
+///   [`Identity`](Orientation::Identity) (callers gate on [`OrientationHint::bakes`] first,
 ///   so this arm is a defensive default).
 /// - [`Correct`](OrientationHint::Correct): the intrinsic orientation (applying
 ///   it to the stored pixels yields the upright image).
@@ -839,7 +826,7 @@ fn resolve_orientation(hint: OrientationHint, intrinsic: Orientation) -> Orienta
 
 /// Bake `hint` into a decoded [`DecodeOutput`].
 ///
-/// On the [`Preserve`](OrientationHint::Preserve) path ([`hint_bakes`] is
+/// On the [`Preserve`](OrientationHint::Preserve) path ([`OrientationHint::bakes`] is
 /// `false`) the output is returned unchanged: pixels stay in stored orientation
 /// and `ImageInfo` keeps the stored dims + intrinsic EXIF tag that
 /// [`tiff_info_to_image_info`] already set.
@@ -851,7 +838,7 @@ fn resolve_orientation(hint: OrientationHint, intrinsic: Orientation) -> Orienta
 /// to apply). The intrinsic EXIF orientation is read from the `ImageInfo` the
 /// decode path already computed, so it matches what `probe()` reports.
 fn apply_orientation_to_output(output: DecodeOutput, hint: OrientationHint) -> DecodeOutput {
-    if !hint_bakes(hint) {
+    if !hint.bakes() {
         return output;
     }
     let mut info = output.info().clone();
@@ -887,7 +874,7 @@ fn apply_orientation_to_output(output: DecodeOutput, hint: OrientationHint) -> D
 /// unchanged. On a bake hint the dims are set to the resolved orientation's
 /// output geometry and the tag becomes [`Orientation::Identity`].
 fn report_probe_for_hint(mut info: ImageInfo, hint: OrientationHint) -> ImageInfo {
-    if !hint_bakes(hint) {
+    if !hint.bakes() {
         return info;
     }
     let resolved = resolve_orientation(hint, info.orientation);
