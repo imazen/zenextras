@@ -18,11 +18,21 @@ thiserror = { version = "2.0.18", default-features = false }
 whereat = { version = "0.1.5", default-features = false }
 enough = { version = "0.4.3", default-features = false }
 zenpixels = { version = "0.2.10", default-features = false }
-zencodec = { version = "0.1.19", optional = true }
+zencodec = { version = "0.1.21", optional = true }
+# Orientation baking (apply_orientation) for the zencodec adapter's bake path.
+# image-tiff itself has no orientation bake (see decode.rs Orientation TODO);
+# the zencodec adapter resolves OrientationHint by physically rotating the
+# decoded buffer with this crate. Gated under `zencodec` so the no_std core
+# stays dependency-free.
+zenpixels-convert = { version = "0.2.13", default-features = false, optional = true }
 bytemuck = { version = "1.25.0", default-features = false, features = ["extern_crate_alloc"] }
 
 [dev-dependencies]
 codec-corpus = "1.0.3"
+# Build TIFF fixtures with a native EXIF Orientation tag (tag 274) for the
+# zencodec adapter's orientation tests — image-tiff is already a normal dep,
+# but not re-exported, so the tests reach it directly.
+tiff = { version = "0.11.3", default-features = false }
 
 [features]
 default = ["std", "deflate", "lzw"]
@@ -34,7 +44,7 @@ jpeg = ["tiff/jpeg"]
 lzw = ["tiff/lzw"]
 webp = ["tiff/webp"]
 zstd = ["tiff/zstd"]
-zencodec = ["dep:zencodec"]
+zencodec = ["dep:zencodec", "dep:zenpixels-convert"]
 # Palette TIFF support requires tiff crate's color_map() API, which is
 # not available in tiff 0.11.x (only on git main). Enable this feature
 # once tiff 0.12+ is released. Not included in all-codecs or default.

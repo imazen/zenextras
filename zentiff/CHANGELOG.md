@@ -10,6 +10,20 @@ semantic versioning.
 <!-- Breaking changes that will ship together in the next major (or minor for 0.x) release.
      Add items here as you discover them. Do NOT ship these piecemeal — batch them. -->
 
+### Added
+- zencodec adapter now honors `OrientationHint` (adapter-only; native decode API
+  unchanged). `Preserve` (default) keeps stored-orientation pixels and reports
+  the stored dims + intrinsic EXIF `Orientation` tag; `Correct` /
+  `CorrectAndTransform(o)` / `ExactTransform(o)` physically bake the resolved
+  orientation into the decoded buffer via `zenpixels_convert::orient` and report
+  the display dims + `Orientation::Identity`. `probe`/`output_info` report
+  consistently with `decode` under each hint. image-tiff has no native
+  orientation bake, so the rotation is done in the adapter (f5b5459).
+
+### Changed
+- Bump `zencodec` dependency to 0.1.21; add `zenpixels-convert` 0.2.13 (gated
+  under the `zencodec` feature) for orientation baking (f5b5459).
+
 ## [0.1.2] - 2026-04-17
 
 ### Changed
