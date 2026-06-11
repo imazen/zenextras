@@ -29,7 +29,11 @@ assert_eq!(output.height, 100);
 
 ### SVG Optimization
 
-```rust
+Requires the `optimize` feature. (This block is `ignore`d here because the
+feature is off by default; the same example runs as a doctest on the
+`optimize` module under `--features optimize`.)
+
+```rust,ignore
 use zensvg::{optimize, OptimizeOptions};
 
 let svg = br#"<?xml version="1.0"?>
