@@ -8,6 +8,20 @@ member entries here reference those files.
 
 ### [Unreleased]
 
+## zentiff
+
+### Added
+
+- `sweep` module: variant-generation playbook adoption — all-trial-class
+  axes (compression × predictor × BigTIFF, ≤16 cells), build-feature
+  liveness structural (uncompiled lzw/deflate ids rejected),
+  `tiff-<method>[-hpred][-big]` grammar + parser + totality test.
+  `tests/sweep_validate.rs` gates decodability + exact roundtrip +
+  liveness; its first run proved `Predictor::Horizontal` gate-shadowed
+  under `Uncompressed` (now structurally excluded, pattern 10) and
+  documented PackBits' byte-level-RLE loss on RGB band content.
+  Adoption record: `zentiff/docs/VARIANT_GENERATION.md`.
+
 #### Added
 
 - GitHub Actions CI (`.github/workflows/ci.yml`): 6-platform test matrix
