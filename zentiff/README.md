@@ -42,10 +42,11 @@ let bytes: Vec<u8> = rgba.copy_to_contiguous_bytes();  // width * height * 4, no
 ### Errors and limits (servers)
 
 `decode`/`encode` return `Result<_, whereat::At<TiffError>>` (the `At` wrapper
-records the source location for logs). Call `.into_inner()` (or `.error()` to
-borrow) to get the `TiffError` to match on, and map it to an HTTP status:
-`LimitExceeded` → `413`, `Unsupported` → `415`, `InvalidInput`/`Decode` → `400`,
-`Stopped` → cancelled (`499`), `Io` → `500`.
+records the source location for logs). Call `.decompose().0` (owned) or
+`.error()` (borrow) to get the `TiffError` to match on, and map it to an HTTP
+status: `LimitExceeded` → `413`, `Unsupported` → `415`,
+`InvalidInput`/`Decode` → `400`, `Stopped` → cancelled (`499`), `Io` → `500`.
+`TiffError` is `#[non_exhaustive]` — keep a `_ =>` arm in the match.
 
 > **`with_max_memory` is a pre-decode *estimate*** (`width × height ×
 > output_bpp`), **not** a hard allocation ceiling — a crafted compressed/tiled
