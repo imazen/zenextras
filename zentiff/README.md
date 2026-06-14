@@ -20,6 +20,38 @@ let encoded = encode(&output.pixels.as_slice(), &TiffEncodeConfig::default(), &U
 # Ok::<(), whereat::At<zentiff::TiffError>>(())
 ```
 
+### Getting packed RGBA8 pixels
+
+`output.pixels` is a [`zenpixels::PixelBuffer`](https://docs.rs/zenpixels) in the
+file's **native** format — TIFF can be Gray8 / RGB8 / RGBA16 / RGBF32 / … — so
+"decode to RGBA8" needs one normalization step via
+[`zenpixels-convert`](https://crates.io/crates/zenpixels-convert):
+
+```toml
+# Cargo.toml — add alongside zentiff
+zenpixels-convert = { version = "0.2", features = ["rgb"] }
+```
+
+```rust
+use zenpixels_convert::PixelBufferConvertTypedExt; // brings to_rgba8() into scope
+
+let rgba = output.pixels.to_rgba8();                   // PixelBuffer<Rgba<u8>>, always 8-bit RGBA
+let bytes: Vec<u8> = rgba.copy_to_contiguous_bytes();  // width * height * 4, no row padding
+```
+
+### Errors and limits (servers)
+
+`decode`/`encode` return `Result<_, whereat::At<TiffError>>` (the `At` wrapper
+records the source location for logs). Call `.into_inner()` (or `.error()` to
+borrow) to get the `TiffError` to match on, and map it to an HTTP status:
+`LimitExceeded` → `413`, `Unsupported` → `415`, `InvalidInput`/`Decode` → `400`,
+`Stopped` → cancelled (`499`), `Io` → `500`.
+
+> **`with_max_memory` is a pre-decode *estimate*** (`width × height ×
+> output_bpp`), **not** a hard allocation ceiling — a crafted compressed/tiled
+> TIFF can still allocate larger transient decode buffers. For untrusted input
+> pair it with `with_max_pixels` / `with_max_width` / `with_max_height`.
+
 ## Decode support
 
 All color types and sample depths handled by the `tiff` crate:
