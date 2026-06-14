@@ -65,7 +65,7 @@ pub struct RenderLimits {
     /// [`render_pages`]. Default: 1000.
     pub max_pages: usize,
     /// Maximum number of pixels per rendered page (`width * height`).
-    /// Default: 100,000,000 (10k x 10k).
+    /// Default: 120,000,000 (120 MP — admits 108 MP phone photos).
     pub max_pixels_per_page: u64,
 }
 
@@ -73,7 +73,7 @@ impl Default for RenderLimits {
     fn default() -> Self {
         Self {
             max_pages: 1000,
-            max_pixels_per_page: 100_000_000,
+            max_pixels_per_page: 120_000_000,
         }
     }
 }
