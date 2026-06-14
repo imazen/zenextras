@@ -73,7 +73,7 @@ impl Default for RenderLimits {
     fn default() -> Self {
         Self {
             max_pages: 1000,
-            max_pixels_per_page: 100_000_000,
+            max_pixels_per_page: 120_000_000,
         }
     }
 }
