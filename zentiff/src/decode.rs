@@ -98,8 +98,8 @@ pub struct TiffDecodeConfig {
 }
 
 impl TiffDecodeConfig {
-    /// Default maximum pixel count: 100 million.
-    pub const DEFAULT_MAX_PIXELS: u64 = 100_000_000;
+    /// Default maximum pixel count: 120 million (admits 108 MP phone stills).
+    pub const DEFAULT_MAX_PIXELS: u64 = 120_000_000;
 
     /// Default maximum memory: 4 GiB.
     pub const DEFAULT_MAX_MEMORY: u64 = 4 * 1024 * 1024 * 1024;
@@ -1591,7 +1591,7 @@ mod tests {
     #[test]
     fn default_config_has_limits() {
         let config = TiffDecodeConfig::default();
-        assert_eq!(config.max_pixels, Some(100_000_000));
+        assert_eq!(config.max_pixels, Some(120_000_000));
         assert_eq!(config.max_memory_bytes, Some(4 * 1024 * 1024 * 1024));
     }
 
