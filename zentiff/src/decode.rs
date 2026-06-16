@@ -730,7 +730,9 @@ pub fn probe(data: &[u8]) -> Result<TiffInfo> {
 /// - RGB/RGBA 8-bit → RGB8/RGBA8
 /// - RGB/RGBA 16-bit → RGB16/RGBA16
 /// - RGB/RGBA float → RGBF32/RGBAF32
-/// - CMYK 8-bit → RGBA8 (converted)
+/// - CMYK/CMYKA 8-bit → RGBA8 (converted)
+/// - CMYK/CMYKA 16-bit → RGBA16 (converted)
+/// - CMYK/CMYKA float → RGBAF32 (converted)
 /// - Palette → RGB8 or RGBA8 (expanded)
 /// - All other high-depth integer types are widened to the next supported depth.
 ///
