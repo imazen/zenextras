@@ -10,6 +10,18 @@ semantic versioning.
 <!-- Breaking changes that will ship together in the next major (or minor for 0.x) release.
      Add items here as you discover them. Do NOT ship these piecemeal — batch them. -->
 
+### Added
+- `examples/heaptrack_decode.rs`: a reusable heaptrack/valgrind harness that
+  decodes a TIFF from bytes via `zentiff::decode(..)` in a loop, for profiling
+  heap-allocation behaviour. There is no committed TIFF fixture, so it synthesizes
+  a 1024×1024 RGB8 TIFF once (via the `tiff` dev-dependency encoder) and decodes it
+  8×; a TIFF path + iteration count can be passed. Driven by `just heaptrack-decode`.
+  Profiled result is **healthy**: ~58 allocations per decode of a 1.05 MP image
+  (O(small constant) — IFD/tag parse in `image-tiff`, not per-strip or per-pixel),
+  peak heap 7.2 MiB (~2.4× the 3 MiB RGB8 output, O(image)), and the leaked count
+  is pinned at 1 process static across 2/8/16 iterations (no per-decode leak, no
+  unbounded growth). `examples/**` added to the package `include`.
+
 ### Changed
 - `TiffDecodeConfig` doc comment now states the default `max_pixels` as 120 MP
   (admits ~108 MP photos), matching `DEFAULT_MAX_PIXELS` (`120_000_000`); the
