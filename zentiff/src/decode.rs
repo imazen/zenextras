@@ -83,7 +83,8 @@ pub struct TiffDecodeOutput {
 /// Decode configuration for TIFF operations.
 ///
 /// Controls resource limits. The default is safe for general use:
-/// 100 MP pixel count, 4 GiB memory, no individual width/height limits.
+/// 120 MP pixel count (admits ~108 MP photos), 4 GiB memory, no individual
+/// width/height limits.
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 pub struct TiffDecodeConfig {
