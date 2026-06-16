@@ -65,7 +65,7 @@ All color types and sample depths handled by the `tiff` crate:
 | RGB / YCbCr / Lab u8/u16/float | RGB8/16/F32 |
 | RGBA u8/u16/float | RGBA8/16/F32 |
 | Palette | RGB8 (requires `_palette` feature, see below) |
-| CMYK / CMYKA | RGBA8/16 (converted) |
+| CMYK / CMYKA u8/u16/float | RGBA8/16/F32 (converted) |
 
 Higher-depth integers (u32/u64/i8-i64) are widened to the next supported depth. Sub-byte samples (1/2/4/6-bit) are unpacked and scaled to 0-255.
 
