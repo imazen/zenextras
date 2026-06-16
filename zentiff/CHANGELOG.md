@@ -10,6 +10,12 @@ semantic versioning.
 <!-- Breaking changes that will ship together in the next major (or minor for 0.x) release.
      Add items here as you discover them. Do NOT ship these piecemeal — batch them. -->
 
+### Changed
+- `TiffDecodeConfig` doc comment now states the default `max_pixels` as 120 MP
+  (admits ~108 MP photos), matching `DEFAULT_MAX_PIXELS` (`120_000_000`); the
+  doc had lagged the constant at the old 100 MP figure. Memory/width/height
+  defaults unchanged.
+
 ### Fixed
 - **Encode no longer drops all metadata.** The `zencodec` encode path stored the
   requested `Metadata` in an unused field and never wrote it, so ICC/EXIF/XMP/
