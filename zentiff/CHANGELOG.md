@@ -17,6 +17,20 @@ semantic versioning.
   defaults unchanged.
 
 ### Fixed
+- **`catch_unwind` widened over the entire `image-tiff` interaction (#8).** The
+  panic guard in `decode` previously wrapped only the pixel-decode closure, so
+  the pre-flight dimension/colortype/tag reads (which hit `image-tiff`'s
+  IFD/strip-offset metadata layer first) ran *outside* the guard — a crafted
+  IFD could panic before any pixel work and unwind out of the decoder. The
+  guard now covers the whole sequence: opening the decoder, applying limits,
+  reading dimensions/colortype, validating limits, extracting metadata, the
+  pixel decode, and the colormap read. `probe` gained the same guard. A caught
+  panic maps to `TiffError::Decode` as before. Non-breaking (no API change).
+- **image-tiff intrinsic `Limits` forwarded from the decode config (#8).** The
+  `decode` config's `max_memory_bytes` now tightens `image-tiff`'s
+  `decoding_buffer_size`/`intermediate_buffer_size` (never loosens them past
+  its 256 MiB/128 MiB defaults), so an inflated strip/tile count can't allocate
+  large intermediates underneath the pixel/memory cap.
 - **Encode no longer drops all metadata.** The `zencodec` encode path stored the
   requested `Metadata` in an unused field and never wrote it, so ICC/EXIF/XMP/
   orientation were silently stripped on encode (and on any decode→encode

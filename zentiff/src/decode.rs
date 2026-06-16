@@ -191,6 +191,27 @@ impl Default for TiffDecodeConfig {
     }
 }
 
+/// Derive `image-tiff`'s intrinsic decoder `Limits` from this config so that
+/// inflated strip/tile counts cannot allocate large intermediate buffers
+/// underneath our final pixel/memory cap.
+///
+/// We start from `image-tiff`'s defaults (256 MiB decode buffer, 128 MiB
+/// intermediate buffer, 1 MiB per-IFD value) and only *tighten* them toward
+/// `max_memory_bytes` — never loosen. A single decoding/intermediate buffer
+/// should never need to exceed the whole-image memory budget, so capping both
+/// at `max_memory_bytes` bounds the per-segment allocations without rejecting
+/// any image that already fits under the pixel/memory cap.
+fn derive_tiff_limits(config: &TiffDecodeConfig) -> tiff::decoder::Limits {
+    let mut limits = tiff::decoder::Limits::default();
+    if let Some(max_mem) = config.max_memory_bytes {
+        // Saturate to usize so we never widen past the platform limit on 32-bit.
+        let cap = usize::try_from(max_mem).unwrap_or(usize::MAX);
+        limits.decoding_buffer_size = limits.decoding_buffer_size.min(cap);
+        limits.intermediate_buffer_size = limits.intermediate_buffer_size.min(cap);
+    }
+    limits
+}
+
 /// Compute DPI from resolution values and unit.
 ///
 /// Returns `None` if unit is absent, "no unit" (1), or denominators are zero.
@@ -647,39 +668,53 @@ fn extract_metadata<R: std::io::Read + std::io::Seek>(
 #[track_caller]
 // TODO: migrate to Decoder::open() + next_image() when tiff 0.12 releases
 pub fn probe(data: &[u8]) -> Result<TiffInfo> {
-    let cursor = std::io::Cursor::new(data);
-    let mut decoder = tiff::decoder::Decoder::new(cursor).map_err(|e| at!(TiffError::from(e)))?;
-    let (width, height) = decoder.dimensions().map_err(|e| at!(TiffError::from(e)))?;
-    let color_type = decoder.colortype().map_err(|e| at!(TiffError::from(e)))?;
+    // Mirror `decode`: the entire image-tiff interaction (open + dimension /
+    // colortype reads + metadata extraction) runs inside `catch_unwind`,
+    // because a crafted IFD/strip-offset can panic in image-tiff's metadata
+    // layer. A caught panic maps to a `TiffError::Decode`.
+    let guarded = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<TiffInfo> {
+        let cursor = std::io::Cursor::new(data);
+        let mut decoder =
+            tiff::decoder::Decoder::new(cursor).map_err(|e| at!(TiffError::from(e)))?;
+        let (width, height) = decoder.dimensions().map_err(|e| at!(TiffError::from(e)))?;
+        let color_type = decoder.colortype().map_err(|e| at!(TiffError::from(e)))?;
 
-    let mut info = TiffInfo {
-        width,
-        height,
-        channels: color_type.num_samples(),
-        bit_depth: color_type.bit_depth(),
-        color_type,
-        // Cannot determine float/signed without reading; probe defaults to false.
-        is_float: false,
-        is_signed: false,
-        icc_profile: None,
-        exif: None,
-        xmp: None,
-        iptc: None,
-        resolution_unit: None,
-        x_resolution: None,
-        y_resolution: None,
-        dpi: None,
-        orientation: None,
-        compression: None,
-        photometric: None,
-        samples_per_pixel: None,
-        page_count: None,
-        page_name: None,
-    };
+        let mut info = TiffInfo {
+            width,
+            height,
+            channels: color_type.num_samples(),
+            bit_depth: color_type.bit_depth(),
+            color_type,
+            // Cannot determine float/signed without reading; probe defaults to false.
+            is_float: false,
+            is_signed: false,
+            icc_profile: None,
+            exif: None,
+            xmp: None,
+            iptc: None,
+            resolution_unit: None,
+            x_resolution: None,
+            y_resolution: None,
+            dpi: None,
+            orientation: None,
+            compression: None,
+            photometric: None,
+            samples_per_pixel: None,
+            page_count: None,
+            page_name: None,
+        };
 
-    extract_metadata(&mut decoder, &mut info);
+        extract_metadata(&mut decoder, &mut info);
 
-    Ok(info)
+        Ok(info)
+    }));
+
+    match guarded {
+        Ok(inner) => inner,
+        Err(_) => Err(at!(TiffError::Decode(
+            "tiff decoder panicked on malformed data".into()
+        ))),
+    }
 }
 
 /// Decode the first frame of a TIFF file to pixels.
@@ -710,87 +745,109 @@ pub fn decode(
 ) -> Result<TiffDecodeOutput> {
     cancel.check().map_err(|e| at!(TiffError::from(e)))?;
 
-    let cursor = std::io::Cursor::new(data);
-    let mut decoder = tiff::decoder::Decoder::new(cursor).map_err(|e| at!(TiffError::from(e)))?;
-    let (width, height) = decoder.dimensions().map_err(|e| at!(TiffError::from(e)))?;
-    let color_type = decoder.colortype().map_err(|e| at!(TiffError::from(e)))?;
+    // The ENTIRE `image-tiff` interaction runs inside `catch_unwind`. TIFF is
+    // notoriously panic-prone in the IFD/strip-offset metadata layer, so a
+    // crafted file can panic while merely opening the decoder or reading
+    // dimensions/colortype/tags — before any pixel decode. The guard therefore
+    // wraps construction + `with_limits` + dimension/colortype reads + limit
+    // validation + metadata extraction + the pixel decode + the colormap read.
+    // It also still catches panics from transitive codec deps (e.g. the fax
+    // crate's CCITT Group 4 decoder can panic on malformed data due to
+    // arithmetic overflow in bit consumption — fax#20).
+    //
+    // The closure returns a normal `Result` so error mapping and location
+    // tracking work as before; `catch_unwind`'s outer `Err` means a panic was
+    // caught and is mapped to a `TiffError::Decode`.
+    let limits = derive_tiff_limits(config);
+    let guarded = std::panic::catch_unwind(std::panic::AssertUnwindSafe(
+        || -> Result<(TiffInfo, tiff::decoder::DecodingResult, usize, Option<Vec<u16>>)> {
+            let cursor = std::io::Cursor::new(data);
+            let mut decoder = tiff::decoder::Decoder::new(cursor)
+                .map_err(|e| at!(TiffError::from(e)))?
+                // Bound image-tiff's intermediate/decoding-buffer allocations so
+                // an inflated strip/tile count can't allocate large intermediates
+                // under our pixel/memory cap.
+                .with_limits(limits);
+            let (width, height) = decoder.dimensions().map_err(|e| at!(TiffError::from(e)))?;
+            let color_type = decoder.colortype().map_err(|e| at!(TiffError::from(e)))?;
 
-    // Check limits before allocating
-    let output_bpp = output_bytes_per_pixel(color_type);
-    config.validate(width, height, output_bpp as u32)?;
+            // Check limits before allocating.
+            let output_bpp = output_bytes_per_pixel(color_type);
+            config.validate(width, height, output_bpp as u32)?;
 
-    cancel.check().map_err(|e| at!(TiffError::from(e)))?;
+            // Extract metadata before decoding pixels, because image reading
+            // repositions the stream and may interfere with tag reads.
+            let mut info = TiffInfo {
+                width,
+                height,
+                channels: color_type.num_samples(),
+                bit_depth: color_type.bit_depth(),
+                color_type,
+                is_float: false,
+                is_signed: false,
+                icc_profile: None,
+                exif: None,
+                xmp: None,
+                iptc: None,
+                resolution_unit: None,
+                x_resolution: None,
+                y_resolution: None,
+                dpi: None,
+                orientation: None,
+                compression: None,
+                photometric: None,
+                samples_per_pixel: None,
+                page_count: None,
+                page_name: None,
+            };
 
-    // Extract metadata before decoding pixels, because image reading
-    // repositions the stream and may interfere with tag reads.
-    let mut info = TiffInfo {
-        width,
-        height,
-        channels: color_type.num_samples(),
-        bit_depth: color_type.bit_depth(),
-        color_type,
-        is_float: false,
-        is_signed: false,
-        icc_profile: None,
-        exif: None,
-        xmp: None,
-        iptc: None,
-        resolution_unit: None,
-        x_resolution: None,
-        y_resolution: None,
-        dpi: None,
-        orientation: None,
-        compression: None,
-        photometric: None,
-        samples_per_pixel: None,
-        page_count: None,
-        page_name: None,
-    };
+            extract_metadata(&mut decoder, &mut info);
 
-    extract_metadata(&mut decoder, &mut info);
+            // Use read_image_to_buffer instead of read_image to support planar
+            // images. read_image() only reads the first plane for planar TIFFs
+            // (known bug).
+            let layout = decoder
+                .image_buffer_layout()
+                .map_err(|e| at!(TiffError::from(e)))?;
+            let num_planes = layout.planes;
 
-    cancel.check().map_err(|e| at!(TiffError::from(e)))?;
+            let mut result = tiff::decoder::DecodingResult::U8(Vec::new());
+            decoder
+                .read_image_to_buffer(&mut result)
+                .map_err(|e| at!(TiffError::from(e)))?;
 
-    // Use read_image_to_buffer instead of read_image to support planar images.
-    // read_image() only reads the first plane for planar TIFFs (known bug).
-    let layout = decoder
-        .image_buffer_layout()
-        .map_err(|e| at!(TiffError::from(e)))?;
-    let num_planes = layout.planes;
+            let (is_float, is_signed) = result_format_flags(&result);
+            info.is_float = is_float;
+            info.is_signed = is_signed;
 
-    let mut result = tiff::decoder::DecodingResult::U8(Vec::new());
-    // Wrap in catch_unwind to handle panics from transitive dependencies
-    // (e.g., fax crate's CCITT Group 4 decoder can panic on malformed data
-    // due to arithmetic overflow in bit consumption — fax#20).
-    let decode_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        decoder.read_image_to_buffer(&mut result)
-    }));
-    match decode_result {
-        Ok(inner) => {
-            inner.map_err(|e| at!(TiffError::from(e)))?;
-        }
+            #[cfg(feature = "_palette")]
+            let color_map = decoder
+                .find_tag(Tag::ColorMap)
+                .map_err(|e| at!(TiffError::from(e)))?
+                .map(|v| v.into_u16_vec())
+                .transpose()
+                .map_err(|e| at!(TiffError::from(e)))?;
+            #[cfg(not(feature = "_palette"))]
+            let color_map: Option<Vec<u16>> = None;
+
+            Ok((info, result, num_planes, color_map))
+        },
+    ));
+
+    let (info, mut result, num_planes, color_map) = match guarded {
+        Ok(inner) => inner?,
         Err(_) => {
             return Err(at!(TiffError::Decode(
                 "tiff decoder panicked on malformed data".into()
             )));
         }
-    }
+    };
 
     cancel.check().map_err(|e| at!(TiffError::from(e)))?;
 
-    let (is_float, is_signed) = result_format_flags(&result);
-    info.is_float = is_float;
-    info.is_signed = is_signed;
-
-    #[cfg(feature = "_palette")]
-    let color_map = decoder
-        .find_tag(Tag::ColorMap)
-        .map_err(|e| at!(TiffError::from(e)))?
-        .map(|v| v.into_u16_vec())
-        .transpose()
-        .map_err(|e| at!(TiffError::from(e)))?;
-    #[cfg(not(feature = "_palette"))]
-    let color_map: Option<Vec<u16>> = None;
+    let width = info.width;
+    let height = info.height;
+    let color_type = info.color_type;
 
     // For planar images, interleave planes into contiguous pixel data.
     if num_planes > 1 {
