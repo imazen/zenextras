@@ -32,6 +32,9 @@ semantic versioning.
   `tiff 0.11.3` has no raw-UNDEFINED writer.
 
 ### Added
+- `docs(readme)`: correct the decode-support table — CMYK/CMYKA float input
+  decodes to `RGBAF32`, not only `RGBA8`/`RGBA16` (matches `decode.rs`
+  `descriptor_for`).
 - Color-emit lowering on encode: `resolve_color_emit` runs against the TIFF
   capabilities (no CICP carrier), synthesizing an ICC profile from a CICP-only
   source's primaries via `zenpixels-convert` (and embedding nothing for the sRGB
