@@ -994,8 +994,8 @@ fn convert_to_pixel_buffer(
         _ => result_to_bytes(width, height, color_type, result, descriptor).at()?,
     };
 
-    let buf = PixelBuffer::from_vec(raw_bytes, width, height, descriptor)
-        .map_err(|e| at!(TiffError::from(e)))?;
+    let buf =
+        PixelBuffer::from_vec(raw_bytes, width, height, descriptor).map_err_at(TiffError::from)?;
     Ok((buf, descriptor))
 }
 
@@ -1413,8 +1413,8 @@ fn convert_cmyk(
             }
 
             let desc = PixelDescriptor::RGBA8;
-            let buf = PixelBuffer::from_vec(rgba, width, height, desc)
-                .map_err(|e| at!(TiffError::from(e)))?;
+            let buf =
+                PixelBuffer::from_vec(rgba, width, height, desc).map_err_at(TiffError::from)?;
             Ok((buf, desc))
         }
         DR::I8(data) => {
@@ -1451,8 +1451,8 @@ fn convert_cmyk(
             }
 
             let desc = PixelDescriptor::RGBA8;
-            let buf = PixelBuffer::from_vec(rgba, width, height, desc)
-                .map_err(|e| at!(TiffError::from(e)))?;
+            let buf =
+                PixelBuffer::from_vec(rgba, width, height, desc).map_err_at(TiffError::from)?;
             Ok((buf, desc))
         }
         DR::U16(data) => {
@@ -1486,7 +1486,7 @@ fn convert_cmyk(
 
             let desc = PixelDescriptor::RGBA16;
             let buf = PixelBuffer::from_vec(vec_to_bytes(rgba), width, height, desc)
-                .map_err(|e| at!(TiffError::from(e)))?;
+                .map_err_at(TiffError::from)?;
             Ok((buf, desc))
         }
         DR::F32(data) => {
@@ -1519,7 +1519,7 @@ fn convert_cmyk(
 
             let desc = PixelDescriptor::RGBAF32;
             let buf = PixelBuffer::from_vec(vec_to_bytes(rgba), width, height, desc)
-                .map_err(|e| at!(TiffError::from(e)))?;
+                .map_err_at(TiffError::from)?;
             Ok((buf, desc))
         }
         _ => Err(at!(TiffError::Unsupported(
@@ -1598,8 +1598,7 @@ fn expand_palette(
     }
 
     let desc = PixelDescriptor::RGB8;
-    let buf =
-        PixelBuffer::from_vec(rgb, width, height, desc).map_err(|e| at!(TiffError::from(e)))?;
+    let buf = PixelBuffer::from_vec(rgb, width, height, desc).map_err_at(TiffError::from)?;
     Ok((buf, desc))
 }
 

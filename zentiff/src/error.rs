@@ -74,12 +74,6 @@ impl From<zenpixels::BufferError> for TiffError {
     }
 }
 
-impl From<whereat::At<zenpixels::BufferError>> for TiffError {
-    fn from(e: whereat::At<zenpixels::BufferError>) -> Self {
-        TiffError::Buffer(e.decompose().0)
-    }
-}
-
 #[cfg(feature = "zencodec")]
 impl From<zencodec::UnsupportedOperation> for TiffError {
     fn from(op: zencodec::UnsupportedOperation) -> Self {
