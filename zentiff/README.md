@@ -84,9 +84,13 @@ Compression options: LZW (default), Deflate, PackBits, or uncompressed. Horizont
 
 Extracts ICC profiles, EXIF (re-serialized from sub-IFD), XMP, IPTC, resolution (with cm→inch conversion), orientation, compression method, photometric interpretation, page count, and page name.
 
+On encode (via the `zencodec` feature), source metadata is embedded back into the TIFF: the ICC profile (tag 34675), XMP (tag 700), the EXIF orientation (tag 274), and EXIF content decomposed into native TIFF IFDs — all subject to the active metadata/color emit policy.
+
 ## zencodec integration
 
 With the `zencodec` feature, zentiff implements both [`zencodec::decode::DecoderConfig`](https://docs.rs/zencodec) and [`zencodec::encode::EncoderConfig`](https://docs.rs/zencodec) for codec-agnostic image pipelines.
+
+The zencodec adapter honors `OrientationHint` (`Preserve`, `Correct`, `CorrectAndTransform`, and `ExactTransform`) when resolving the stored EXIF orientation tag; the default `Preserve` keeps pixels in stored layout with the intrinsic tag intact.
 
 Resource limits, cooperative cancellation, and decode policy (metadata suppression) are all supported through the zencodec trait flow.
 
