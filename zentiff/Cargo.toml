@@ -10,7 +10,7 @@ keywords = ["tiff", "image", "decoder", "encoder", "codec"]
 repository = "https://github.com/imazen/zentiff"
 documentation = "https://docs.rs/zentiff"
 readme = "README.md"
-include = ["/src/**", "/README.md", "/CHANGELOG.md", "/LICENSE*", "/tests/**/*.rs"]
+include = ["/src/**", "/README.md", "/CHANGELOG.md", "/LICENSE*", "/tests/**/*.rs", "/examples/**/*.rs"]
 
 [dependencies]
 tiff = { version = "0.11.3", default-features = false }
@@ -56,3 +56,9 @@ features = ["all-codecs", "zencodec"]
 
 [profile.test]
 opt-level = 2
+
+# Heaptrack allocation-profiling harness for the decode-from-bytes path.
+# Decode works with default features; the synthetic fixture uses the `tiff`
+# dev-dependency encoder. No extra features needed.
+[[example]]
+name = "heaptrack_decode"

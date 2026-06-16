@@ -26,6 +26,14 @@ clippy:
     cargo clippy --all-targets --features "all-codecs,zencodec" -- -D warnings
     cargo clippy --all-targets --no-default-features --features std -- -D warnings
 
+# Profile decode-from-bytes heap allocations with heaptrack (needs heaptrack installed).
+# Defaults to a synthetic 1024x1024 RGB8 TIFF decoded 8x; pass a TIFF path + iters to
+# override. Inspect with: heaptrack_print /tmp/zentiff-ht.zst
+heaptrack-decode *ARGS:
+    cargo build -p zentiff --release --example heaptrack_decode
+    rm -f /tmp/zentiff-ht.zst
+    heaptrack --output /tmp/zentiff-ht ../target/release/examples/heaptrack_decode {{ARGS}}
+
 # Format
 fmt:
     cargo fmt
