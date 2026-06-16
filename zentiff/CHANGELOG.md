@@ -9,6 +9,12 @@ semantic versioning.
 ### QUEUED BREAKING CHANGES
 <!-- Breaking changes that will ship together in the next major (or minor for 0.x) release.
      Add items here as you discover them. Do NOT ship these piecemeal — batch them. -->
+- Removed the public `impl From<whereat::At<zenpixels::BufferError>> for TiffError`.
+  It flattened the trace (`TiffError::Buffer(e.decompose().0)`); callers that relied
+  on `?`/`From` to convert an `At<BufferError>` directly to a bare `TiffError` should
+  use `.map_err_at(TiffError::from)` (the bare `From<BufferError>` impl stays, and
+  this preserves the trace). `At<BufferError>` → `At<TiffError>` via `?` is unchanged
+  (whereat's blanket conversion uses the bare `From<BufferError>`).
 
 ### Added
 - `examples/heaptrack_decode.rs`: a reusable heaptrack/valgrind harness that
@@ -28,7 +34,23 @@ semantic versioning.
   doc had lagged the constant at the old 100 MP figure. Memory/width/height
   defaults unchanged.
 
+### Removed
+- `impl From<whereat::At<zenpixels::BufferError>> for TiffError` (the README
+  trace-loss anti-pattern — it called `.decompose().0`, discarding the
+  `BufferError`'s location frames). The bare `From<zenpixels::BufferError>`
+  impl is retained; see QUEUED BREAKING CHANGES for the migration.
+
 ### Fixed
+- **Preserve the `BufferError` trace across the `PixelBuffer` boundary.** The 6
+  decode sites that build a `PixelBuffer` (`PixelBuffer::from_vec(...)` for the
+  RGB8/RGBA8/RGBA16/RGBAF32/RGB paths) used `.map_err(|e| at!(TiffError::from(e)))`,
+  which routed `e: At<BufferError>` through the now-deleted `From<At<_>>` impl
+  (`decompose().0` dropped the frames) and then created a fresh single-frame
+  `At`. They now use `.map_err_at(TiffError::from)`, which maps the inner bare
+  `BufferError` via `From<BufferError>` while keeping the original `At` trace
+  frames. The 12 other `at!(TiffError::from(e))` sites wrap bare errors
+  (`tiff::TiffError`, `enough::StopReason`) — those correctly create the first
+  frame and are unchanged.
 - **`catch_unwind` widened over the entire `image-tiff` interaction (#8).** The
   panic guard in `decode` previously wrapped only the pixel-decode closure, so
   the pre-flight dimension/colortype/tag reads (which hit `image-tiff`'s
