@@ -227,7 +227,10 @@ fn roundtrip_graya8_stays_two_channel() {
     let output = decode(&encoded, &TiffDecodeConfig::default(), &Unstoppable).unwrap();
     assert_eq!(output.info.width, 40);
     assert_eq!(output.info.height, 24);
-    assert_eq!(output.pixels.descriptor().layout(), ChannelLayout::GrayAlpha);
+    assert_eq!(
+        output.pixels.descriptor().layout(),
+        ChannelLayout::GrayAlpha
+    );
     assert_eq!(output.pixels.descriptor().channel_type(), ChannelType::U8);
 
     let original = buf.as_slice().contiguous_bytes();
@@ -252,7 +255,10 @@ fn roundtrip_graya16_stays_two_channel() {
     assert_eq!(info.samples_per_pixel, Some(2));
 
     let output = decode(&encoded, &TiffDecodeConfig::default(), &Unstoppable).unwrap();
-    assert_eq!(output.pixels.descriptor().layout(), ChannelLayout::GrayAlpha);
+    assert_eq!(
+        output.pixels.descriptor().layout(),
+        ChannelLayout::GrayAlpha
+    );
     assert_eq!(output.pixels.descriptor().channel_type(), ChannelType::U16);
 
     let original = buf.as_slice().contiguous_bytes();
@@ -275,7 +281,10 @@ fn roundtrip_grayaf32_stays_two_channel() {
     assert_eq!(info.samples_per_pixel, Some(2));
 
     let output = decode(&encoded, &TiffDecodeConfig::default(), &Unstoppable).unwrap();
-    assert_eq!(output.pixels.descriptor().layout(), ChannelLayout::GrayAlpha);
+    assert_eq!(
+        output.pixels.descriptor().layout(),
+        ChannelLayout::GrayAlpha
+    );
     assert_eq!(output.pixels.descriptor().channel_type(), ChannelType::F32);
 
     let original = buf.as_slice().contiguous_bytes();

@@ -507,9 +507,7 @@ fn write_image_with_meta<W: std::io::Write + std::io::Seek, K: tiff::encoder::Ti
         // GrayAlpha — Gray colortype + one `ExtraSamples = UnassociatedAlpha`
         // channel (2 samples/pixel), written verbatim. No RGBA widening.
         (ChannelLayout::GrayAlpha, ChannelType::U8) => {
-            write_one_graya_image::<_, _, colortype::Gray8>(
-                enc, width, height, data, meta, &subs,
-            )?;
+            write_one_graya_image::<_, _, colortype::Gray8>(enc, width, height, data, meta, &subs)?;
         }
         (ChannelLayout::GrayAlpha, ChannelType::U16) => {
             let samples = as_u16_slice(data)?;
