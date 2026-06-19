@@ -935,17 +935,25 @@ fn descriptor_for(ct: tiff::ColorType, is_float: bool) -> PixelDescriptor {
         } => {
             match (num_samples, bit_depth) {
                 (1, 1..=8) => PixelDescriptor::GRAY8,
+                (1, _) if is_float => PixelDescriptor::GRAYF32,
                 (1, _) => PixelDescriptor::GRAY16,
-                // 2 channels → GrayAlpha
+                // 2 channels → GrayAlpha. A gray+alpha image written as Gray +
+                // `ExtraSamples` lands here (BlackIsZero with 2 samples decodes
+                // to `Multiband { num_samples: 2 }`, never `GrayA`), so the float
+                // case must map to GRAYAF32 — otherwise f32 samples would be
+                // mis-typed as u16 and `result_to_bytes` would reject them.
                 (2, 1..=8) => PixelDescriptor::GRAYA8,
-                (2, 9..=16) => PixelDescriptor::GRAYA16,
+                (2, _) if is_float => PixelDescriptor::GRAYAF32,
                 (2, _) => PixelDescriptor::GRAYA16,
                 (3, 1..=8) => PixelDescriptor::RGB8,
+                (3, _) if is_float => PixelDescriptor::RGBF32,
                 (3, _) => PixelDescriptor::RGB16,
                 (4, 1..=8) => PixelDescriptor::RGBA8,
+                (4, _) if is_float => PixelDescriptor::RGBAF32,
                 (4, _) => PixelDescriptor::RGBA16,
                 // 5+ channels: drop extras, treat as RGBA
                 (_, 1..=8) => PixelDescriptor::RGBA8,
+                _ if is_float => PixelDescriptor::RGBAF32,
                 _ => PixelDescriptor::RGBA16,
             }
         }

@@ -81,7 +81,8 @@ static TIFF_DECODE_CAPS: DecodeCapabilities = DecodeCapabilities::new()
 /// Pixel formats the TIFF encoder accepts.
 ///
 /// Gray, GrayAlpha, RGB, RGBA in u8/u16/f32.
-/// (GrayAlpha is expanded to RGBA internally.)
+/// (GrayAlpha is written as Gray + an `ExtraSamples` alpha channel — 2
+/// samples/pixel — not widened to RGBA.)
 static TIFF_ENCODE_DESCRIPTORS: &[PixelDescriptor] = &[
     PixelDescriptor::RGB8_SRGB,
     PixelDescriptor::RGBA8_SRGB,
@@ -946,15 +947,22 @@ fn descriptor_for_probe(tiff: &TiffInfo) -> PixelDescriptor {
             num_samples,
         } => match (num_samples, bit_depth) {
             (1, 1..=8) => PixelDescriptor::GRAY8_SRGB,
+            (1, _) if is_float => PixelDescriptor::GRAYF32_LINEAR,
             (1, _) => PixelDescriptor::GRAY16_SRGB,
+            // 2 channels → GrayAlpha; mirror `descriptor_for` in decode.rs so a
+            // Gray + `ExtraSamples` (float) image probes as GRAYAF32, matching
+            // what `decode()` actually produces.
             (2, 1..=8) => PixelDescriptor::GRAYA8_SRGB,
-            (2, 9..=16) => PixelDescriptor::GRAYA16_SRGB,
+            (2, _) if is_float => PixelDescriptor::GRAYAF32_LINEAR,
             (2, _) => PixelDescriptor::GRAYA16_SRGB,
             (3, 1..=8) => PixelDescriptor::RGB8_SRGB,
+            (3, _) if is_float => PixelDescriptor::RGBF32_LINEAR,
             (3, _) => PixelDescriptor::RGB16_SRGB,
             (4, 1..=8) => PixelDescriptor::RGBA8_SRGB,
+            (4, _) if is_float => PixelDescriptor::RGBAF32_LINEAR,
             (4, _) => PixelDescriptor::RGBA16_SRGB,
             (_, 1..=8) => PixelDescriptor::RGBA8_SRGB,
+            _ if is_float => PixelDescriptor::RGBAF32_LINEAR,
             _ => PixelDescriptor::RGBA16_SRGB,
         },
         _ => PixelDescriptor::RGBA8_SRGB,

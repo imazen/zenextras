@@ -158,6 +158,29 @@ impl Default for TiffEncodeConfig {
     }
 }
 
+/// The TIFF predictor to actually use for `desc`, given the requested one.
+///
+/// `GrayAlpha` is written as a Gray colortype plus one `ExtraSamples` alpha
+/// channel (2 samples/pixel). In `tiff 0.11.3` the *encoder* derives the
+/// horizontal-predictor stride from the base colortype's sample count (1, for
+/// Gray) and so predicts every byte against its immediate neighbour, while the
+/// *decoder* reverses prediction with the full per-pixel sample count (2). That
+/// stride mismatch corrupts the round-trip, so horizontal prediction is force-
+/// disabled for `GrayAlpha`. The predictor is only a compression optimisation,
+/// not a correctness feature, and the Gray + `ExtraSamples` form is already
+/// half the samples of the old RGBA widening regardless. All other layouts keep
+/// the requested predictor.
+fn effective_predictor(
+    desc: &PixelDescriptor,
+    requested: tiff::encoder::Predictor,
+) -> tiff::encoder::Predictor {
+    if desc.layout() == ChannelLayout::GrayAlpha {
+        tiff::encoder::Predictor::None
+    } else {
+        requested
+    }
+}
+
 /// Encode a PixelBuffer to TIFF bytes.
 ///
 /// Supports Gray, GrayAlpha, RGB, RGBA in u8, u16, and f32 channel types.
@@ -178,7 +201,7 @@ pub fn encode(
     let data = pixels.contiguous_bytes();
 
     let compression = config.compression.to_tiff()?;
-    let predictor = config.predictor.to_tiff();
+    let predictor = effective_predictor(&desc, config.predictor.to_tiff());
 
     let mut buf = std::io::Cursor::new(Vec::new());
 
@@ -221,7 +244,7 @@ pub(crate) fn encode_with_meta(
     let data = pixels.contiguous_bytes();
 
     let compression = config.compression.to_tiff()?;
-    let predictor = config.predictor.to_tiff();
+    let predictor = effective_predictor(&desc, config.predictor.to_tiff());
 
     let mut buf = std::io::Cursor::new(Vec::new());
 
@@ -317,24 +340,21 @@ fn write_image<W: std::io::Write + std::io::Seek, K: tiff::encoder::TiffKind>(
                 .map_err(|e| at!(TiffError::from(e)))?;
         }
 
-        // GrayAlpha — tiff crate doesn't have a GrayAlpha encoder colortype,
-        // so we expand to RGBA.
+        // GrayAlpha — the tiff crate has no dedicated gray+alpha colortype, but
+        // a 2-samples-per-pixel image is expressed by writing the Gray colortype
+        // and adding one `ExtraSamples = UnassociatedAlpha` channel. The
+        // interleaved (gray, alpha) data is written verbatim — no widening to
+        // RGBA, so the file carries 2 samples/pixel instead of 4.
         (ChannelLayout::GrayAlpha, ChannelType::U8) => {
-            let rgba = expand_graya_to_rgba_u8(data);
-            enc.write_image::<colortype::RGBA8>(width, height, &rgba)
-                .map_err(|e| at!(TiffError::from(e)))?;
+            write_graya_image::<_, _, colortype::Gray8>(enc, width, height, data)?;
         }
         (ChannelLayout::GrayAlpha, ChannelType::U16) => {
             let samples = as_u16_slice(data)?;
-            let rgba = expand_graya_to_rgba_u16(&samples);
-            enc.write_image::<colortype::RGBA16>(width, height, &rgba)
-                .map_err(|e| at!(TiffError::from(e)))?;
+            write_graya_image::<_, _, colortype::Gray16>(enc, width, height, &samples)?;
         }
         (ChannelLayout::GrayAlpha, ChannelType::F32) => {
             let samples = as_f32_slice(data)?;
-            let rgba = expand_graya_to_rgba_f32(&samples);
-            enc.write_image::<colortype::RGBA32Float>(width, height, &rgba)
-                .map_err(|e| at!(TiffError::from(e)))?;
+            write_graya_image::<_, _, colortype::Gray32Float>(enc, width, height, &samples)?;
         }
 
         // RGB
@@ -376,6 +396,42 @@ fn write_image<W: std::io::Write + std::io::Seek, K: tiff::encoder::TiffKind>(
         }
     }
 
+    Ok(())
+}
+
+/// Write a gray + alpha image as a Gray colortype with one
+/// `ExtraSamples = UnassociatedAlpha` channel (2 samples/pixel).
+///
+/// `C` is the matching *single-channel* gray colortype (`Gray8`/`Gray16`/
+/// `Gray32Float`); `samples` is the interleaved (gray, alpha) data, exactly
+/// `width * height * 2` elements long. The data is written verbatim — no
+/// widening to RGBA — so the file carries half the sample bytes of the old
+/// RGBA-expansion path. `extra_samples` re-derives the per-row sample count and
+/// rewrites `SamplesPerPixel`/`BitsPerSample` to 2 channels at finish time.
+#[track_caller]
+fn write_graya_image<W, K, C>(
+    enc: &mut tiff::encoder::TiffEncoder<W, K>,
+    width: u32,
+    height: u32,
+    samples: &[C::Inner],
+) -> Result<()>
+where
+    W: std::io::Write + std::io::Seek,
+    K: tiff::encoder::TiffKind,
+    C: tiff::encoder::colortype::ColorType,
+    [C::Inner]: tiff::encoder::TiffValue,
+{
+    use tiff::tags::ExtraSamples;
+
+    let mut image = enc
+        .new_image::<C>(width, height)
+        .map_err(|e| at!(TiffError::from(e)))?;
+    image
+        .extra_samples(&[ExtraSamples::UnassociatedAlpha])
+        .map_err(|e| at!(TiffError::from(e)))?;
+    image
+        .write_data(samples)
+        .map_err(|e| at!(TiffError::from(e)))?;
     Ok(())
 }
 
@@ -448,21 +504,23 @@ fn write_image_with_meta<W: std::io::Write + std::io::Seek, K: tiff::encoder::Ti
             )?;
         }
 
-        // GrayAlpha — expand to RGBA.
+        // GrayAlpha — Gray colortype + one `ExtraSamples = UnassociatedAlpha`
+        // channel (2 samples/pixel), written verbatim. No RGBA widening.
         (ChannelLayout::GrayAlpha, ChannelType::U8) => {
-            let rgba = expand_graya_to_rgba_u8(data);
-            write_one_image::<_, _, colortype::RGBA8>(enc, width, height, &rgba, meta, &subs)?;
+            write_one_graya_image::<_, _, colortype::Gray8>(
+                enc, width, height, data, meta, &subs,
+            )?;
         }
         (ChannelLayout::GrayAlpha, ChannelType::U16) => {
             let samples = as_u16_slice(data)?;
-            let rgba = expand_graya_to_rgba_u16(&samples);
-            write_one_image::<_, _, colortype::RGBA16>(enc, width, height, &rgba, meta, &subs)?;
+            write_one_graya_image::<_, _, colortype::Gray16>(
+                enc, width, height, &samples, meta, &subs,
+            )?;
         }
         (ChannelLayout::GrayAlpha, ChannelType::F32) => {
             let samples = as_f32_slice(data)?;
-            let rgba = expand_graya_to_rgba_f32(&samples);
-            write_one_image::<_, _, colortype::RGBA32Float>(
-                enc, width, height, &rgba, meta, &subs,
+            write_one_graya_image::<_, _, colortype::Gray32Float>(
+                enc, width, height, &samples, meta, &subs,
             )?;
         }
 
@@ -549,6 +607,75 @@ where
         }
         // The blob's IFD0 descriptive tags (Make/Model/Copyright/DateTime/…)
         // belong in the output IFD0, alongside the structural tags above.
+        for entry in subs.ifd0_entries {
+            write_exif_entry(dir, entry)?;
+        }
+        if let Some(off) = subs.exif_offset {
+            let off = K::convert_offset(off).map_err(|e| at!(TiffError::from(e)))?;
+            dir.write_tag(Tag::ExifDirectory, off)
+                .map_err(|e| at!(TiffError::from(e)))?;
+        }
+        if let Some(off) = subs.gps_offset {
+            let off = K::convert_offset(off).map_err(|e| at!(TiffError::from(e)))?;
+            dir.write_tag(Tag::GpsDirectory, off)
+                .map_err(|e| at!(TiffError::from(e)))?;
+        }
+    }
+    image
+        .write_data(samples)
+        .map_err(|e| at!(TiffError::from(e)))?;
+    Ok(())
+}
+
+/// Like [`write_one_image`], but for gray + alpha: writes the Gray colortype
+/// plus one `ExtraSamples = UnassociatedAlpha` channel (2 samples/pixel) so the
+/// interleaved (gray, alpha) `samples` are stored verbatim, with no RGBA
+/// widening. Metadata tags (ICC/XMP/orientation, the blob's IFD0 descriptive
+/// tags, and the EXIF/GPS sub-IFD pointers) are written first, exactly as in
+/// [`write_one_image`].
+#[track_caller]
+#[cfg(feature = "zencodec")]
+fn write_one_graya_image<W, K, C>(
+    enc: &mut tiff::encoder::TiffEncoder<W, K>,
+    width: u32,
+    height: u32,
+    samples: &[C::Inner],
+    meta: &TiffEncodeMeta,
+    subs: &ResolvedSubIfds<'_>,
+) -> Result<()>
+where
+    W: std::io::Write + std::io::Seek,
+    K: tiff::encoder::TiffKind,
+    C: tiff::encoder::colortype::ColorType,
+    [C::Inner]: tiff::encoder::TiffValue,
+{
+    use tiff::tags::{ExtraSamples, Tag};
+
+    let mut image = enc
+        .new_image::<C>(width, height)
+        .map_err(|e| at!(TiffError::from(e)))?;
+    // `ExtraSamples` (and every other tag) is keyed into a `BTreeMap`, so the
+    // IFD is emitted in ascending tag order regardless of call order here.
+    image
+        .extra_samples(&[ExtraSamples::UnassociatedAlpha])
+        .map_err(|e| at!(TiffError::from(e)))?;
+    {
+        let dir = image.encoder();
+
+        if let Some(icc) = meta.icc.as_deref() {
+            dir.write_tag(Tag::IccProfile, icc)
+                .map_err(|e| at!(TiffError::from(e)))?;
+        }
+        if let Some(xmp) = meta.xmp.as_deref() {
+            dir.write_tag(Tag::Unknown(700), xmp)
+                .map_err(|e| at!(TiffError::from(e)))?;
+        }
+        if let Some(orient) = meta.orientation
+            && orient != 0
+        {
+            dir.write_tag(Tag::Orientation, orient)
+                .map_err(|e| at!(TiffError::from(e)))?;
+        }
         for entry in subs.ifd0_entries {
             write_exif_entry(dir, entry)?;
         }
@@ -1024,48 +1151,6 @@ fn ascii_from_bytes(bytes: &[u8]) -> alloc::string::String {
     alloc::string::String::from_utf8_lossy(&bytes[..end]).into_owned()
 }
 
-fn expand_graya_to_rgba_u8(data: &[u8]) -> Vec<u8> {
-    let pixel_count = data.len() / 2;
-    let mut rgba = Vec::with_capacity(pixel_count * 4);
-    for i in 0..pixel_count {
-        let g = data[i * 2];
-        let a = data[i * 2 + 1];
-        rgba.push(g);
-        rgba.push(g);
-        rgba.push(g);
-        rgba.push(a);
-    }
-    rgba
-}
-
-fn expand_graya_to_rgba_u16(data: &[u16]) -> Vec<u16> {
-    let pixel_count = data.len() / 2;
-    let mut rgba = Vec::with_capacity(pixel_count * 4);
-    for i in 0..pixel_count {
-        let g = data[i * 2];
-        let a = data[i * 2 + 1];
-        rgba.push(g);
-        rgba.push(g);
-        rgba.push(g);
-        rgba.push(a);
-    }
-    rgba
-}
-
-fn expand_graya_to_rgba_f32(data: &[f32]) -> Vec<f32> {
-    let pixel_count = data.len() / 2;
-    let mut rgba = Vec::with_capacity(pixel_count * 4);
-    for i in 0..pixel_count {
-        let g = data[i * 2];
-        let a = data[i * 2 + 1];
-        rgba.push(g);
-        rgba.push(g);
-        rgba.push(g);
-        rgba.push(a);
-    }
-    rgba
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1087,12 +1172,5 @@ mod tests {
         assert_eq!(config.compression, Compression::Deflate);
         assert_eq!(config.predictor, Predictor::None);
         assert!(config.big_tiff);
-    }
-
-    #[test]
-    fn expand_graya_u8() {
-        let input = [128u8, 255, 64, 128];
-        let result = expand_graya_to_rgba_u8(&input);
-        assert_eq!(result, [128, 128, 128, 255, 64, 64, 64, 128]);
     }
 }

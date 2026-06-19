@@ -215,6 +215,94 @@ fn roundtrip_gray8_via_traits() {
     );
 }
 
+#[test]
+fn roundtrip_graya8_via_traits_stays_two_channel() {
+    // Interleaved (gray, alpha) gradient.
+    let (w, h) = (6u32, 5u32);
+    let data: Vec<u8> = (0..w * h)
+        .flat_map(|i| [(i * 7 % 256) as u8, (i * 3 % 256) as u8])
+        .collect();
+    let original = PixelBuffer::from_vec(data, w, h, PixelDescriptor::GRAYA8_SRGB).unwrap();
+    let tiff_data = encode_via_trait(&original);
+
+    let config = TiffDecoderCodecConfig::new();
+    let decoded = config
+        .job()
+        .decoder(Cow::Borrowed(&tiff_data), &[])
+        .unwrap()
+        .decode()
+        .unwrap();
+
+    assert!(decoded.has_alpha());
+    let desc = decoded.pixels().descriptor();
+    assert_eq!(
+        desc.layout(),
+        zenpixels::ChannelLayout::GrayAlpha,
+        "GrayAlpha must round-trip as 2-channel, not RGBA"
+    );
+    assert_eq!(desc.channel_type(), zenpixels::ChannelType::U8);
+    assert_eq!(
+        decoded.pixels().contiguous_bytes().as_ref(),
+        original.as_contiguous_bytes().unwrap(),
+        "GrayAlpha8 pixels must round-trip byte-identically"
+    );
+}
+
+#[test]
+fn roundtrip_graya8_with_metadata_stays_two_channel() {
+    // Exercises the metadata-aware encode path (write_one_graya_image): an ICC
+    // profile + orientation must coexist with the Gray + ExtraSamples layout,
+    // and the alpha pixels must still round-trip byte-identically.
+    let (w, h) = (5u32, 4u32);
+    let data: Vec<u8> = (0..w * h)
+        .flat_map(|i| [(200 - i % 200) as u8, (i * 11 % 256) as u8])
+        .collect();
+    let original = PixelBuffer::from_vec(data, w, h, PixelDescriptor::GRAYA8_SRGB).unwrap();
+
+    let icc = sample_icc();
+    let meta = Metadata::none().with_icc(icc.clone());
+
+    let config = TiffEncoderCodecConfig::new();
+    let tiff_data = config
+        .job()
+        .with_metadata_policy(meta, MetadataPolicy::Web)
+        .encoder()
+        .unwrap()
+        .encode(original.as_slice())
+        .unwrap()
+        .into_vec();
+
+    let info = zentiff::probe(&tiff_data).unwrap();
+    assert_eq!(
+        info.samples_per_pixel,
+        Some(2),
+        "GrayAlpha + metadata must still be 2 samples/pixel"
+    );
+
+    // The ICC profile must survive alongside the Gray + ExtraSamples layout.
+    assert_eq!(
+        info.icc_profile.as_deref(),
+        Some(icc.as_slice()),
+        "ICC profile must round-trip on a GrayAlpha image"
+    );
+
+    let dconfig = TiffDecoderCodecConfig::new();
+    let decoded = dconfig
+        .job()
+        .decoder(Cow::Borrowed(&tiff_data), &[])
+        .unwrap()
+        .decode()
+        .unwrap();
+
+    let desc = decoded.pixels().descriptor();
+    assert_eq!(desc.layout(), zenpixels::ChannelLayout::GrayAlpha);
+    assert_eq!(desc.channel_type(), zenpixels::ChannelType::U8);
+    assert_eq!(
+        decoded.pixels().contiguous_bytes().as_ref(),
+        original.as_contiguous_bytes().unwrap()
+    );
+}
+
 // ==========================================================================
 // Corpus integration (codec-corpus caches after first download)
 // ==========================================================================

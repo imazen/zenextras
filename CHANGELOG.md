@@ -41,6 +41,16 @@ member entries here reference those files.
   real `OrientationHint::bakes()` at all call sites, per the shim's own
   removal note. No behavior change.
 
+#### Fixed
+
+- GrayAlpha encode no longer widens to RGBA (2× raw bloat). A GrayAlpha
+  image is now written as a Gray colortype + one `ExtraSamples` alpha channel
+  (2 samples/pixel) and round-trips byte-identically as 2-channel GrayAlpha,
+  not 4-channel RGBA (#1). Horizontal prediction is force-disabled for
+  GrayAlpha (the `tiff 0.11.3` encoder/decoder disagree on the predictor
+  stride when extra samples are present); the decode side's `Multiband`
+  float mapping was corrected so f32 GrayAlpha decodes as GRAYAF32.
+
 ## zensvg
 
 ### [Unreleased]
