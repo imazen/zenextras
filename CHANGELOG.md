@@ -33,6 +33,18 @@ member entries here reference those files.
   under `Uncompressed` (now structurally excluded, pattern 10) and
   documented PackBits' byte-level-RLE loss on RGB band content.
   Adoption record: `zentiff/docs/VARIANT_GENERATION.md`.
+- `sweep`: trained-scalar-head + compute-budget surface (VARIANT_GENERATION
+  patterns 17–18), all additive/public. `compute_tier(&SweepVariant) -> u8`
+  is an ordinal compute-cost proxy: TIFF has no continuous effort dial, so
+  the tier is the compression-**method** ladder by ascending CPU cost
+  (Uncompressed=0, PackBits=1, Lzw=2, Deflate=3; predictor folds in as +0).
+  `SweepAxes::scalar_dense()` densely covers that compute axis — every
+  compiled method at the default predictor/layout — since there is no scalar
+  knob to ladder. `plan_constrained(axes, compute_limit, max_deviations)`
+  adds an optional compute-tier ceiling (dropped ids reported in the new
+  `SweepPlan::compute_tier_skipped`, never silently capped) and a deviation
+  scope (present for cross-codec API uniformity); `plan()` now delegates to
+  `plan_constrained(axes, None, None)` — signature unchanged. 3 new tests.
 
 #### Changed
 

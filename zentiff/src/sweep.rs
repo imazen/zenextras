@@ -168,6 +168,53 @@ pub fn fingerprint(variant: &SweepVariant) -> u64 {
     h
 }
 
+/// Coarse compute-cost tier of a variant (`0` = cheapest). Made public so
+/// the fleet harness and pickers can bound their candidate set the same way
+/// [`plan_constrained`] does, and so a trained **scalar head** can read
+/// compute alongside bytes. It is an **ordinal proxy**, not a calibrated
+/// millisecond estimate — compare tiers, don't read absolute cost into them.
+///
+/// TIFF has **no continuous effort/level dial**: [`Compression`] is a method
+/// enum, and the only level a method carries (DEFLATE's) is pinned upstream
+/// to `Balanced`. So the compute axis *is* the compression **method ladder**,
+/// and the tier is the method's place on it in ascending CPU cost:
+///
+/// | method         | tier | why                                            |
+/// |----------------|------|------------------------------------------------|
+/// | `Uncompressed` | 0    | memcpy — no coding at all                       |
+/// | `PackBits`     | 1    | byte-level RLE — one cheap run scan             |
+/// | `Lzw`          | 2    | dictionary coding — table build + lookups       |
+/// | `Deflate`      | 3    | LZ77 match search **+ Huffman entropy coding**  |
+///
+/// `Deflate` tops the ladder because it is the only method that does real
+/// entropy coding (LZ77 + Huffman), the most CPU per encode. `PackBits` is
+/// the cheapest non-trivial method (a single byte-run pass), `Lzw` sits
+/// between (dictionary build/lookup, no entropy stage).
+///
+/// The [`Predictor`] adds **+0**: horizontal differencing is a single linear
+/// pass over the samples, negligible beside the compressor's work and well
+/// below a method step — so it must not change the method tier. (If TIFF
+/// ever exposes the DEFLATE level as a knob, fold it into the `Deflate` tier
+/// as a sub-step **above** the base-3, below tier 4.)
+#[must_use]
+pub fn compute_tier(variant: &SweepVariant) -> u8 {
+    // Method cost ordinal (ascending CPU). Exhaustive match: a new
+    // `Compression` variant breaks this compile, forcing an explicit tier.
+    let method_tier: u8 = match variant.compression {
+        Compression::Uncompressed => 0,
+        Compression::PackBits => 1,
+        Compression::Lzw => 2,
+        Compression::Deflate => 3,
+    };
+    // The predictor adds +0 — a single linear pass, negligible beside the
+    // compressor and below a method step (see the doc comment). Kept as a
+    // named term so a future per-method predictor cost is a one-line edit.
+    let predictor_cost: u8 = match variant.predictor {
+        Predictor::None | Predictor::Horizontal => 0,
+    };
+    method_tier + predictor_cost
+}
+
 /// Axes, most-important value first.
 #[derive(Clone, Debug)]
 pub struct SweepAxes {
@@ -198,6 +245,37 @@ impl SweepAxes {
         axes.big_tiff.push(true);
         axes
     }
+
+    /// The densest coverage of TIFF's **compute axis** — for the trained
+    /// **scalar head** (a continuous regression on the picker's compute
+    /// dial). On a codec with a continuous effort knob this would ladder
+    /// that knob; TIFF has **no scalar knob** (DEFLATE's level is pinned
+    /// upstream), so its compute axis *is* the compression-**method**
+    /// ladder, and "scalar dense" means **every compiled method** at the
+    /// default predictor/layout. That gives the head the full
+    /// compute-vs-bytes curve across methods — `Uncompressed` → `PackBits`
+    /// → `Lzw` → `Deflate` ([`compute_tier`] 0..3) — instead of just the
+    /// fast and strong ends.
+    ///
+    /// Equivalent to [`rd_core`](Self::rd_core) (both are "all compiled
+    /// methods, default everything else"): with no scalar knob and no extra
+    /// continuous dimension to densify, the RD-front *is* the dense compute
+    /// sweep. It is spelled out as its own constructor so the cross-codec
+    /// `scalar_dense` entry point exists uniformly, and so it stays correct
+    /// if a future scalar knob (a DEFLATE-level axis) is added here without
+    /// touching `rd_core`.
+    ///
+    /// Default-first via [`compiled_compressions`] (index 0 = the
+    /// `Uncompressed` default); predictor and layout pinned to their
+    /// defaults so only the method (compute) varies.
+    #[must_use]
+    pub fn scalar_dense() -> Self {
+        Self {
+            compressions: compiled_compressions(),
+            predictors: vec![Predictor::None],
+            big_tiff: vec![false],
+        }
+    }
 }
 
 /// One encode cell.
@@ -219,11 +297,41 @@ pub struct SweepCell {
 pub struct SweepPlan {
     /// Cells, main-effects-first.
     pub cells: Vec<SweepCell>,
+    /// Cell ids dropped because their [`compute_tier`] exceeded the
+    /// `compute_limit` passed to [`plan_constrained`] — the explicit
+    /// no-silent-caps report for the compute constraint (empty in the
+    /// unconstrained [`plan`] path).
+    pub compute_tier_skipped: Vec<String>,
 }
 
-/// Build the plan.
+/// Build the plan. Equivalent to [`plan_constrained`]`(axes, None, None)` —
+/// the full, unconstrained curated space.
 #[must_use]
 pub fn plan(axes: &SweepAxes) -> SweepPlan {
+    plan_constrained(axes, None, None)
+}
+
+/// Build the plan, optionally bounded by a compute budget and/or a deviation
+/// scope.
+///
+/// - `compute_limit`: if `Some(max)`, cells whose [`compute_tier`] is `> max`
+///   are dropped and their ids recorded in
+///   [`SweepPlan::compute_tier_skipped`] (never silently capped) — the
+///   compute-resource constraint a CPU-bound fleet or a "cheap methods only"
+///   picker asks for.
+/// - `max_deviations`: if `Some(n)`, only cells within `n` axis deviations of
+///   the default survive (`0` = the default stratum only, `1` = main-effects
+///   only). Present for **cross-codec API uniformity** — the fleet and picker
+///   call this same shape on every codec — even though TIFF's curated space is
+///   shallow (at most 2 deviations: predictor + BigTIFF).
+///
+/// `compute_limit` is applied first, then `max_deviations`.
+#[must_use]
+pub fn plan_constrained(
+    axes: &SweepAxes,
+    compute_limit: Option<u8>,
+    max_deviations: Option<u8>,
+) -> SweepPlan {
     struct Entry {
         v: SweepVariant,
         deviations: u8,
@@ -251,16 +359,34 @@ pub fn plan(axes: &SweepAxes) -> SweepPlan {
         }
     }
     entries.sort_by_key(|e| (e.deviations, e.idx_sum));
+    let mut cells: Vec<SweepCell> = entries
+        .into_iter()
+        .map(|e| SweepCell {
+            id: e.v.id(),
+            fingerprint: fingerprint(&e.v),
+            variant: e.v,
+            deviations: e.deviations,
+        })
+        .collect();
+
+    let mut compute_tier_skipped = Vec::new();
+    if let Some(max) = compute_limit {
+        cells.retain(|c| {
+            if compute_tier(&c.variant) <= max {
+                true
+            } else {
+                compute_tier_skipped.push(c.id.clone());
+                false
+            }
+        });
+    }
+    if let Some(n) = max_deviations {
+        cells.retain(|c| c.deviations <= n);
+    }
+
     SweepPlan {
-        cells: entries
-            .into_iter()
-            .map(|e| SweepCell {
-                id: e.v.id(),
-                fingerprint: fingerprint(&e.v),
-                variant: e.v,
-                deviations: e.deviations,
-            })
-            .collect(),
+        cells,
+        compute_tier_skipped,
     }
 }
 
@@ -289,5 +415,130 @@ mod tests {
         for bad in ["tiff-zstd", "tiff-lzw-warp", "png-lzw", "tiff-lzw-hpred-x"] {
             assert!(variant_from_cell_id(bad).is_err(), "{bad:?}");
         }
+    }
+
+    fn tier_of(c: Compression) -> u8 {
+        compute_tier(&SweepVariant {
+            compression: c,
+            predictor: Predictor::None,
+            big_tiff: false,
+        })
+    }
+
+    #[test]
+    fn compute_tier_orders_method_cost() {
+        // The compute axis is the method ladder: the cheapest method
+        // (Uncompressed = memcpy) must tier strictly below the most
+        // expensive (Deflate = LZ77 + Huffman entropy coding).
+        assert_eq!(
+            tier_of(Compression::Uncompressed),
+            0,
+            "uncompressed is free"
+        );
+        assert!(
+            tier_of(Compression::Uncompressed) < tier_of(Compression::Deflate),
+            "uncompressed must cost less than DEFLATE entropy coding"
+        );
+        // Full monotonic ladder: none < packbits < lzw < deflate.
+        assert!(tier_of(Compression::Uncompressed) < tier_of(Compression::PackBits));
+        assert!(tier_of(Compression::PackBits) < tier_of(Compression::Lzw));
+        assert!(tier_of(Compression::Lzw) < tier_of(Compression::Deflate));
+        // The predictor folds in as +0 — it must not change the tier.
+        let no_pred = SweepVariant {
+            compression: Compression::Lzw,
+            predictor: Predictor::None,
+            big_tiff: false,
+        };
+        let with_pred = SweepVariant {
+            compression: Compression::Lzw,
+            predictor: Predictor::Horizontal,
+            big_tiff: false,
+        };
+        assert_eq!(
+            compute_tier(&no_pred),
+            compute_tier(&with_pred),
+            "the predictor adds +0 to the compute tier"
+        );
+    }
+
+    #[test]
+    fn scalar_dense_spans_the_method_ladder() {
+        // TIFF has no scalar knob, so scalar_dense covers the *method*
+        // (compute-tier) axis densely: every compiled method, default-first.
+        let p = plan(&SweepAxes::scalar_dense());
+        assert_eq!(
+            p.cells[0].variant.compression,
+            Compression::Uncompressed,
+            "default (uncompressed) still first"
+        );
+
+        let compiled = compiled_compressions();
+        let mut tiers: Vec<u8> = p.cells.iter().map(|c| compute_tier(&c.variant)).collect();
+        tiers.sort_unstable();
+        tiers.dedup();
+        // One distinct tier per compiled method (each method has a unique
+        // ordinal), and at least 3 under default features (none/lzw/deflate/
+        // packbits all compiled). Adapt to whatever subset is compiled.
+        assert_eq!(
+            tiers.len(),
+            compiled.len(),
+            "one distinct compute tier per compiled method"
+        );
+        assert!(
+            tiers.len() >= 3,
+            "scalar_dense too sparse for a scalar head: {} tiers",
+            tiers.len()
+        );
+        // The cheapest and most-expensive compiled methods are both covered.
+        let cheapest = compiled.iter().map(|&c| tier_of(c)).min().unwrap();
+        let priciest = compiled.iter().map(|&c| tier_of(c)).max().unwrap();
+        assert!(tiers.contains(&cheapest), "cheapest method covered");
+        assert!(tiers.contains(&priciest), "most-expensive method covered");
+        // Default features compile DEFLATE, the top of the ladder.
+        assert_eq!(priciest, tier_of(Compression::Deflate));
+    }
+
+    #[test]
+    fn plan_constrained_drops_expensive_and_matches_plan() {
+        let unconstrained = plan(&SweepAxes::scalar_dense());
+        // A limit below the top method (DEFLATE = 3) but above the cheap
+        // end: keeps none/packbits/lzw, drops deflate.
+        let limit = 2u8;
+        let limited = plan_constrained(&SweepAxes::scalar_dense(), Some(limit), None);
+        assert!(!limited.cells.is_empty());
+        assert!(
+            limited.cells.len() < unconstrained.cells.len(),
+            "the compute limit must drop the expensive cells"
+        );
+        assert!(
+            limited
+                .cells
+                .iter()
+                .all(|c| compute_tier(&c.variant) <= limit),
+            "every surviving cell must be within budget"
+        );
+        assert!(
+            !limited.compute_tier_skipped.is_empty(),
+            "dropped cells must be reported, never silently capped"
+        );
+
+        // The unconstrained delegate must equal plan() cell-for-cell.
+        let via_constrained = plan_constrained(&SweepAxes::scalar_dense(), None, None);
+        let direct = plan(&SweepAxes::scalar_dense());
+        assert_eq!(via_constrained.cells.len(), direct.cells.len());
+        for (x, y) in via_constrained.cells.iter().zip(&direct.cells) {
+            assert_eq!(x.id, y.id);
+            assert_eq!(x.fingerprint, y.fingerprint);
+        }
+        assert!(via_constrained.compute_tier_skipped.is_empty());
+
+        // max_deviations narrows to the default stratum on the full space.
+        let full = plan(&SweepAxes::modes_full());
+        let mains_only = plan_constrained(&SweepAxes::modes_full(), None, Some(0));
+        assert!(
+            mains_only.cells.iter().all(|c| c.deviations == 0),
+            "max_deviations=0 keeps only the default stratum"
+        );
+        assert!(mains_only.cells.len() < full.cells.len());
     }
 }

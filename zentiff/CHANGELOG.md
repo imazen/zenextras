@@ -17,6 +17,22 @@ semantic versioning.
   (whereat's blanket conversion uses the bare `From<BufferError>`).
 
 ### Added
+- `sweep`: trained-scalar-head + compute-budget surface (VARIANT_GENERATION
+  patterns 17–18), all additive/public (the `sweep` module is in default
+  features, no `__expert` gate). `compute_tier(&SweepVariant) -> u8` returns an
+  ordinal compute-cost proxy — TIFF carries **no continuous effort/level dial**
+  (DEFLATE's level is pinned upstream), so the tier is the compression-method
+  ladder in ascending CPU cost: `Uncompressed`=0 (memcpy), `PackBits`=1
+  (byte-RLE), `Lzw`=2 (dictionary), `Deflate`=3 (LZ77 + Huffman entropy); the
+  `Predictor` folds in as **+0**. `SweepAxes::scalar_dense()` densely covers
+  that compute axis (every compiled method, default predictor/layout) — with no
+  scalar knob to ladder, the method ladder *is* the dense sweep.
+  `plan_constrained(axes, compute_limit, max_deviations)` is `plan()` plus an
+  optional compute-tier ceiling (cells over the limit are dropped and their ids
+  recorded in the new `SweepPlan::compute_tier_skipped` — no silent caps) and a
+  deviation-scope filter (present for cross-codec API uniformity even though
+  TIFF's space is shallow). `plan()` now delegates to
+  `plan_constrained(axes, None, None)` — its signature is unchanged. 3 new tests.
 - `examples/heaptrack_decode.rs`: a reusable heaptrack/valgrind harness that
   decodes a TIFF from bytes via `zentiff::decode(..)` in a loop, for profiling
   heap-allocation behaviour. There is no committed TIFF fixture, so it synthesizes
