@@ -9,6 +9,10 @@ semantic versioning.
 ### QUEUED BREAKING CHANGES
 <!-- Breaking changes that will ship together in the next major (or minor for 0.x) release.
      Add items here as you discover them. Do NOT ship these piecemeal — batch them. -->
+- Drop the temporary `zencodec` git patch (`[patch.crates-io]` at the workspace
+  root) and lower the `zencodec` requirement from `0.1.24` back to a published
+  version once zencodec `0.1.24` (with the `zencodec::estimate` unified
+  resource-estimation API) publishes to crates.io.
 - Removed the public `impl From<whereat::At<zenpixels::BufferError>> for TiffError`.
   It flattened the trace (`TiffError::Buffer(e.decompose().0)`); callers that relied
   on `?`/`From` to convert an `At<BufferError>` directly to a bare `TiffError` should
@@ -17,6 +21,12 @@ semantic versioning.
   (whereat's blanket conversion uses the bare `From<BufferError>`).
 
 ### Added
+- `zencodec` integration now overrides `EncoderConfig::estimate_encode_resources`
+  with a codec-aware (single-threaded) estimate: peak ≈ input buffer + output
+  (~input bytes uncompressed, less for deflate/lzw/packbits) + a ~1 MB per-strip
+  predictor/compress scratch; `ThreadingInformation::SERIAL`. This is an
+  uncalibrated structural estimate (no heaptrack model yet) — gated behind the
+  `zencodec` feature.
 - `sweep`: trained-scalar-head + compute-budget surface (VARIANT_GENERATION
   patterns 17–18), all additive/public (the `sweep` module is in default
   features, no `__expert` gate). `compute_tier(&SweepVariant) -> u8` returns an

@@ -181,6 +181,32 @@ impl zencodec::encode::EncoderConfig for TiffEncoderCodecConfig {
         Some(true)
     }
 
+    /// Uncalibrated structural estimate (no heaptrack model yet).
+    ///
+    /// TIFF encode is single-threaded: it buffers the full input image, emits an
+    /// output buffer (~input bytes for uncompressed; smaller for deflate/lzw/
+    /// packbits), plus a small (~1 MB) per-strip predictor/compress scratch. Peak
+    /// is therefore roughly `input + output + scratch`. The throughput constant is
+    /// a rough structural guess, not a measured model.
+    fn estimate_encode_resources(
+        &self,
+        image: &zencodec::estimate::ImageCharacteristics,
+        compute: &zencodec::estimate::ComputeEnvironment,
+    ) -> zencodec::estimate::ResourceEstimate {
+        use zencodec::estimate::{ResourceEstimate, ThreadingInformation};
+        let input = image.input_bytes();
+        let scratch = 1u64 << 20;
+        // input + ~output + scratch
+        let typ = input.saturating_add(input).saturating_add(scratch);
+        // ~200 Mpix/s rough (uncalibrated, structural)
+        let time_ms = (image.pixels() as f64 / 200_000.0) as f32;
+        ResourceEstimate::new(typ, time_ms)
+            .with_peak_range(input.saturating_add(scratch), typ.saturating_mul(2))
+            .with_output_bytes(input)
+            .with_threading(ThreadingInformation::SERIAL)
+            .at_cores(compute.cores())
+    }
+
     fn job(self) -> TiffEncodeJob {
         TiffEncodeJob {
             config: self,
