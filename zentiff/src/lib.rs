@@ -60,6 +60,15 @@ pub mod sweep;
 //pub mod zennode_defs;
 
 pub use decode::{TiffDecodeConfig, TiffDecodeOutput, TiffInfo, decode, probe};
+/// Cross-codec uniformity bundle (`__expert`-gated). Mirrors `zenjpeg`'s
+/// `InternalParams` so external pipelines (calibration sweeps, picker
+/// training) can drive every codec the same way. See
+/// [`internal_params::InternalParams`] and
+/// [`TiffEncodeConfig::with_internal_params`].
+#[cfg(feature = "__expert")]
+pub use encode::internal_params;
+#[cfg(feature = "__expert")]
+pub use encode::internal_params::InternalParams;
 pub use encode::{Compression, Predictor, TiffEncodeConfig, encode, encode_into};
 pub use error::TiffError;
 

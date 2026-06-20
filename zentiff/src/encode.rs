@@ -158,6 +158,196 @@ impl Default for TiffEncodeConfig {
     }
 }
 
+/// Cross-codec uniformity bundle (`__expert` feature).
+///
+/// [`InternalParams`](internal_params::InternalParams) collects the
+/// encoder knobs that codec-calibration sweeps and the picker training
+/// pipeline want to drive externally, mirroring
+/// `zenjpeg::encode::internal_params::InternalParams` so a single picker
+/// model can emit the same bundle shape for every codec in the zen
+/// family.
+///
+/// Production callers should use the per-axis builder methods on
+/// [`TiffEncodeConfig`] directly
+/// ([`with_compression`](TiffEncodeConfig::with_compression),
+/// [`with_predictor`](TiffEncodeConfig::with_predictor),
+/// [`with_big_tiff`](TiffEncodeConfig::with_big_tiff)). Reach for
+/// [`InternalParams`](internal_params::InternalParams) only when you need
+/// to vary calibration axes from outside the codec — e.g., from a Pareto
+/// sweep harness or a learned picker that emits per-image axis values.
+///
+/// Each field is `Option<_>`. `None` means "leave the
+/// [`TiffEncodeConfig`]'s existing value alone." This is partial-merge,
+/// the same shape every zen codec's bundle uses, so callers can override
+/// one axis at a time without spelling out the rest.
+///
+/// The bundled axes are exactly the three [`crate::sweep::SweepVariant`]
+/// varies for TIFF (TIFF is lossless, so its whole curated space is the
+/// trial-class container/compression knobs): the compression method, the
+/// sample predictor, and the BigTIFF container layout.
+#[cfg(feature = "__expert")]
+pub mod internal_params {
+    use super::{Compression, Predictor, TiffEncodeConfig};
+
+    /// Bundle of advanced encoder tuning knobs. Expert-only.
+    ///
+    /// Intended for codec calibration sweeps and the picker training
+    /// pipeline. Production callers should rely on the per-axis builder
+    /// methods on [`TiffEncodeConfig`] instead.
+    ///
+    /// Every field is `Option<_>`. `None` means "leave the
+    /// [`TiffEncodeConfig`]'s existing value alone." Apply with
+    /// [`TiffEncodeConfig::with_internal_params`].
+    ///
+    /// `#[non_exhaustive]` so adding a new axis is a non-breaking change.
+    ///
+    /// ```ignore
+    /// # #[cfg(feature = "__expert")]
+    /// # {
+    /// use zentiff::{Compression, Predictor, TiffEncodeConfig};
+    /// use zentiff::internal_params::InternalParams;
+    ///
+    /// let cfg = TiffEncodeConfig::default().with_internal_params(InternalParams {
+    ///     compression: Some(Compression::Deflate),
+    ///     predictor: Some(Predictor::Horizontal),
+    ///     ..Default::default()
+    /// });
+    /// # }
+    /// ```
+    #[derive(Clone, Copy, Debug, Default)]
+    #[non_exhaustive]
+    pub struct InternalParams {
+        /// Override the compression method (the sweep's compression axis).
+        ///
+        /// Applied via [`TiffEncodeConfig::with_compression`]. Note that
+        /// `Lzw`/`Deflate` require the matching cargo feature; encoding
+        /// with an uncompiled method errors at encode time (not here).
+        pub compression: Option<Compression>,
+
+        /// Override the sample predictor (the sweep's predictor axis).
+        ///
+        /// Applied via [`TiffEncodeConfig::with_predictor`]. The predictor
+        /// only transforms data a compressor consumes, so it is byte-inert
+        /// under `Uncompressed` (and force-disabled for `GrayAlpha` at
+        /// encode time — see the encoder's `effective_predictor`).
+        pub predictor: Option<Predictor>,
+
+        /// Toggle the BigTIFF (64-bit offsets) container layout (the
+        /// sweep's container axis — trial-class byte overhead, useful at
+        /// the tiny-file end of a size sweep).
+        ///
+        /// Applied via [`TiffEncodeConfig::with_big_tiff`].
+        pub big_tiff: Option<bool>,
+    }
+
+    impl TiffEncodeConfig {
+        /// Apply an [`InternalParams`] bundle, overriding each axis whose
+        /// field is `Some(_)` and leaving the rest untouched
+        /// (partial-merge).
+        ///
+        /// Each `Some` field routes through the corresponding builder
+        /// setter, so this is exactly equivalent to calling those setters
+        /// by hand.
+        ///
+        /// Cross-codec uniformity entry point (`__expert`-gated): mirrors
+        /// `zenjpeg`'s `EncoderConfig::with_internal_params` so external
+        /// pipelines can drive every zen codec with one bundle shape.
+        #[must_use]
+        pub fn with_internal_params(mut self, params: InternalParams) -> Self {
+            if let Some(compression) = params.compression {
+                self = self.with_compression(compression);
+            }
+            if let Some(predictor) = params.predictor {
+                self = self.with_predictor(predictor);
+            }
+            if let Some(big_tiff) = params.big_tiff {
+                self = self.with_big_tiff(big_tiff);
+            }
+            self
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        fn baseline() -> TiffEncodeConfig {
+            TiffEncodeConfig::default()
+        }
+
+        /// Empty `InternalParams` (all `None`) leaves the config bytewise
+        /// equivalent to the constructor default — debug-format equality
+        /// is a coarse but reliable check that no field flipped.
+        #[test]
+        fn default_internal_params_is_noop() {
+            let cfg = baseline();
+            let cfg2 = baseline().with_internal_params(InternalParams::default());
+            assert_eq!(format!("{cfg:?}"), format!("{cfg2:?}"));
+        }
+
+        #[test]
+        fn compression_field_applies() {
+            let cfg = baseline().with_internal_params(InternalParams {
+                compression: Some(Compression::PackBits),
+                ..Default::default()
+            });
+            assert_eq!(cfg.compression, Compression::PackBits);
+        }
+
+        #[test]
+        fn predictor_field_applies() {
+            // Default predictor is Horizontal; setting None must flip it.
+            assert_eq!(baseline().predictor, Predictor::Horizontal);
+            let cfg = baseline().with_internal_params(InternalParams {
+                predictor: Some(Predictor::None),
+                ..Default::default()
+            });
+            assert_eq!(cfg.predictor, Predictor::None);
+        }
+
+        #[test]
+        fn big_tiff_field_applies() {
+            assert!(!baseline().big_tiff);
+            let cfg = baseline().with_internal_params(InternalParams {
+                big_tiff: Some(true),
+                ..Default::default()
+            });
+            assert!(cfg.big_tiff);
+        }
+
+        #[test]
+        fn unset_fields_leave_values_alone() {
+            // Start from big_tiff=true, then apply a bundle that doesn't
+            // touch it — the true must survive.
+            let cfg = baseline()
+                .with_big_tiff(true)
+                .with_internal_params(InternalParams {
+                    compression: Some(Compression::Uncompressed),
+                    ..Default::default()
+                });
+            assert!(
+                cfg.big_tiff,
+                "big_tiff=None must not reset an existing true"
+            );
+            assert_eq!(cfg.compression, Compression::Uncompressed);
+        }
+
+        /// All three fields together: each produces an observable state
+        /// change vs the baseline.
+        #[test]
+        fn full_permutation_round_trip() {
+            let cfg = baseline().with_internal_params(InternalParams {
+                compression: Some(Compression::PackBits),
+                predictor: Some(Predictor::None),
+                big_tiff: Some(true),
+            });
+            assert_eq!(cfg.compression, Compression::PackBits);
+            assert_eq!(cfg.predictor, Predictor::None);
+            assert!(cfg.big_tiff);
+        }
+    }
+}
+
 /// The TIFF predictor to actually use for `desc`, given the requested one.
 ///
 /// `GrayAlpha` is written as a Gray colortype plus one `ExtraSamples` alpha

@@ -50,6 +50,12 @@ zencodec = ["dep:zencodec", "dep:zenpixels-convert"]
 # not available in tiff 0.11.x (only on git main). Enable this feature
 # once tiff 0.12+ is released. Not included in all-codecs or default.
 _palette = []
+# Expert-only cross-codec uniformity knobs. Pure visibility gate (no deps):
+# exposes `InternalParams` + `TiffEncodeConfig::with_internal_params`, mirroring
+# `zenjpeg`'s `__expert` feature so a single picker model can drive every zen
+# codec with one Option-bundle shape. No new tunables — the fields route
+# through existing public builder setters.
+__expert = []
 
 [package.metadata.docs.rs]
 features = ["all-codecs", "zencodec"]

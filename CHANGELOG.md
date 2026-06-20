@@ -24,6 +24,13 @@ member entries here reference those files.
 
 #### Added
 
+- `InternalParams` cross-codec bundle (`__expert`). `zentiff::internal_params::InternalParams`
+  (`compression` + `predictor` + `big_tiff`, all `Option<_>`) +
+  `TiffEncodeConfig::with_internal_params`, gated behind the new pure-visibility
+  `__expert` feature — mirrors `zenjpeg`'s bundle so one picker model drives every
+  zen codec with the same Option-bundle shape. The three fields are exactly the
+  `sweep::SweepVariant` axes (compression/predictor/BigTIFF). No new tunables
+  (fields route through existing public builder setters).
 - `sweep` module: variant-generation playbook adoption — all-trial-class
   axes (compression × predictor × BigTIFF, ≤16 cells), build-feature
   liveness structural (uncompiled lzw/deflate ids rejected),
