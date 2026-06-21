@@ -200,9 +200,8 @@ impl zencodec::encode::EncoderConfig for TiffEncoderCodecConfig {
         let typ = input.saturating_add(input).saturating_add(scratch);
         // ~200 Mpix/s rough (uncalibrated, structural)
         let time_ms = (image.pixels() as f64 / 200_000.0) as f32;
-        ResourceEstimate::new(typ, time_ms)
-            .with_peak_range(input.saturating_add(scratch), typ.saturating_mul(2))
-            .with_output_bytes(input)
+        ResourceEstimate::new(typ, time_ms as u64)
+            .with_peak_max(typ.saturating_mul(2))
             .with_threading(ThreadingInformation::SERIAL)
             .at_cores(compute.cores())
     }

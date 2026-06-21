@@ -9,10 +9,6 @@ semantic versioning.
 ### QUEUED BREAKING CHANGES
 <!-- Breaking changes that will ship together in the next major (or minor for 0.x) release.
      Add items here as you discover them. Do NOT ship these piecemeal — batch them. -->
-- Drop the temporary `zencodec` git patch (`[patch.crates-io]` at the workspace
-  root) and lower the `zencodec` requirement from `0.1.24` back to a published
-  version once zencodec `0.1.24` (with the `zencodec::estimate` unified
-  resource-estimation API) publishes to crates.io.
 - Removed the public `impl From<whereat::At<zenpixels::BufferError>> for TiffError`.
   It flattened the trace (`TiffError::Buffer(e.decompose().0)`); callers that relied
   on `?`/`From` to convert an `At<BufferError>` directly to a bare `TiffError` should
@@ -55,6 +51,14 @@ semantic versioning.
   unbounded growth). `examples/**` added to the package `include`.
 
 ### Changed
+- **deps: migrate to published `zencodec 0.1.24` estimate API; drop git-rev
+  patch.** Removed the temporary `[patch.crates-io] zencodec = { git, rev =
+  "0f71295" }` from the `zenextras` workspace root now that `zencodec 0.1.24` is
+  on crates.io. Migrated the `estimate_encode_resources` mapping in
+  `zentiff/src/codec.rs` for the refined `ResourceEstimate`: `new(peak,
+  wall_ms: u64)` (was `f32`), `with_peak_max(max)` (the `min` arg is gone), and
+  dropped the removed `with_output_bytes`. `cargo update -p zencodec` pulled
+  published 0.1.24.
 - `TiffDecodeConfig` doc comment now states the default `max_pixels` as 120 MP
   (admits ~108 MP photos), matching `DEFAULT_MAX_PIXELS` (`120_000_000`); the
   doc had lagged the constant at the old 100 MP figure. Memory/width/height
