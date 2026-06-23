@@ -1057,6 +1057,31 @@ mod tests {
         config.job().encoder().unwrap().encode(slice).unwrap()
     }
 
+    #[test]
+    fn fidelity_is_always_lossless() {
+        use zencodec::encode::Fidelity;
+        // zentiff encodes lossless only, so the zencodec 0.1.25 default
+        // with_fidelity/resolved_target_fidelity bridge resolves every Fidelity
+        // request to Lossless (driven by is_lossless() == Some(true)); a lossy
+        // target is best-effort lossless.
+        assert_eq!(
+            TiffEncoderCodecConfig::new().resolved_target_fidelity(),
+            Some(Fidelity::Lossless)
+        );
+        assert_eq!(
+            TiffEncoderCodecConfig::new()
+                .with_fidelity(Fidelity::codec_quality(50.0))
+                .resolved_target_fidelity(),
+            Some(Fidelity::Lossless)
+        );
+        assert_eq!(
+            TiffEncoderCodecConfig::new()
+                .with_fidelity(Fidelity::butteraugli(1.0))
+                .resolved_target_fidelity(),
+            Some(Fidelity::Lossless)
+        );
+    }
+
     /// Helper: decode via the zencodec trait flow.
     fn decode_bytes(data: &[u8]) -> DecodeOutput {
         let config = TiffDecoderCodecConfig::new();
