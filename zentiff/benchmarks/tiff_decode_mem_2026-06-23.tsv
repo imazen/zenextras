@@ -1,0 +1,30 @@
+# TIFF decode peak-memory sweep — host=lilith commit=27256d2 date=2026-06-23
+# tool: examples/mem_probe.rs (marginal WS = VmHWM_after_decode - VmRSS_before) + heaptrack peak-heap cross-check
+# env: GLIBC_TUNABLES=glibc.malloc.mmap_threshold=131072 ; one process per cell ; run-heavy serial
+# MODEL: marginal_peak ≈ ~350KB_fixed + FACTOR x output_bytes
+#   FACTOR = 1  for 8-bit interleaved Gray/GrayA/RGB/RGBA (image-tiff U8 buffer MOVED into output)
+#   FACTOR = 2  for CMYK/palette/16-bit/sub-byte (image-tiff source + converted dest held concurrently)
+# (palette fixture hit a separate zentiff 'RGBPalette 8bps unsupported' decode gap — unmeasured)
+size	path	w	h	file_kb	out_kb	pre_kb	vmhwm_kb	marg_kb	marg/out	heap_kb
+1024	cmyk	1024	1024	4096	4096	6220	14636	8416	2.05	12963
+1024	deflate	1024	1024	1083	3072	3220	6684	3464	1.13	4515
+1024	jpeg	1024	1024	96	3072	2232	6144	3912	1.27	4003
+1024	lzw	1024	1024	1140	3072	3280	6728	3448	1.12	4556
+1024	none	1024	1024	3072	3072	5264	8640	3376	1.10	6522
+1024	pal			0	0	0	0	0	0.00	1157
+1024	rgb16	1024	1024	6144	6144	8332	20900	12568	2.05	19404
+2048	cmyk	2048	2048	16384	16384	18552	51608	33056	2.02	51619
+2048	deflate	2048	2048	3121	12288	5296	18108	12812	1.04	16312
+2048	jpeg	2048	2048	249	12288	2376	15740	13364	1.09	14417
+2048	lzw	2048	2048	3164	12288	5304	17968	12664	1.03	16343
+2048	none	2048	2048	12288	12288	14424	27044	12620	1.03	25845
+2048	pal			0	0	0	0	0	0.00	4372
+2048	rgb16	2048	2048	24576	24576	26708	75988	49280	2.01	77383
+256	deflate	256	256	105	192	2232	2992	760	3.96	456
+256	jpeg	256	256	9	192	2112	2840	728	3.79	434
+256	lzw	256	256	113	192	2248	2832	584	3.04	450
+256	none	256	256	192	192	2364	2896	532	2.77	469
+512	deflate	512	512	380	768	2564	3832	1268	1.65	1361
+512	jpeg	512	512	33	768	2164	3448	1284	1.67	1228
+512	lzw	512	512	415	768	2548	3712	1164	1.52	1382
+512	none	512	512	768	768	2952	4044	1092	1.42	1689

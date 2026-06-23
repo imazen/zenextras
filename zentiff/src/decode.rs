@@ -155,7 +155,13 @@ impl TiffDecodeConfig {
     }
 
     #[track_caller]
-    fn validate(&self, width: u32, height: u32, bytes_per_pixel: u32) -> Result<()> {
+    fn validate(
+        &self,
+        width: u32,
+        height: u32,
+        bytes_per_pixel: u32,
+        peak_factor: u64,
+    ) -> Result<()> {
         if let Some(max_w) = self.max_width
             && width > max_w
         {
@@ -179,10 +185,20 @@ impl TiffDecodeConfig {
             }
         }
         if let Some(max_mem) = self.max_memory_bytes {
-            let estimated = width as u64 * height as u64 * bytes_per_pixel as u64;
-            if estimated > max_mem {
+            // Measured peak working set (heaptrack sweep,
+            // benchmarks/tiff_decode_mem_2026-06-23.tsv): the output buffer times
+            // the decode path factor — 1× for 8-bit interleaved formats (image-tiff's
+            // decode buffer is moved into the output) and 2× for CMYK/palette/16-bit/
+            // sub-byte conversions (source + converted dest held concurrently) — plus a
+            // small fixed scratch. This is the combined peak, so the cap is honest about
+            // the conversion paths that the old output-only check under-counted ~2×.
+            let output = width as u64 * height as u64 * bytes_per_pixel as u64;
+            let peak = output
+                .saturating_mul(peak_factor)
+                .saturating_add(DECODE_SCRATCH_BYTES);
+            if peak > max_mem {
                 return Err(at!(TiffError::LimitExceeded(alloc::format!(
-                    "estimated memory {estimated} bytes exceeds limit {max_mem}"
+                    "estimated peak memory {peak} bytes exceeds limit {max_mem}"
                 ))));
             }
         }
@@ -786,7 +802,8 @@ pub fn decode(
 
             // Check limits before allocating.
             let output_bpp = output_bytes_per_pixel(color_type);
-            config.validate(width, height, output_bpp as u32)?;
+            let peak_factor = decode_peak_factor(color_type);
+            config.validate(width, height, output_bpp as u32, peak_factor)?;
 
             // Extract metadata before decoding pixels, because image reading
             // repositions the stream and may interfere with tag reads.
@@ -897,6 +914,27 @@ fn result_format_flags(result: &tiff::decoder::DecodingResult) -> (bool, bool) {
 }
 
 /// Compute the output bytes per pixel for limit checking.
+/// Fixed per-decode scratch (image-tiff decoder state, predictor rows, strip
+/// staging) added on top of the per-pixel peak. The measured intercept was
+/// ~350 KiB (benchmarks/tiff_decode_mem_2026-06-23.tsv); 512 KiB is a small
+/// defensive round-up. Kept well under 1 MiB so a tiny image still decodes under
+/// a 1 MiB cap (the fixed cost must not, on its own, exhaust a sane budget).
+const DECODE_SCRATCH_BYTES: u64 = 1 << 19;
+
+/// Measured peak-working-set multiplier over the output buffer for decoding a
+/// `ct` image (heaptrack sweep, 2026-06-23). The 8-bit interleaved formats let
+/// image-tiff's `U8` decode buffer be *moved* into the output (`bytemuck`
+/// zero-copy cast) → ~1× output. Every other path — CMYK→RGBA, palette→RGB,
+/// 16-bit/float widening, sub-byte unpack — allocates a fresh converted output
+/// while image-tiff's source buffer is still live → ~2× output.
+fn decode_peak_factor(ct: tiff::ColorType) -> u64 {
+    use tiff::ColorType::{Gray, GrayA, RGB, RGBA};
+    match ct {
+        Gray(8) | GrayA(8) | RGB(8) | RGBA(8) => 1,
+        _ => 2,
+    }
+}
+
 fn output_bytes_per_pixel(ct: tiff::ColorType) -> usize {
     let channels = match ct {
         tiff::ColorType::CMYK(_) | tiff::ColorType::CMYKA(_) => 4, // converted to RGBA
@@ -1827,5 +1865,40 @@ mod tests {
         let packed = vec![0xF0];
         let result = unpack_subbyte(&packed, 2, 1, 4, 1, AllocPref::CodecDefault).unwrap();
         assert_eq!(result, vec![255, 0]);
+    }
+
+    #[test]
+    fn decode_peak_factor_one_for_8bit_interleaved() {
+        use tiff::ColorType::{Gray, GrayA, RGB, RGBA};
+        // image-tiff's U8 buffer is moved into the output — measured ~1× (2026-06-23).
+        for ct in [Gray(8), GrayA(8), RGB(8), RGBA(8)] {
+            assert_eq!(decode_peak_factor(ct), 1, "{ct:?} should move (1x)");
+        }
+    }
+
+    #[test]
+    fn decode_peak_factor_two_for_conversions() {
+        use tiff::ColorType::{CMYK, Gray, RGB};
+        // CMYK→RGBA, 16-bit widening, sub-byte unpack hold source + dest — measured ~2×.
+        for ct in [CMYK(8), RGB(16), Gray(16), Gray(1)] {
+            assert_eq!(decode_peak_factor(ct), 2, "{ct:?} should convert (2x)");
+        }
+    }
+
+    #[test]
+    fn validate_rejects_conversion_overshoot_passed_by_direct() {
+        // 1000×1000 RGBA8 output = 4 MiB, cap = 6 MiB. The direct (1×) path fits
+        // (4 + 0.5 MiB scratch < 6); the 2× conversion path must be rejected
+        // (8 + 0.5 > 6) — exactly the case the old output-only guard accepted.
+        let (w, h, bpp) = (1000u32, 1000u32, 4u32);
+        let cfg = TiffDecodeConfig::none().with_max_memory(6 * 1024 * 1024);
+        assert!(
+            cfg.validate(w, h, bpp, 1).is_ok(),
+            "direct 1x path should pass"
+        );
+        assert!(
+            cfg.validate(w, h, bpp, 2).is_err(),
+            "conversion 2x path must be rejected"
+        );
     }
 }

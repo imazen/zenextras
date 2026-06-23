@@ -29,11 +29,19 @@ semantic versioning.
   unchanged behavior. Added `checked_mul` overflow guards on the dim-derived
   buffer sizes. All three modes decode byte-identically (new
   `fallible_alloc_decode_matches_default` test + 7 `alloc_util` unit tests).
-- `zencodec` integration now overrides `DecoderConfig::estimate_decode_resources`
-  with a codec-aware (single-threaded) estimate: peak ≈ ~2× the W·H·Bpp output
-  buffer (decode + conversion buffers held concurrently) + a ~1 MB per-strip /
-  predictor scratch; `ThreadingInformation::SERIAL`. Uncalibrated structural
-  estimate (no heaptrack model yet) — gated behind the `zencodec` feature.
+- **Decode peak-memory model calibrated against a heaptrack sweep**
+  (`benchmarks/tiff_decode_mem_2026-06-23.tsv`, produced by the new
+  `examples/mem_probe.rs` marginal-WS + heaptrack probe):
+  - The `max_memory_bytes` decode guard now bounds the **combined peak** with a
+    measured path factor — **1×** the W·H·Bpp output for 8-bit interleaved
+    Gray/GrayA/RGB/RGBA (image-tiff's decode buffer is moved into the output) and
+    **2×** for CMYK/palette/16-bit/sub-byte conversions (source + converted dest
+    held concurrently) — plus a ~512 KiB fixed scratch. The old check counted only
+    the output buffer, so a conversion decode could peak at ~2× the configured cap
+    without being rejected; it now is.
+  - `DecoderConfig::estimate_decode_resources` (zencodec feature) reports `typ` ≈
+    1× output (common direct path) and `peak_max` ≈ 2× output (conversion bound),
+    each + scratch; `ThreadingInformation::SERIAL`.
 - `zencodec` integration now overrides `EncoderConfig::estimate_encode_resources`
   with a codec-aware (single-threaded) estimate: peak ≈ input buffer + output
   (~input bytes uncompressed, less for deflate/lzw/packbits) + a ~1 MB per-strip

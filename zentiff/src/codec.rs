@@ -517,13 +517,16 @@ impl zencodec::decode::DecoderConfig for TiffDecoderCodecConfig {
 
     /// Uncalibrated structural decode estimate (no heaptrack model yet).
     ///
-    /// TIFF decode via `image-tiff` reads the full image into an intermediate
-    /// decode buffer, then this crate allocates the final pixel-output buffer
-    /// (often a separate copy — channel adjust, palette/CMYK expansion, sub-byte
-    /// unpacking). Peak therefore holds roughly the decode buffer plus the
-    /// output buffer concurrently, plus a small (~1 MB) per-strip / predictor
-    /// scratch. Decode is single-threaded. The throughput constant is a rough
-    /// structural guess, not a measured model.
+    /// TIFF decode via `image-tiff` reads the full image into a decode buffer,
+    /// then this crate produces the final pixel-output buffer. Measured peak
+    /// (heaptrack sweep, `benchmarks/tiff_decode_mem_2026-06-23.tsv`): the common
+    /// 8-bit interleaved path *moves* the decode buffer into the output (~1×
+    /// output, used for `typ`); CMYK/palette/16-bit/sub-byte conversions hold the
+    /// source and the converted dest concurrently (~2× output, used for
+    /// `peak_max`), plus a ~350 KiB fixed scratch. The decode descriptor alone
+    /// cannot tell which path a given file takes, so `typ` assumes the common
+    /// direct path and `peak_max` the conversion bound. Decode is single-threaded;
+    /// the throughput constant remains a rough structural guess.
     fn estimate_decode_resources(
         &self,
         image: &zencodec::estimate::ImageCharacteristics,
@@ -533,15 +536,16 @@ impl zencodec::decode::DecoderConfig for TiffDecoderCodecConfig {
         let bpp = image.descriptor().bytes_per_pixel() as u64;
         // Final output buffer: W * H * bytes-per-output-pixel.
         let output = image.pixels().saturating_mul(bpp);
-        // image-tiff intermediate decode buffer is roughly output-sized for the
-        // common direct path; conversions (palette/CMYK/channel-adjust) can hold
-        // both source and destination concurrently → count ~2× output.
-        let scratch = 1u64 << 20; // per-strip / predictor row
-        let typ = output.saturating_mul(2).saturating_add(scratch);
+        // Measured (heaptrack, benchmarks/tiff_decode_mem_2026-06-23): ~350 KiB
+        // fixed; the common 8-bit path moves the decode buffer into the output
+        // (~1× output → typ), conversions hold source + dest (~2× output → peak_max).
+        let scratch = 1u64 << 19; // ~350 KiB measured intercept, rounded to 512 KiB
+        let typ = output.saturating_add(scratch);
+        let peak_max = output.saturating_mul(2).saturating_add(scratch);
         // ~120 Mpix/s rough (uncalibrated, structural).
         let time_ms = (image.pixels() as f64 / 120_000.0) as u64;
         ResourceEstimate::new(typ, time_ms)
-            .with_peak_max(typ.saturating_mul(2))
+            .with_peak_max(peak_max)
             .with_threading(ThreadingInformation::SERIAL)
             .at_cores(compute.cores())
     }

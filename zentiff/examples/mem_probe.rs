@@ -19,13 +19,13 @@
 use enough::Unstoppable;
 use std::hint::black_box;
 
-/// Peak resident set size (KiB) of this process so far, from `/proc/self/status`.
-fn vmhwm_kb() -> u64 {
+/// A `/proc/self/status` field in KiB (e.g. `VmRSS:`, `VmHWM:`).
+fn status_kb(field: &str) -> u64 {
     std::fs::read_to_string("/proc/self/status")
         .ok()
         .and_then(|s| {
             s.lines()
-                .find(|l| l.starts_with("VmHWM:"))
+                .find(|l| l.starts_with(field))
                 .and_then(|l| l.split_whitespace().nth(1))
                 .and_then(|v| v.parse().ok())
         })
@@ -33,19 +33,31 @@ fn vmhwm_kb() -> u64 {
 }
 
 fn main() {
-    let path = std::env::args().nth(1).expect("usage: mem_probe <file.tif>");
+    let path = std::env::args()
+        .nth(1)
+        .expect("usage: mem_probe <file.tif>");
     let data = std::fs::read(&path).expect("read fixture");
+
+    // Resident set *before* decode — baseline (process + libs + allocator) plus
+    // the input `data` the caller holds. Subtracting this from the post-decode
+    // high-water isolates the decode's own marginal working set, which is what
+    // `estimate_decode_resources` models.
+    let pre_rss_kb = status_kb("VmRSS:");
 
     // `none()` = no resource caps, so we measure the unconstrained decode peak.
     let cfg = zentiff::TiffDecodeConfig::none();
     let out = zentiff::decode(&data, &cfg, &Unstoppable).expect("decode");
 
-    // Read the high-water mark immediately, before the contiguous_bytes() copy
-    // below can inflate it.
-    let peak_kb = vmhwm_kb();
+    // High-water mark immediately, before the contiguous_bytes() copy below can
+    // inflate it. VmHWM is monotonic, so this reflects the peak *during* decode.
+    let peak_kb = status_kb("VmHWM:");
 
     let (w, h) = (out.info.width, out.info.height);
     let out_bytes = out.pixels.as_slice().contiguous_bytes().len();
-    println!("{w}\t{h}\t{}\t{out_bytes}\t{peak_kb}", data.len());
+    // w  h  file_bytes  output_bytes  pre_rss_kb  vmhwm_kb
+    println!(
+        "{w}\t{h}\t{}\t{out_bytes}\t{pre_rss_kb}\t{peak_kb}",
+        data.len()
+    );
     black_box(&out);
 }
