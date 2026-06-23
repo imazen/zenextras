@@ -22,8 +22,21 @@ use whereat::At;
 #[allow(unused_imports)]
 use whereat::at;
 
+use crate::alloc_util::AllocPref;
 use crate::error::TiffError;
 use crate::{TiffDecodeConfig, TiffEncodeConfig, TiffInfo};
+
+/// Lower the public zencodec [`AllocPreference`](zencodec::AllocPreference) onto
+/// the crate-internal [`AllocPref`], keeping the decode core free of any
+/// `zencodec` dependency. The `#[non_exhaustive]` fall-through maps any future
+/// zencodec variant to [`AllocPref::CodecDefault`] (existing behavior).
+fn alloc_pref_from_zencodec(pref: zencodec::AllocPreference) -> AllocPref {
+    match pref {
+        zencodec::AllocPreference::Fallible => AllocPref::Fallible,
+        zencodec::AllocPreference::Infallible => AllocPref::Infallible,
+        _ => AllocPref::CodecDefault,
+    }
+}
 
 // ══════════════════════════════════════════════════════════════════════
 // Source encoding details
@@ -502,6 +515,37 @@ impl zencodec::decode::DecoderConfig for TiffDecoderCodecConfig {
         &TIFF_DECODE_CAPS
     }
 
+    /// Uncalibrated structural decode estimate (no heaptrack model yet).
+    ///
+    /// TIFF decode via `image-tiff` reads the full image into an intermediate
+    /// decode buffer, then this crate allocates the final pixel-output buffer
+    /// (often a separate copy — channel adjust, palette/CMYK expansion, sub-byte
+    /// unpacking). Peak therefore holds roughly the decode buffer plus the
+    /// output buffer concurrently, plus a small (~1 MB) per-strip / predictor
+    /// scratch. Decode is single-threaded. The throughput constant is a rough
+    /// structural guess, not a measured model.
+    fn estimate_decode_resources(
+        &self,
+        image: &zencodec::estimate::ImageCharacteristics,
+        compute: &zencodec::estimate::ComputeEnvironment,
+    ) -> zencodec::estimate::ResourceEstimate {
+        use zencodec::estimate::{ResourceEstimate, ThreadingInformation};
+        let bpp = image.descriptor().bytes_per_pixel() as u64;
+        // Final output buffer: W * H * bytes-per-output-pixel.
+        let output = image.pixels().saturating_mul(bpp);
+        // image-tiff intermediate decode buffer is roughly output-sized for the
+        // common direct path; conversions (palette/CMYK/channel-adjust) can hold
+        // both source and destination concurrently → count ~2× output.
+        let scratch = 1u64 << 20; // per-strip / predictor row
+        let typ = output.saturating_mul(2).saturating_add(scratch);
+        // ~120 Mpix/s rough (uncalibrated, structural).
+        let time_ms = (image.pixels() as f64 / 120_000.0) as u64;
+        ResourceEstimate::new(typ, time_ms)
+            .with_peak_max(typ.saturating_mul(2))
+            .with_threading(ThreadingInformation::SERIAL)
+            .at_cores(compute.cores())
+    }
+
     fn job<'a>(self) -> Self::Job<'a> {
         TiffDecodeJob {
             config: self,
@@ -541,6 +585,10 @@ impl TiffDecodeJob {
                 max_memory_bytes: limits.max_memory_bytes.or(base.max_memory_bytes),
                 max_width: limits.max_width.or(base.max_width),
                 max_height: limits.max_height.or(base.max_height),
+                // Lower the zencodec 3-mode allocation preference onto the
+                // crate-internal decode config so the untrusted-sized decode
+                // buffers honor it.
+                alloc_pref: alloc_pref_from_zencodec(limits.prefer_fallible_allocations),
             }
         } else {
             base.clone()

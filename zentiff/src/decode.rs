@@ -8,6 +8,8 @@ use tiff::tags::Tag;
 use whereat::{ResultAtExt, at};
 use zenpixels::{ChannelType, PixelBuffer, PixelDescriptor};
 
+use crate::alloc_util::{AllocPref, vec_with_capacity};
+
 use crate::error::{Result, TiffError};
 
 /// TIFF image metadata from decoding.
@@ -96,6 +98,13 @@ pub struct TiffDecodeConfig {
     pub max_width: Option<u32>,
     /// Maximum image height. `None` = no limit.
     pub max_height: Option<u32>,
+    /// Per-site allocation fallibility preference for the untrusted-sized
+    /// decode buffers. Crate-internal; lowered from
+    /// `zencodec::ResourceLimits::prefer_fallible_allocations` at the
+    /// `zencodec` decode boundary. Defaults to
+    /// [`AllocPref::CodecDefault`] (existing behavior) on every public
+    /// constructor, so the direct `decode()` API is unchanged.
+    pub(crate) alloc_pref: AllocPref,
 }
 
 impl TiffDecodeConfig {
@@ -113,6 +122,7 @@ impl TiffDecodeConfig {
             max_memory_bytes: None,
             max_width: None,
             max_height: None,
+            alloc_pref: AllocPref::CodecDefault,
         }
     }
 
@@ -187,6 +197,7 @@ impl Default for TiffDecodeConfig {
             max_memory_bytes: Some(Self::DEFAULT_MAX_MEMORY),
             max_width: None,
             max_height: None,
+            alloc_pref: AllocPref::CodecDefault,
         }
     }
 }
@@ -853,11 +864,24 @@ pub fn decode(
 
     // For planar images, interleave planes into contiguous pixel data.
     if num_planes > 1 {
-        result = interleave_planes(result, width, height, num_planes, color_type).at()?;
+        result = interleave_planes(
+            result,
+            width,
+            height,
+            num_planes,
+            color_type,
+            config.alloc_pref,
+        )?;
     }
 
-    let (pixels, _descriptor) =
-        convert_to_pixel_buffer(width, height, color_type, result, color_map.as_deref()).at()?;
+    let (pixels, _descriptor) = convert_to_pixel_buffer(
+        width,
+        height,
+        color_type,
+        result,
+        color_map.as_deref(),
+        config.alloc_pref,
+    )?;
 
     Ok(TiffDecodeOutput { pixels, info })
 }
@@ -971,6 +995,7 @@ fn convert_to_pixel_buffer(
     result: tiff::decoder::DecodingResult,
     #[cfg(feature = "_palette")] color_map: Option<&[u16]>,
     #[cfg(not(feature = "_palette"))] _color_map: Option<&[u16]>,
+    alloc_pref: AllocPref,
 ) -> Result<(PixelBuffer, PixelDescriptor)> {
     use tiff::decoder::DecodingResult as DR;
 
@@ -983,7 +1008,7 @@ fn convert_to_pixel_buffer(
         tiff::ColorType::Palette(bits) => {
             let map = color_map
                 .ok_or_else(|| at!(TiffError::Decode("palette image missing color map".into())))?;
-            return expand_palette(width, height, bits, result, map);
+            return expand_palette(width, height, bits, result, map, alloc_pref);
         }
         #[cfg(not(feature = "_palette"))]
         tiff::ColorType::Palette(_) => {
@@ -994,12 +1019,12 @@ fn convert_to_pixel_buffer(
             )));
         }
         tiff::ColorType::CMYK(_) => {
-            return convert_cmyk(width, height, color_type, result, false);
+            return convert_cmyk(width, height, color_type, result, false, alloc_pref);
         }
         tiff::ColorType::CMYKA(_) => {
-            return convert_cmyk(width, height, color_type, result, true);
+            return convert_cmyk(width, height, color_type, result, true, alloc_pref);
         }
-        _ => result_to_bytes(width, height, color_type, result, descriptor).at()?,
+        _ => result_to_bytes(width, height, color_type, result, descriptor, alloc_pref)?,
     };
 
     let buf =
@@ -1021,10 +1046,18 @@ fn vec_to_bytes<T: bytemuck::Pod>(v: Vec<T>) -> Vec<u8> {
 /// The tiff crate returns packed data for sub-8-bit depths: e.g., 8 pixels per byte
 /// for 1-bit, 4 pixels per byte for 2-bit, etc. Each row is padded to byte boundary.
 /// This function expands to one sample per byte, scaled to full 0-255 range.
-fn unpack_subbyte(packed: &[u8], width: u32, height: u32, bits: u8, num_channels: u16) -> Vec<u8> {
+fn unpack_subbyte(
+    packed: &[u8],
+    width: u32,
+    height: u32,
+    bits: u8,
+    num_channels: u16,
+    alloc_pref: AllocPref,
+) -> Result<Vec<u8>> {
     let samples_per_row = width as usize * num_channels as usize;
     let pixel_count = samples_per_row * height as usize;
-    let mut out = Vec::with_capacity(pixel_count);
+    // Full-image sample buffer sized from the (untrusted) IFD dims → fallible.
+    let mut out = vec_with_capacity(alloc_pref, true, pixel_count)?;
 
     // Scale factor: map max value for this bit depth to 255
     let max_val = (1u16 << bits) - 1;
@@ -1062,7 +1095,7 @@ fn unpack_subbyte(packed: &[u8], width: u32, height: u32, bits: u8, num_channels
         }
     }
 
-    out
+    Ok(out)
 }
 
 /// Interleave planar image data (RRRGGGBBB → RGBRGBRGB).
@@ -1076,17 +1109,33 @@ fn interleave_planes(
     height: u32,
     num_planes: usize,
     _color_type: tiff::ColorType,
+    alloc_pref: AllocPref,
 ) -> Result<tiff::decoder::DecodingResult> {
     use tiff::decoder::DecodingResult as DR;
+
+    // Full-image interleave scratch sized from the (untrusted) IFD dims →
+    // default fallible.
+    const SITE_FALLIBLE: bool = true;
+
+    // plane_size * num_planes, overflow-guarded (defensive against an inflated
+    // SamplesPerPixel under a small width*height).
+    let interleaved_len = |plane_size: usize| -> Result<usize> {
+        plane_size.checked_mul(num_planes).ok_or_else(|| {
+            at!(TiffError::LimitExceeded(alloc::format!(
+                "planar buffer size overflow: {plane_size} * {num_planes}"
+            )))
+        })
+    };
 
     match result {
         DR::U8(data) => {
             let plane_size = width as usize * height as usize;
-            if data.len() < plane_size * num_planes {
+            let total = interleaved_len(plane_size)?;
+            if data.len() < total {
                 // Only got partial planes — return what we have (single-plane fallback)
                 return Ok(DR::U8(data));
             }
-            let mut interleaved = Vec::with_capacity(plane_size * num_planes);
+            let mut interleaved = vec_with_capacity(alloc_pref, SITE_FALLIBLE, total)?;
             for pixel in 0..plane_size {
                 for plane in 0..num_planes {
                     interleaved.push(data[plane * plane_size + pixel]);
@@ -1096,10 +1145,11 @@ fn interleave_planes(
         }
         DR::U16(data) => {
             let plane_size = width as usize * height as usize;
-            if data.len() < plane_size * num_planes {
+            let total = interleaved_len(plane_size)?;
+            if data.len() < total {
                 return Ok(DR::U16(data));
             }
-            let mut interleaved = Vec::with_capacity(plane_size * num_planes);
+            let mut interleaved = vec_with_capacity(alloc_pref, SITE_FALLIBLE, total)?;
             for pixel in 0..plane_size {
                 for plane in 0..num_planes {
                     interleaved.push(data[plane * plane_size + pixel]);
@@ -1109,10 +1159,11 @@ fn interleave_planes(
         }
         DR::U32(data) => {
             let plane_size = width as usize * height as usize;
-            if data.len() < plane_size * num_planes {
+            let total = interleaved_len(plane_size)?;
+            if data.len() < total {
                 return Ok(DR::U32(data));
             }
-            let mut interleaved = Vec::with_capacity(plane_size * num_planes);
+            let mut interleaved = vec_with_capacity(alloc_pref, SITE_FALLIBLE, total)?;
             for pixel in 0..plane_size {
                 for plane in 0..num_planes {
                     interleaved.push(data[plane * plane_size + pixel]);
@@ -1122,10 +1173,11 @@ fn interleave_planes(
         }
         DR::I8(data) => {
             let plane_size = width as usize * height as usize;
-            if data.len() < plane_size * num_planes {
+            let total = interleaved_len(plane_size)?;
+            if data.len() < total {
                 return Ok(DR::I8(data));
             }
-            let mut interleaved = Vec::with_capacity(plane_size * num_planes);
+            let mut interleaved = vec_with_capacity(alloc_pref, SITE_FALLIBLE, total)?;
             for pixel in 0..plane_size {
                 for plane in 0..num_planes {
                     interleaved.push(data[plane * plane_size + pixel]);
@@ -1148,6 +1200,7 @@ fn result_to_bytes(
     color_type: tiff::ColorType,
     result: tiff::decoder::DecodingResult,
     descriptor: PixelDescriptor,
+    alloc_pref: AllocPref,
 ) -> Result<Vec<u8>> {
     use tiff::decoder::DecodingResult as DR;
 
@@ -1161,7 +1214,8 @@ fn result_to_bytes(
         && target_ct == ChannelType::U8
         && let DR::U8(packed) = result
     {
-        let mut expanded = unpack_subbyte(&packed, width, height, bit_depth, src_channels);
+        let mut expanded =
+            unpack_subbyte(&packed, width, height, bit_depth, src_channels, alloc_pref)?;
 
         // If source has fewer channels than target, adjust
         if (src_channels as usize) < target_channels {
@@ -1171,7 +1225,8 @@ fn result_to_bytes(
                 target_channels,
                 width,
                 height,
-            );
+                alloc_pref,
+            )?;
         } else if (src_channels as usize) > target_channels {
             expanded = truncate_channels(
                 &expanded,
@@ -1179,7 +1234,8 @@ fn result_to_bytes(
                 target_channels,
                 width,
                 height,
-            );
+                alloc_pref,
+            )?;
         }
 
         return Ok(expanded);
@@ -1193,7 +1249,14 @@ fn result_to_bytes(
         // Direct 8-bit passthrough
         (DR::U8(v), ChannelType::U8) => {
             if needs_channel_adjust {
-                adjust_channels_u8(v, src_channels as usize, target_channels, width, height)
+                adjust_channels_u8(
+                    v,
+                    src_channels as usize,
+                    target_channels,
+                    width,
+                    height,
+                    alloc_pref,
+                )?
             } else {
                 v
             }
@@ -1208,7 +1271,8 @@ fn result_to_bytes(
                     target_channels,
                     width,
                     height,
-                ))
+                    alloc_pref,
+                )?)
             } else {
                 vec_to_bytes(v)
             }
@@ -1291,6 +1355,16 @@ fn result_to_bytes(
     Ok(bytes)
 }
 
+/// Compute `pixel_count * dst_ch` with an overflow guard (defensive; the inputs
+/// are bounded by an already-allocated buffer, but guard anyway).
+fn channel_buf_len(pixel_count: usize, dst_ch: usize) -> Result<usize> {
+    pixel_count.checked_mul(dst_ch).ok_or_else(|| {
+        at!(TiffError::LimitExceeded(alloc::format!(
+            "channel buffer size overflow: {pixel_count} * {dst_ch}"
+        )))
+    })
+}
+
 /// Adjust channel count for U8 Multiband data.
 fn adjust_channels_u8(
     data: Vec<u8>,
@@ -1298,11 +1372,12 @@ fn adjust_channels_u8(
     dst_ch: usize,
     width: u32,
     height: u32,
-) -> Vec<u8> {
+    alloc_pref: AllocPref,
+) -> Result<Vec<u8>> {
     if src_ch > dst_ch {
-        truncate_channels(&data, src_ch, dst_ch, width, height)
+        truncate_channels(&data, src_ch, dst_ch, width, height, alloc_pref)
     } else {
-        expand_channels(&data, src_ch, dst_ch, width, height)
+        expand_channels(&data, src_ch, dst_ch, width, height, alloc_pref)
     }
 }
 
@@ -1313,19 +1388,22 @@ fn adjust_channels_u16(
     dst_ch: usize,
     _width: u32,
     _height: u32,
-) -> Vec<u16> {
+    alloc_pref: AllocPref,
+) -> Result<Vec<u16>> {
     let pixel_count = data.len() / src_ch;
+    let total = channel_buf_len(pixel_count, dst_ch)?;
     if src_ch > dst_ch {
-        let mut out = Vec::with_capacity(pixel_count * dst_ch);
+        // Full-image channel buffer → fallible default.
+        let mut out = vec_with_capacity(alloc_pref, true, total)?;
         for i in 0..pixel_count {
             let base = i * src_ch;
             for c in 0..dst_ch {
                 out.push(data[base + c]);
             }
         }
-        out
+        Ok(out)
     } else {
-        let mut out = Vec::with_capacity(pixel_count * dst_ch);
+        let mut out = vec_with_capacity(alloc_pref, true, total)?;
         for i in 0..pixel_count {
             let base = i * src_ch;
             for c in 0..src_ch {
@@ -1336,7 +1414,7 @@ fn adjust_channels_u16(
                 out.push(u16::MAX);
             }
         }
-        out
+        Ok(out)
     }
 }
 
@@ -1347,16 +1425,19 @@ fn truncate_channels(
     dst_ch: usize,
     _width: u32,
     _height: u32,
-) -> Vec<u8> {
+    alloc_pref: AllocPref,
+) -> Result<Vec<u8>> {
     let pixel_count = data.len() / src_ch;
-    let mut out = Vec::with_capacity(pixel_count * dst_ch);
+    let total = channel_buf_len(pixel_count, dst_ch)?;
+    // Full-image channel buffer → fallible default.
+    let mut out = vec_with_capacity(alloc_pref, true, total)?;
     for i in 0..pixel_count {
         let base = i * src_ch;
         for c in 0..dst_ch {
             out.push(data[base + c]);
         }
     }
-    out
+    Ok(out)
 }
 
 /// Expand channels by padding (e.g., 2ch gray+alpha → stays as-is if target matches,
@@ -1367,9 +1448,12 @@ fn expand_channels(
     dst_ch: usize,
     _width: u32,
     _height: u32,
-) -> Vec<u8> {
+    alloc_pref: AllocPref,
+) -> Result<Vec<u8>> {
     let pixel_count = data.len() / src_ch;
-    let mut out = Vec::with_capacity(pixel_count * dst_ch);
+    let total = channel_buf_len(pixel_count, dst_ch)?;
+    // Full-image channel buffer → fallible default.
+    let mut out = vec_with_capacity(alloc_pref, true, total)?;
     for i in 0..pixel_count {
         let base = i * src_ch;
         for c in 0..src_ch {
@@ -1377,7 +1461,7 @@ fn expand_channels(
         }
         out.extend(core::iter::repeat_n(255u8, dst_ch - src_ch));
     }
-    out
+    Ok(out)
 }
 
 /// Convert CMYK/CMYKA to RGBA.
@@ -1388,6 +1472,7 @@ fn convert_cmyk(
     _color_type: tiff::ColorType,
     result: tiff::decoder::DecodingResult,
     has_alpha: bool,
+    alloc_pref: AllocPref,
 ) -> Result<(PixelBuffer, PixelDescriptor)> {
     use tiff::decoder::DecodingResult as DR;
 
@@ -1395,12 +1480,9 @@ fn convert_cmyk(
         DR::U8(data) => {
             let src_channels: usize = if has_alpha { 5 } else { 4 };
             let pixel_count = data.len() / src_channels;
-            let mut rgba = Vec::new();
-            rgba.try_reserve(pixel_count * 4).map_err(|_| {
-                at!(TiffError::LimitExceeded(
-                    "CMYK conversion allocation failed".into()
-                ))
-            })?;
+            // Full-image RGBA output → fallible default; the 3-mode pref can
+            // still force the infallible fast path.
+            let mut rgba = vec_with_capacity(alloc_pref, true, channel_buf_len(pixel_count, 4)?)?;
 
             for i in 0..pixel_count {
                 let base = i * src_channels;
@@ -1429,12 +1511,7 @@ fn convert_cmyk(
             // Signed CMYK: offset to unsigned first, then convert
             let src_channels: usize = if has_alpha { 5 } else { 4 };
             let pixel_count = data.len() / src_channels;
-            let mut rgba = Vec::new();
-            rgba.try_reserve(pixel_count * 4).map_err(|_| {
-                at!(TiffError::LimitExceeded(
-                    "CMYK conversion allocation failed".into()
-                ))
-            })?;
+            let mut rgba = vec_with_capacity(alloc_pref, true, channel_buf_len(pixel_count, 4)?)?;
 
             for i in 0..pixel_count {
                 let base = i * src_channels;
@@ -1466,12 +1543,8 @@ fn convert_cmyk(
         DR::U16(data) => {
             let src_channels: usize = if has_alpha { 5 } else { 4 };
             let pixel_count = data.len() / src_channels;
-            let mut rgba: Vec<u16> = Vec::new();
-            rgba.try_reserve(pixel_count * 4).map_err(|_| {
-                at!(TiffError::LimitExceeded(
-                    "CMYK conversion allocation failed".into()
-                ))
-            })?;
+            let mut rgba: Vec<u16> =
+                vec_with_capacity(alloc_pref, true, channel_buf_len(pixel_count, 4)?)?;
 
             let max = u16::MAX as f64;
             for i in 0..pixel_count {
@@ -1500,12 +1573,8 @@ fn convert_cmyk(
         DR::F32(data) => {
             let src_channels: usize = if has_alpha { 5 } else { 4 };
             let pixel_count = data.len() / src_channels;
-            let mut rgba: Vec<f32> = Vec::new();
-            rgba.try_reserve(pixel_count * 4).map_err(|_| {
-                at!(TiffError::LimitExceeded(
-                    "CMYK conversion allocation failed".into()
-                ))
-            })?;
+            let mut rgba: Vec<f32> =
+                vec_with_capacity(alloc_pref, true, channel_buf_len(pixel_count, 4)?)?;
 
             for i in 0..pixel_count {
                 let base = i * src_channels;
@@ -1548,6 +1617,7 @@ fn expand_palette(
     bits: u8,
     result: tiff::decoder::DecodingResult,
     color_map: &[u16],
+    alloc_pref: AllocPref,
 ) -> Result<(PixelBuffer, PixelDescriptor)> {
     use tiff::decoder::DecodingResult as DR;
 
@@ -1566,7 +1636,7 @@ fn expand_palette(
     let indices: Vec<usize> = match (bits, result) {
         (1..=7, DR::U8(packed)) => {
             // Sub-byte: extract raw indices from packed bits (no scaling)
-            unpack_palette_indices(&packed, width, height, bits)
+            unpack_palette_indices(&packed, width, height, bits, alloc_pref)?
         }
         (8, DR::U8(data)) => {
             // 8-bit: indices are the raw bytes
@@ -1591,7 +1661,8 @@ fn expand_palette(
         ))));
     }
 
-    let mut rgb = Vec::with_capacity(pixel_count * 3);
+    // Full-image RGB output → fallible default.
+    let mut rgb = vec_with_capacity(alloc_pref, true, channel_buf_len(pixel_count, 3)?)?;
     for &idx in &indices[..pixel_count] {
         if idx >= num_entries {
             return Err(at!(TiffError::Decode(alloc::format!(
@@ -1615,10 +1686,17 @@ fn expand_palette(
 /// Unlike `unpack_subbyte`, this returns the raw index values without
 /// scaling to 0-255, since they will be used for palette lookup.
 #[cfg(feature = "_palette")]
-fn unpack_palette_indices(packed: &[u8], width: u32, height: u32, bits: u8) -> Vec<usize> {
+fn unpack_palette_indices(
+    packed: &[u8],
+    width: u32,
+    height: u32,
+    bits: u8,
+    alloc_pref: AllocPref,
+) -> Result<Vec<usize>> {
     let samples_per_row = width as usize;
     let pixel_count = samples_per_row * height as usize;
-    let mut out = Vec::with_capacity(pixel_count);
+    // Full-image index buffer sized from the IFD dims → fallible default.
+    let mut out = vec_with_capacity(alloc_pref, true, pixel_count)?;
 
     let bits_per_row = samples_per_row * bits as usize;
     let packed_row_bytes = bits_per_row.div_ceil(8);
@@ -1647,7 +1725,7 @@ fn unpack_palette_indices(packed: &[u8], width: u32, height: u32, bits: u8) -> V
         }
     }
 
-    out
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -1731,7 +1809,7 @@ mod tests {
     fn unpack_1bit() {
         // 8 pixels wide, 1 row, 1-bit: packed = [0b10110100] = 1,0,1,1,0,1,0,0
         let packed = vec![0b1011_0100];
-        let result = unpack_subbyte(&packed, 8, 1, 1, 1);
+        let result = unpack_subbyte(&packed, 8, 1, 1, 1, AllocPref::CodecDefault).unwrap();
         assert_eq!(result, vec![255, 0, 255, 255, 0, 255, 0, 0]);
     }
 
@@ -1739,7 +1817,7 @@ mod tests {
     fn unpack_2bit() {
         // 4 pixels wide, 1 row, 2-bit: packed = [0b11_10_01_00]
         let packed = vec![0b11_10_01_00];
-        let result = unpack_subbyte(&packed, 4, 1, 2, 1);
+        let result = unpack_subbyte(&packed, 4, 1, 2, 1, AllocPref::CodecDefault).unwrap();
         assert_eq!(result, vec![255, 170, 85, 0]);
     }
 
@@ -1747,7 +1825,7 @@ mod tests {
     fn unpack_4bit() {
         // 2 pixels wide, 1 row, 4-bit: packed = [0xF0]
         let packed = vec![0xF0];
-        let result = unpack_subbyte(&packed, 2, 1, 4, 1);
+        let result = unpack_subbyte(&packed, 2, 1, 4, 1, AllocPref::CodecDefault).unwrap();
         assert_eq!(result, vec![255, 0]);
     }
 }

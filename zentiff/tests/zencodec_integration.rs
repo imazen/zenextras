@@ -840,3 +840,58 @@ fn metadata_default_no_metadata_is_byte_identical() {
         "no-metadata trait encode should equal the core encode()"
     );
 }
+
+// ==========================================================================
+// AllocPreference: all three modes (Fallible / Infallible / default
+// CodecDefault) must decode byte-identically.
+// ==========================================================================
+
+/// Decode `encoded` under the given [`AllocPreference`] (or the default
+/// `CodecDefault` when `pref` is `None`) and return the raw contiguous bytes.
+fn decode_bytes_under_pref(encoded: &[u8], pref: Option<zencodec::AllocPreference>) -> Vec<u8> {
+    let job = TiffDecoderCodecConfig::new().job();
+    let job = match pref {
+        Some(p) => job.with_limits(ResourceLimits::none().with_prefer_fallible_allocations(p)),
+        None => job,
+    };
+    job.decoder(Cow::Borrowed(encoded), &[])
+        .unwrap()
+        .decode()
+        .unwrap()
+        .into_buffer()
+        .copy_to_contiguous_bytes()
+}
+
+/// All three allocation modes must yield byte-identical decoded output.
+fn assert_all_alloc_modes_agree(encoded: &[u8]) {
+    let default = decode_bytes_under_pref(encoded, None); // CodecDefault
+    let fallible = decode_bytes_under_pref(encoded, Some(zencodec::AllocPreference::Fallible));
+    let infallible = decode_bytes_under_pref(encoded, Some(zencodec::AllocPreference::Infallible));
+    assert_eq!(
+        default, fallible,
+        "Fallible decode must be byte-identical to the default decode"
+    );
+    assert_eq!(
+        default, infallible,
+        "Infallible decode must be byte-identical to the default decode"
+    );
+    assert!(!default.is_empty(), "decoded output must be non-empty");
+}
+
+#[test]
+fn fallible_alloc_decode_matches_default() {
+    // (1) RGB8 — the direct 8-bit passthrough output-buffer path.
+    let rgb8 = make_rgb8(64, 48);
+    assert_all_alloc_modes_agree(&encode_via_trait(&rgb8));
+
+    // (2) RGBA8 — passthrough with alpha.
+    let rgba_data: Vec<u8> = (0..64u32 * 48 * 4).map(|i| (i % 256) as u8).collect();
+    let rgba8 = PixelBuffer::from_vec(rgba_data, 64, 48, PixelDescriptor::RGBA8_SRGB).unwrap();
+    assert_all_alloc_modes_agree(&encode_via_trait(&rgba8));
+
+    // (3) GrayAlpha8 — exercises the channel-adjust conversion buffer
+    //     (gray+alpha → expanded), a different untrusted-sized alloc site.
+    let ga_data: Vec<u8> = (0..32u32 * 24 * 2).map(|i| (i % 256) as u8).collect();
+    let graya = PixelBuffer::from_vec(ga_data, 32, 24, PixelDescriptor::GRAYA8_SRGB).unwrap();
+    assert_all_alloc_modes_agree(&encode_via_trait(&graya));
+}

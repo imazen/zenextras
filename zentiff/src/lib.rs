@@ -45,6 +45,9 @@ extern crate std;
 // Crate info for whereat error tracing
 whereat::define_at_crate_info!();
 
+/// Allocation helpers honoring a per-site fallibility preference (the
+/// crate-local mirror of `zencodec::AllocPreference`).
+mod alloc_util;
 #[cfg(feature = "zencodec")]
 pub mod codec;
 mod decode;

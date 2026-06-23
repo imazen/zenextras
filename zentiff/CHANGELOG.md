@@ -17,6 +17,23 @@ semantic versioning.
   (whereat's blanket conversion uses the bare `From<BufferError>`).
 
 ### Added
+- Decode now honors `zencodec::AllocPreference` (3-mode, per-site) for the
+  untrusted-IFD-sized allocations. The full-image pixel output, plane-interleave
+  scratch, channel-adjust / palette-expand / CMYK conversion buffers, and
+  sub-byte unpack buffers default to the fallible `try_reserve` path (graceful
+  `TiffError::LimitExceeded` on OOM); a crate-local `AllocPref` mirror keeps the
+  decode core feature-agnostic, lowered from
+  `ResourceLimits::prefer_fallible_allocations` at the `zencodec` decode
+  boundary. `AllocPreference::Infallible` forces the faster `vec!` /
+  `with_capacity` path; `CodecDefault` (the direct `decode()` default) is
+  unchanged behavior. Added `checked_mul` overflow guards on the dim-derived
+  buffer sizes. All three modes decode byte-identically (new
+  `fallible_alloc_decode_matches_default` test + 7 `alloc_util` unit tests).
+- `zencodec` integration now overrides `DecoderConfig::estimate_decode_resources`
+  with a codec-aware (single-threaded) estimate: peak ≈ ~2× the W·H·Bpp output
+  buffer (decode + conversion buffers held concurrently) + a ~1 MB per-strip /
+  predictor scratch; `ThreadingInformation::SERIAL`. Uncalibrated structural
+  estimate (no heaptrack model yet) — gated behind the `zencodec` feature.
 - `zencodec` integration now overrides `EncoderConfig::estimate_encode_resources`
   with a codec-aware (single-threaded) estimate: peak ≈ input buffer + output
   (~input bytes uncompressed, less for deflate/lzw/packbits) + a ~1 MB per-strip
