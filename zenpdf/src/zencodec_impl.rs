@@ -24,8 +24,21 @@ use zencodec::{
 };
 use zenpixels::{PixelBuffer, PixelDescriptor};
 
+use crate::alloc_util::AllocPref;
 use crate::error::PdfError;
 use crate::render::{self, RenderBounds};
+
+/// Lower the public zencodec [`AllocPreference`](zencodec::AllocPreference) onto
+/// the crate-internal [`AllocPref`]. Any unrecognized (future,
+/// `#[non_exhaustive]`) variant maps to [`AllocPref::CodecDefault`] (existing
+/// behavior).
+fn alloc_pref_from_zencodec(pref: zencodec::AllocPreference) -> AllocPref {
+    match pref {
+        zencodec::AllocPreference::Fallible => AllocPref::Fallible,
+        zencodec::AllocPreference::Infallible => AllocPref::Infallible,
+        _ => AllocPref::CodecDefault,
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Format definition
@@ -143,6 +156,43 @@ impl zencodec::decode::DecoderConfig for PdfDecoderConfig {
         &PDF_DECODE_CAPS
     }
 
+    /// Conservative, uncalibrated render estimate.
+    ///
+    /// PDF page rendering peak memory is genuinely hard to characterize from the
+    /// output dimensions alone: hayro parses the document, interprets the
+    /// content stream, and rasterizes through `vello_cpu`, with a working set
+    /// that depends on the *content* (path/glyph count, embedded images,
+    /// transparency groups), not just the output width × height. The output
+    /// raster is a firm lower bound — the final RGBA8 buffer is W × H × 4 — and
+    /// zenpdf's `pixmap_to_buffer` briefly holds the hayro pixmap and the
+    /// converted [`PixelBuffer`] concurrently (≈ 2× the raster). On top of that,
+    /// this estimate budgets a generous working-set multiple for the parsed
+    /// document and embedded resources, and reports a wide `peak_max`.
+    /// Rendering is single-threaded. Treat the numbers as a structural floor,
+    /// not a measured model.
+    fn estimate_decode_resources(
+        &self,
+        image: &zencodec::estimate::ImageCharacteristics,
+        compute: &zencodec::estimate::ComputeEnvironment,
+    ) -> zencodec::estimate::ResourceEstimate {
+        use zencodec::estimate::{ResourceEstimate, ThreadingInformation};
+        // Output raster: W * H * 4 (always RGBA8 sRGB).
+        let output = image.pixels().saturating_mul(4);
+        // hayro pixmap + converted buffer held concurrently (~2× raster), plus
+        // the parsed document / interpreter / embedded-resource working set,
+        // which is content-dependent and unbounded by dimensions; budget ~4×
+        // the output raster plus a fixed overhead as a structural typical.
+        let fixed = 16u64 << 20;
+        let typ = output.saturating_mul(4).saturating_add(fixed);
+        // ~25 Mpix/s rough — PDF interpretation + vector rasterization is far
+        // slower per output pixel than a block decode and varies with content.
+        let time_ms = (image.pixels() as f64 / 25_000.0) as u64;
+        ResourceEstimate::new(typ, time_ms)
+            .with_peak_max(output.saturating_mul(8).saturating_add(fixed))
+            .with_threading(ThreadingInformation::SERIAL)
+            .at_cores(compute.cores())
+    }
+
     fn job<'a>(self) -> Self::Job<'a> {
         PdfDecodeJob {
             config: self,
@@ -256,6 +306,14 @@ impl<'a> zencodec::decode::DecodeJob<'a> for PdfDecodeJob {
         let (w, h) = compute_output_dims(&self.config.bounds, pw, ph)?;
         let out_info = OutputInfo::full_decode(w, h, PixelDescriptor::RGBA8_SRGB);
         self.check_limits_on_output(&out_info)?;
+        // Lower the zencodec 3-mode allocation preference onto the crate-internal
+        // decoder. zenpdf's raster is produced inside hayro (a transitive
+        // allocation this crate does not own), so the preference has no
+        // zenpdf-owned site to govern today; it is threaded here for boundary
+        // parity with the sibling codecs and so a future crate-owned buffer can
+        // honor it. The direct (non-zencodec) render API never sets it →
+        // `CodecDefault`, behavior unchanged.
+        let alloc_pref = alloc_pref_from_zencodec(self.limits.prefer_fallible_allocations);
         Ok(PdfDecoder {
             data: data.into_owned(),
             bounds: self.config.bounds,
@@ -263,6 +321,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for PdfDecodeJob {
             render_annotations: self.config.render_annotations,
             page,
             page_count: count,
+            alloc_pref,
         })
     }
 
@@ -304,12 +363,23 @@ pub struct PdfDecoder {
     render_annotations: bool,
     page: u32,
     page_count: u32,
+    /// Lowered allocation preference. zenpdf performs no width × height-sized
+    /// Rust allocation of its own in the render path (the raster is
+    /// hayro-owned), so this is currently a no-op carried for boundary parity;
+    /// see [`crate::alloc_util`].
+    alloc_pref: AllocPref,
 }
 
 impl zencodec::decode::Decode for PdfDecoder {
     type Error = PdfError;
 
     fn decode(self) -> Result<DecodeOutput, PdfError> {
+        // The output raster is produced inside hayro (`hayro::render`) below,
+        // which this crate cannot route through a `try_reserve`, so the lowered
+        // allocation preference has no zenpdf-owned site to apply to. Bind it
+        // explicitly to document that the plumbing is intentionally a no-op here.
+        let _ = self.alloc_pref;
+
         let count = self.page_count;
         let config = crate::render::PdfConfig {
             pages: crate::render::PageSelection::Single(self.page),

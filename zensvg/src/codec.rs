@@ -13,9 +13,22 @@ use zenpixels::{AlphaMode, ChannelLayout, ChannelType, PixelBuffer, PixelDescrip
 
 use enough::Stop;
 
+use crate::alloc_util::AllocPref;
 use crate::error::SvgError;
 use crate::format::{SVG_FORMAT_DEFINITION, svg_format};
 use crate::render::{FitMode, RenderOptions};
+
+/// Lower the public zencodec [`AllocPreference`](zencodec::AllocPreference) onto
+/// the crate-internal [`AllocPref`]. Any unrecognized (future,
+/// `#[non_exhaustive]`) variant maps to [`AllocPref::CodecDefault`] (existing
+/// behavior).
+fn alloc_pref_from_zencodec(pref: zencodec::AllocPreference) -> AllocPref {
+    match pref {
+        zencodec::AllocPreference::Fallible => AllocPref::Fallible,
+        zencodec::AllocPreference::Infallible => AllocPref::Infallible,
+        _ => AllocPref::CodecDefault,
+    }
+}
 
 // ══════════════════════════════════════════════════════════════════════
 // Capabilities and descriptors
@@ -131,6 +144,40 @@ impl zencodec::decode::DecoderConfig for SvgDecoderConfig {
 
     fn capabilities() -> &'static DecodeCapabilities {
         &SVG_DECODE_CAPS
+    }
+
+    /// Conservative, uncalibrated render estimate.
+    ///
+    /// SVG rendering peak memory is genuinely hard to characterize from the
+    /// output dimensions alone: resvg parses the document into a `usvg` tree and
+    /// builds a `tiny-skia` render context whose size depends on the *content*
+    /// (path count, gradients, filters, embedded rasters), not just the output
+    /// width × height. The output buffer is a firm lower bound — the final
+    /// `tiny-skia::Pixmap` is exactly W × H × 4 (RGBA8). On top of that, this
+    /// estimate budgets a generous working-set multiple for the parsed tree and
+    /// render scratch, and reports a wide `peak_max`. Rendering is
+    /// single-threaded. Treat the numbers as a structural floor, not a measured
+    /// model.
+    fn estimate_decode_resources(
+        &self,
+        image: &zencodec::estimate::ImageCharacteristics,
+        compute: &zencodec::estimate::ComputeEnvironment,
+    ) -> zencodec::estimate::ResourceEstimate {
+        use zencodec::estimate::{ResourceEstimate, ThreadingInformation};
+        // Output raster: W * H * 4 (always RGBA8 sRGB).
+        let output = image.pixels().saturating_mul(4);
+        // Parsed usvg tree + tiny-skia render context: content-dependent and
+        // unbounded by dimensions; budget ~3× the output raster plus a fixed
+        // overhead as a structural typical.
+        let fixed = 16u64 << 20;
+        let typ = output.saturating_mul(4).saturating_add(fixed);
+        // ~30 Mpix/s rough — vector rasterization is far slower per output
+        // pixel than a block decode and varies wildly with path complexity.
+        let time_ms = (image.pixels() as f64 / 30_000.0) as u64;
+        ResourceEstimate::new(typ, time_ms)
+            .with_peak_max(output.saturating_mul(8).saturating_add(fixed))
+            .with_threading(ThreadingInformation::SERIAL)
+            .at_cores(compute.cores())
     }
 
     fn job<'a>(self) -> Self::Job<'a> {
@@ -253,10 +300,20 @@ impl<'a> zencodec::decode::DecodeJob<'a> for SvgDecodeJob {
         self.check_input_size(data.len())?;
         self.check_stop()?;
 
+        // Lower the zencodec 3-mode allocation preference onto the crate-internal
+        // decoder. zensvg's raster is allocated inside tiny-skia (a transitive
+        // allocation this crate does not own), so the preference has no
+        // zensvg-owned site to govern today; it is threaded here for boundary
+        // parity with the sibling codecs and so a future crate-owned buffer can
+        // honor it. The direct (non-zencodec) render API never sets it →
+        // `CodecDefault`, behavior unchanged.
+        let alloc_pref = alloc_pref_from_zencodec(self.limits.prefer_fallible_allocations);
+
         Ok(SvgDecoder {
             config: self.config,
             data,
             stop: self.stop,
+            alloc_pref,
         })
     }
 
@@ -303,6 +360,11 @@ pub struct SvgDecoder<'a> {
     config: SvgDecoderConfig,
     data: Cow<'a, [u8]>,
     stop: Option<StopToken>,
+    /// Lowered allocation preference. zensvg performs no width × height-sized
+    /// Rust allocation of its own in the render path (the raster is
+    /// tiny-skia-owned), so this is currently a no-op carried for boundary
+    /// parity; see [`crate::alloc_util`].
+    alloc_pref: AllocPref,
 }
 
 impl zencodec::decode::Decode for SvgDecoder<'_> {
@@ -313,6 +375,12 @@ impl zencodec::decode::Decode for SvgDecoder<'_> {
         if let Some(ref stop) = self.stop {
             stop.check()?;
         }
+
+        // The output raster is allocated inside tiny-skia (`Pixmap::new`) below,
+        // which this crate cannot route through a `try_reserve`, so the lowered
+        // allocation preference has no zensvg-owned site to apply to. Bind it
+        // explicitly to document that the plumbing is intentionally a no-op here.
+        let _ = self.alloc_pref;
 
         let result = crate::render::render(&self.data, &self.config.render_options)?;
 
@@ -326,5 +394,77 @@ impl zencodec::decode::Decode for SvgDecoder<'_> {
             .with_cicp(zencodec::Cicp::SRGB);
 
         Ok(DecodeOutput::new(pixels, info))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use zencodec::AllocPreference;
+    use zencodec::decode::{Decode, DecodeJob, DecoderConfig};
+
+    const SIMPLE_SVG: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" width="40" height="30">
+        <rect width="40" height="30" fill="red"/>
+        <circle cx="20" cy="15" r="10" fill="blue"/>
+    </svg>"#;
+
+    fn render_bytes_under(pref: AllocPreference) -> Vec<u8> {
+        let limits = ResourceLimits::none().with_prefer_fallible_allocations(pref);
+        let out = SvgDecoderConfig::new()
+            .job()
+            .with_limits(limits)
+            .decoder(Cow::Borrowed(SIMPLE_SVG), &[])
+            .expect("decoder construction succeeds")
+            .decode()
+            .expect("render succeeds");
+        out.pixels().contiguous_bytes().into_owned()
+    }
+
+    /// Rendering the same SVG under all three allocation modes must produce
+    /// byte-identical output. zensvg's raster is tiny-skia-owned, so the
+    /// preference is a no-op for the pixels, but this proves the boundary
+    /// plumbing never perturbs the output (and exercises a real render path,
+    /// unlike zenjp2 which lacks an in-tree fixture).
+    #[test]
+    fn alloc_pref_modes_render_byte_identical() {
+        let default = render_bytes_under(AllocPreference::CodecDefault);
+        let fallible = render_bytes_under(AllocPreference::Fallible);
+        let infallible = render_bytes_under(AllocPreference::Infallible);
+        assert!(!default.is_empty());
+        assert_eq!(default.len(), 40 * 30 * 4);
+        assert_eq!(default, fallible);
+        assert_eq!(default, infallible);
+    }
+
+    /// The lowered preference reaches the decoder in each mode.
+    #[test]
+    fn alloc_pref_boundary_lowers_in_all_modes() {
+        for (pref, expected) in [
+            (AllocPreference::CodecDefault, AllocPref::CodecDefault),
+            (AllocPreference::Fallible, AllocPref::Fallible),
+            (AllocPreference::Infallible, AllocPref::Infallible),
+        ] {
+            let limits = ResourceLimits::none().with_prefer_fallible_allocations(pref);
+            let dec = SvgDecoderConfig::new()
+                .job()
+                .with_limits(limits)
+                .decoder(Cow::Borrowed(SIMPLE_SVG), &[])
+                .expect("decoder construction succeeds");
+            assert_eq!(dec.alloc_pref, expected);
+        }
+    }
+
+    #[test]
+    fn estimate_decode_resources_scales_with_output() {
+        use zencodec::estimate::{ComputeEnvironment, ImageCharacteristics, ThreadingInformation};
+        let img = ImageCharacteristics::new(800, 600, PixelDescriptor::RGBA8_SRGB);
+        let env = ComputeEnvironment::new().with_cores(8);
+        let est = SvgDecoderConfig::new().estimate_decode_resources(&img, &env);
+        let output = 800u64 * 600 * 4;
+        // Peak holds at least the output raster.
+        assert!(est.peak_memory_bytes_est().unwrap() >= output);
+        assert!(est.peak_memory_bytes_max().unwrap() >= est.peak_memory_bytes_est().unwrap());
+        assert!(est.wall_ms().is_some());
+        assert_eq!(est.threading(), Some(ThreadingInformation::SERIAL));
     }
 }

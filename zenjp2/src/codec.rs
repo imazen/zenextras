@@ -17,7 +17,20 @@ use zencodec::decode::{
 use zencodec::{ImageFormat, ImageInfo, ResourceLimits, StopToken, Unsupported};
 use zenpixels::{PixelBuffer, PixelDescriptor};
 
+use crate::alloc_util::AllocPref;
 use crate::error::Jp2Error;
+
+/// Lower the public zencodec [`AllocPreference`](zencodec::AllocPreference) onto
+/// the crate-internal [`AllocPref`], keeping the decode core free of any
+/// `zencodec` dependency. Any unrecognized (future, `#[non_exhaustive]`)
+/// variant maps to [`AllocPref::CodecDefault`] (existing behavior).
+fn alloc_pref_from_zencodec(pref: zencodec::AllocPreference) -> AllocPref {
+    match pref {
+        zencodec::AllocPreference::Fallible => AllocPref::Fallible,
+        zencodec::AllocPreference::Infallible => AllocPref::Infallible,
+        _ => AllocPref::CodecDefault,
+    }
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Supported pixel descriptors
@@ -104,6 +117,40 @@ impl DecoderConfig for Jp2DecoderConfig {
 
     fn capabilities() -> &'static DecodeCapabilities {
         &JP2_DECODE_CAPS
+    }
+
+    /// Uncalibrated structural decode estimate (no heaptrack model yet).
+    ///
+    /// A JPEG 2000 decode reconstructs the image through the inverse wavelet
+    /// transform on a per-tile basis, then assembles the full output plane.
+    /// Peak memory therefore holds the full output buffer (W × H × bytes per
+    /// output pixel) concurrently with the wavelet/tile working set for the
+    /// tile currently being inverted. The codestream's tiling is not known
+    /// without parsing, so the working set is approximated as a fraction of the
+    /// output buffer plus a small fixed overhead — a structural guess, not a
+    /// measured model. Decode is single-threaded.
+    fn estimate_decode_resources(
+        &self,
+        image: &zencodec::estimate::ImageCharacteristics,
+        compute: &zencodec::estimate::ComputeEnvironment,
+    ) -> zencodec::estimate::ResourceEstimate {
+        use zencodec::estimate::{ResourceEstimate, ThreadingInformation};
+        let bpp = image.descriptor().bytes_per_pixel() as u64;
+        // Full output pixel plane: W * H * bytes-per-output-pixel.
+        let output = image.pixels().saturating_mul(bpp);
+        // Wavelet/tile working set: hayro reconstructs tile-by-tile, holding
+        // coefficient and intermediate sub-band buffers for the active tile.
+        // Untiled codestreams hold roughly a full image-sized coefficient plane;
+        // budget ~1× output for the working set plus a small fixed overhead.
+        let scratch = 8u64 << 20; // tile/codestream parsing + sub-band scratch
+        let typ = output.saturating_mul(2).saturating_add(scratch);
+        // ~60 Mpix/s rough (uncalibrated, structural — wavelet decode is
+        // heavier per pixel than a DCT or row-filter decode).
+        let time_ms = (image.pixels() as f64 / 60_000.0) as u64;
+        ResourceEstimate::new(typ, time_ms)
+            .with_peak_max(typ.saturating_mul(2))
+            .with_threading(ThreadingInformation::SERIAL)
+            .at_cores(compute.cores())
     }
 
     fn job<'a>(self) -> Self::Job<'a> {
@@ -194,11 +241,26 @@ impl<'a> DecodeJob<'a> for Jp2DecodeJob {
             }
         }
 
+        // Lower the zencodec 3-mode allocation preference onto the
+        // crate-internal decoder. zenjp2's output buffer is allocated inside
+        // hayro_jpeg2000 (a transitive allocation this crate does not own), so
+        // the preference has no zenjp2-owned site to govern today; it is
+        // threaded here for boundary parity with the sibling codecs and so a
+        // future crate-owned post-process buffer can honor it. The direct
+        // (non-zencodec) decode API leaves it `CodecDefault` → behavior
+        // unchanged.
+        let alloc_pref = self
+            .limits
+            .as_ref()
+            .map(|l| alloc_pref_from_zencodec(l.prefer_fallible_allocations))
+            .unwrap_or_default();
+
         Ok(Jp2Decoder {
             data,
             settings: self.settings,
             limits: self.limits,
             policy: self.policy,
+            alloc_pref,
         })
     }
 
@@ -233,12 +295,24 @@ pub struct Jp2Decoder<'a> {
     settings: hayro_jpeg2000::DecodeSettings,
     limits: Option<ResourceLimits>,
     policy: Option<DecodePolicy>,
+    /// Lowered allocation preference. zenjp2 performs no width × height-sized
+    /// Rust allocation of its own in the decode path (the output buffer is
+    /// hayro-owned), so this is currently a no-op carried for boundary parity;
+    /// see [`crate::alloc_util`].
+    alloc_pref: AllocPref,
 }
 
 impl Decode for Jp2Decoder<'_> {
     type Error = whereat::At<Jp2Error>;
 
     fn decode(self) -> core::result::Result<DecodeOutput, Self::Error> {
+        // The output pixel buffer is allocated inside `hayro_jpeg2000` below,
+        // which this crate cannot route through a `try_reserve`, so the lowered
+        // allocation preference has no zenjp2-owned site to apply to. Bind it
+        // explicitly to document that the plumbing is intentionally a no-op
+        // here (it would govern a future crate-owned post-process buffer).
+        let _ = self.alloc_pref;
+
         let image = hayro_jpeg2000::Image::new(&self.data, &self.settings)
             .map_err(|e| at!(Jp2Error::InvalidData(alloc::format!("{e}"))))?;
 
@@ -468,5 +542,55 @@ mod tests {
         assert!(crate::is_jpeg2000(b"\xFF\x4F\xFF\x51"));
         assert!(!crate::is_jpeg2000(b"not jp2"));
         assert!(!crate::is_jpeg2000(b""));
+    }
+
+    #[test]
+    fn estimate_decode_resources_scales_with_output() {
+        use zencodec::estimate::{ComputeEnvironment, ImageCharacteristics, ThreadingInformation};
+        let img = ImageCharacteristics::new(1000, 1000, PixelDescriptor::RGBA8_SRGB);
+        let env = ComputeEnvironment::new().with_cores(8);
+        let est = Jp2DecoderConfig::new().estimate_decode_resources(&img, &env);
+        // Peak holds output (1000*1000*4 = 4 MB) at least twice plus scratch.
+        let output = 1000u64 * 1000 * 4;
+        assert!(est.peak_memory_bytes_est().unwrap() >= output.saturating_mul(2));
+        assert!(est.peak_memory_bytes_max().unwrap() >= est.peak_memory_bytes_est().unwrap());
+        assert!(est.wall_ms().is_some());
+        // Decode is serial → at_cores does not divide wall time below 1 thread.
+        assert_eq!(est.threading(), Some(ThreadingInformation::SERIAL));
+    }
+
+    /// The 3-mode allocation preference lowers cleanly at the decode boundary
+    /// in every mode and produces a valid decoder. zenjp2's output buffer is
+    /// hayro-owned, so the preference is a no-op for pixel output, but the
+    /// boundary plumbing must stay sound under all three modes. A real
+    /// byte-identity round trip needs a decodable JP2 fixture, which is not
+    /// available in-tree (zenjp2 is decode-only and there is no JP2 encoder in
+    /// the workspace); the helper-level byte identity is covered by
+    /// `crate::alloc_util`'s `alloc_zeroed_all_modes_equal_bytes`.
+    #[test]
+    fn alloc_pref_boundary_lowers_in_all_modes() {
+        use zencodec::AllocPreference;
+        for pref in [
+            AllocPreference::CodecDefault,
+            AllocPreference::Fallible,
+            AllocPreference::Infallible,
+        ] {
+            let limits = ResourceLimits::none().with_prefer_fallible_allocations(pref);
+            // A non-JP2 payload that still passes the input-size gate: decoder()
+            // construction must succeed (it does not parse the codestream), so
+            // the lowered preference is exercised on a valid decoder in each
+            // mode without depending on a real fixture.
+            let job = Jp2DecoderConfig::new().job().with_limits(limits);
+            let data = vec![0u8; 64];
+            let dec = job
+                .decoder(Cow::Owned(data), &[])
+                .expect("decoder construction succeeds under every alloc mode");
+            let expected = match pref {
+                AllocPreference::Fallible => AllocPref::Fallible,
+                AllocPreference::Infallible => AllocPref::Infallible,
+                _ => AllocPref::CodecDefault,
+            };
+            assert_eq!(dec.alloc_pref, expected);
+        }
     }
 }

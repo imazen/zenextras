@@ -1,6 +1,13 @@
 #![forbid(unsafe_code)]
 #![doc = include_str!("../README.md")]
 
+/// Allocation helpers honoring a per-site fallibility preference (the
+/// crate-local mirror of `zencodec::AllocPreference`). zensvg's raster is
+/// allocated inside `tiny-skia`, so there is no crate-owned untrusted render
+/// allocation to convert today; the module carries the boundary plumbing and
+/// the tested 3-mode helpers for parity with the sibling codecs.
+mod alloc_util;
+
 pub mod error;
 pub mod format;
 pub mod render;

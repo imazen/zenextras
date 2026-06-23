@@ -206,3 +206,47 @@ fn format_detection() {
     assert!(!detect(b"not a pdf"));
     assert!(!detect(b""));
 }
+
+// --- AllocPreference (3-mode) tests ---
+
+fn render_bytes_under(pref: zencodec::AllocPreference) -> Vec<u8> {
+    let limits = ResourceLimits::none().with_prefer_fallible_allocations(pref);
+    let out = PdfDecoderConfig::new()
+        .with_bounds(RenderBounds::Scale(0.5))
+        .job()
+        .with_limits(limits)
+        .decoder(Cow::Borrowed(&test_pdf()), &[])
+        .expect("decoder construction succeeds")
+        .decode()
+        .expect("render succeeds");
+    out.pixels().contiguous_bytes().into_owned()
+}
+
+/// Rendering the same PDF page under all three allocation modes must produce
+/// byte-identical output. zenpdf's raster is hayro-owned, so the preference is
+/// a no-op for the pixels, but this proves the boundary plumbing never perturbs
+/// the output.
+#[test]
+fn alloc_pref_modes_render_byte_identical() {
+    let default = render_bytes_under(zencodec::AllocPreference::CodecDefault);
+    let fallible = render_bytes_under(zencodec::AllocPreference::Fallible);
+    let infallible = render_bytes_under(zencodec::AllocPreference::Infallible);
+    assert!(!default.is_empty());
+    assert_eq!(default, fallible);
+    assert_eq!(default, infallible);
+}
+
+#[test]
+fn estimate_decode_resources_scales_with_output() {
+    use zencodec::estimate::{ComputeEnvironment, ImageCharacteristics, ThreadingInformation};
+    use zenpixels::PixelDescriptor;
+    let img = ImageCharacteristics::new(595, 841, PixelDescriptor::RGBA8_SRGB);
+    let env = ComputeEnvironment::new().with_cores(8);
+    let est = PdfDecoderConfig::new().estimate_decode_resources(&img, &env);
+    let output = 595u64 * 841 * 4;
+    // Peak holds at least the output raster.
+    assert!(est.peak_memory_bytes_est().unwrap() >= output);
+    assert!(est.peak_memory_bytes_max().unwrap() >= est.peak_memory_bytes_est().unwrap());
+    assert!(est.wall_ms().is_some());
+    assert_eq!(est.threading(), Some(ThreadingInformation::SERIAL));
+}

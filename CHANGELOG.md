@@ -74,6 +74,24 @@ member entries here reference those files.
 
 ### [Unreleased]
 
+#### Added
+
+- `DecoderConfig::estimate_decode_resources` — a conservative, uncalibrated
+  render estimate (output RGBA8 raster as a firm floor + a generous
+  content-dependent working-set multiple for the parsed `usvg` tree / tiny-skia
+  render context, SERIAL, `at_cores`). Additive trait method only.
+- `zencodec::AllocPreference` boundary plumbing: the decode boundary lowers the
+  3-mode preference (`ResourceLimits::prefer_fallible_allocations`) onto a
+  crate-local `AllocPref` threaded to the renderer, plus a tested 3-mode
+  `alloc_util` helper for parity with the sibling codecs. zensvg's raster is
+  allocated inside `tiny-skia` (`Pixmap::new`), a transitive allocation the
+  crate does not own, so there is **no** zensvg-owned untrusted render
+  allocation to convert today — the preference is a no-op for output pixels
+  (and `tiny-skia` already fails gracefully on oversized rasters). A 3-mode
+  byte-identity render test proves the plumbing never perturbs output.
+- zencodec floor bumped 0.1.13 → 0.1.24 (for `AllocPreference` + the
+  `estimate` module).
+
 #### Fixed
 
 - README "SVG Optimization" doctest failed under default features (it uses
@@ -81,3 +99,50 @@ member entries here reference those files.
   with a feature note, and the same example was added as a real doctest on
   the `optimize` module so it compiles and runs under `--features optimize`
   (exercised by CI's `--all-features` test pass).
+
+## zenjp2
+
+### [Unreleased]
+
+#### Added
+
+- `DecoderConfig::estimate_decode_resources` — an uncalibrated structural
+  decode estimate (full output pixel plane + wavelet/tile working set + fixed
+  overhead, ~60 Mpix/s, SERIAL, `at_cores`). Additive trait method only.
+- `zencodec::AllocPreference` boundary plumbing: the decode boundary lowers the
+  3-mode preference (`ResourceLimits::prefer_fallible_allocations`) onto a
+  crate-local `AllocPref` threaded to the decoder, plus a tested 3-mode
+  `alloc_util` helper for parity with the sibling codecs. zenjp2's output
+  buffer is allocated inside `hayro_jpeg2000` (`Image::decode`), a transitive
+  allocation the crate does not own, so there is **no** zenjp2-owned untrusted
+  decode allocation to convert today — the preference is a no-op for output
+  pixels. The 3-mode boundary plumbing is tested (a real byte-identity decode
+  needs a JP2 fixture, which is not available in-tree — zenjp2 is decode-only
+  and there is no JP2 encoder in the workspace; helper-level byte identity is
+  covered by `alloc_util`'s tests).
+- zencodec floor bumped 0.1.13 → 0.1.24 (for `AllocPreference` + the
+  `estimate` module).
+
+## zenpdf
+
+### [Unreleased]
+
+#### Added
+
+- `DecoderConfig::estimate_decode_resources` — a conservative, uncalibrated
+  render estimate (output RGBA8 raster as a firm floor, ~2× during
+  pixmap→buffer conversion, + a generous content-dependent working-set multiple
+  for the parsed document / interpreter / embedded resources, SERIAL,
+  `at_cores`). Additive trait method only.
+- `zencodec::AllocPreference` boundary plumbing: the decode boundary lowers the
+  3-mode preference (`ResourceLimits::prefer_fallible_allocations`) onto a
+  crate-local `AllocPref` threaded to the decoder, plus a tested 3-mode
+  `alloc_util` helper (gated behind `zencodec`) for parity with the sibling
+  codecs. zenpdf's raster is produced inside `hayro` (`hayro::render`), a
+  transitive allocation the crate does not own, so there is **no** zenpdf-owned
+  untrusted render allocation to convert today — the preference is a no-op for
+  output pixels (and zenpdf already gates requested dimensions against limits
+  before hayro allocates). A 3-mode byte-identity render test proves the
+  plumbing never perturbs output.
+- zencodec floor bumped 0.1.13 → 0.1.24 (for `AllocPreference` + the
+  `estimate` module).
