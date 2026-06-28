@@ -88,6 +88,13 @@ semantic versioning.
   (admits ~108 MP photos), matching `DEFAULT_MAX_PIXELS` (`120_000_000`); the
   doc had lagged the constant at the old 100 MP figure. Memory/width/height
   defaults unchanged.
+- Docs: README overhaul — CI badge retargeted to the `zenextras` workflow; split
+  a CI-badge-only `README.crates.md` (`readme = "README.crates.md"`) with
+  absolute links + a refreshed crosslink footer; `repository` set to the
+  `zenextras` monorepo; corrected README prose that lagged the code (GrayAlpha
+  encode is Gray + `ExtraSamples`, not RGBA-widened; `with_max_memory` bounds the
+  combined decode peak) and documented `__expert`, the `sweep` module, and
+  Fidelity-resolves-to-`Lossless`.
 
 ### Removed
 - `impl From<whereat::At<zenpixels::BufferError>> for TiffError` (the README

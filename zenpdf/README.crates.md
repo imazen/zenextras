@@ -1,4 +1,6 @@
-# zenpdf [![CI](https://img.shields.io/github/actions/workflow/status/imazen/zenextras/ci.yml?style=flat-square&label=CI)](https://github.com/imazen/zenextras/actions/workflows/ci.yml) [![crates.io](https://img.shields.io/crates/v/zenpdf?style=flat-square)](https://crates.io/crates/zenpdf) [![lib.rs](https://img.shields.io/crates/v/zenpdf?style=flat-square&label=lib.rs&color=blue)](https://lib.rs/crates/zenpdf) [![docs.rs](https://img.shields.io/docsrs/zenpdf?style=flat-square)](https://docs.rs/zenpdf) ![MSRV](https://img.shields.io/badge/MSRV-1.93-blue?style=flat-square) [![license](https://img.shields.io/crates/l/zenpdf?style=flat-square)](#license)
+<!-- GENERATED FROM README.md by zenutils gen-readme-crates.sh — DO NOT EDIT. -->
+
+# zenpdf [![CI](https://img.shields.io/github/actions/workflow/status/imazen/zenextras/ci.yml?style=flat-square&label=CI)](https://github.com/imazen/zenextras/actions/workflows/ci.yml)
 
 Pure-Rust PDF page renderer built on the [hayro](https://crates.io/crates/hayro)
 rendering engine. zenpdf rasterizes PDF pages to `PixelBuffer<Rgba<u8>>`

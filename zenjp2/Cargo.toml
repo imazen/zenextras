@@ -7,8 +7,10 @@ license = "Apache-2.0 OR MIT"
 description = "JPEG 2000 decoder for the zen codec ecosystem, wrapping hayro-jpeg2000"
 categories = ["multimedia::images"]
 keywords = ["image", "codec", "jpeg2000", "jp2", "j2k"]
-repository = "https://github.com/imazen/zenjp2"
-include = ["/src/**", "/README.md", "/CHANGELOG.md", "/LICENSE*"]
+repository = "https://github.com/imazen/zenextras"
+documentation = "https://docs.rs/zenjp2"
+readme = "README.crates.md"
+include = ["/src/**", "/README.crates.md", "/CHANGELOG.md", "/LICENSE*"]
 
 [dependencies]
 hayro-jpeg2000 = { version = "0.3.4", default-features = false, features = ["std"] }

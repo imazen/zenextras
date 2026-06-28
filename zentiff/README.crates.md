@@ -1,4 +1,6 @@
-# zentiff [![CI](https://img.shields.io/github/actions/workflow/status/imazen/zenextras/ci.yml?style=flat-square&label=CI)](https://github.com/imazen/zenextras/actions/workflows/ci.yml) [![crates.io](https://img.shields.io/crates/v/zentiff?style=flat-square)](https://crates.io/crates/zentiff) [![lib.rs](https://img.shields.io/crates/v/zentiff?style=flat-square&label=lib.rs&color=blue)](https://lib.rs/crates/zentiff) [![docs.rs](https://img.shields.io/docsrs/zentiff?style=flat-square)](https://docs.rs/zentiff) ![MSRV](https://img.shields.io/badge/MSRV-1.93-blue?style=flat-square) [![license](https://img.shields.io/crates/l/zentiff?style=flat-square)](#license)
+<!-- GENERATED FROM README.md by zenutils gen-readme-crates.sh — DO NOT EDIT. -->
+
+# zentiff [![CI](https://img.shields.io/github/actions/workflow/status/imazen/zenextras/ci.yml?style=flat-square&label=CI)](https://github.com/imazen/zenextras/actions/workflows/ci.yml)
 
 TIFF decoding and encoding with [zenpixels](https://crates.io/crates/zenpixels)
 integration. zentiff wraps the well-maintained [`tiff`](https://crates.io/crates/tiff)

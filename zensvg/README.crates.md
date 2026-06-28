@@ -1,4 +1,6 @@
-# zensvg [![CI](https://img.shields.io/github/actions/workflow/status/imazen/zenextras/ci.yml?style=flat-square&label=CI)](https://github.com/imazen/zenextras/actions/workflows/ci.yml) [![crates.io](https://img.shields.io/crates/v/zensvg?style=flat-square)](https://crates.io/crates/zensvg) [![lib.rs](https://img.shields.io/crates/v/zensvg?style=flat-square&label=lib.rs&color=blue)](https://lib.rs/crates/zensvg) [![docs.rs](https://img.shields.io/docsrs/zensvg?style=flat-square)](https://docs.rs/zensvg) ![MSRV](https://img.shields.io/badge/MSRV-1.85-blue?style=flat-square) [![license](https://img.shields.io/crates/l/zensvg?style=flat-square)](#license)
+<!-- GENERATED FROM README.md by zenutils gen-readme-crates.sh — DO NOT EDIT. -->
+
+# zensvg [![CI](https://img.shields.io/github/actions/workflow/status/imazen/zenextras/ci.yml?style=flat-square&label=CI)](https://github.com/imazen/zenextras/actions/workflows/ci.yml)
 
 SVG rendering and lossless optimization for the zen\* codec ecosystem. zensvg
 rasterizes SVG/SVGZ to straight-alpha RGBA8 on the well-maintained

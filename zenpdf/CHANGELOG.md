@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Docs: README overhaul — CI badge retargeted to the `zenextras` workflow;
+  refreshed crosslink footer; split a CI-badge-only `README.crates.md`
+  (`readme = "README.crates.md"`, `README.md` retained for the `include_str!`
+  docs path) with absolute license links; and `repository` set to the
+  `zenextras` monorepo.
+
 ## [0.2.0] - 2026-04-17
 
 ### BREAKING CHANGES

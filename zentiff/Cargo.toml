@@ -7,10 +7,10 @@ license = "AGPL-3.0-only OR LicenseRef-Imazen-Commercial"
 description = "TIFF decoding and encoding wrapper with zenpixels integration"
 categories = ["multimedia::images", "multimedia::encoding"]
 keywords = ["tiff", "image", "decoder", "encoder", "codec"]
-repository = "https://github.com/imazen/zentiff"
+repository = "https://github.com/imazen/zenextras"
 documentation = "https://docs.rs/zentiff"
-readme = "README.md"
-include = ["/src/**", "/README.md", "/CHANGELOG.md", "/LICENSE*", "/tests/**/*.rs", "/examples/**/*.rs"]
+readme = "README.crates.md"
+include = ["/src/**", "/README.crates.md", "/CHANGELOG.md", "/LICENSE*", "/tests/**/*.rs", "/examples/**/*.rs"]
 
 [dependencies]
 tiff = { version = "0.11.3", default-features = false }

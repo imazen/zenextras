@@ -59,6 +59,13 @@ member entries here reference those files.
   shim (inlined while 0.1.21 was the published ceiling) is replaced by the
   real `OrientationHint::bakes()` at all call sites, per the shim's own
   removal note. No behavior change.
+- Docs: README overhaul — CI badge retargeted to the `zenextras` workflow;
+  split a CI-badge-only `README.crates.md` (`readme = "README.crates.md"`) with
+  absolute links + a refreshed crosslink footer; `repository` set to the
+  `zenextras` monorepo; corrected README prose that lagged the code (GrayAlpha
+  encode is Gray + `ExtraSamples`, not RGBA-widened; `with_max_memory` bounds the
+  combined decode peak) and documented `__expert`, the `sweep` module, and
+  Fidelity-resolves-to-`Lossless`.
 
 #### Fixed
 
@@ -92,6 +99,14 @@ member entries here reference those files.
 - zencodec floor bumped 0.1.13 → 0.1.24 (for `AllocPreference` + the
   `estimate` module).
 
+#### Changed
+
+- Docs: README overhaul — added the full badge row (CI badge → the `zenextras`
+  workflow), a Quick start, and the crosslink footer; split a CI-badge-only
+  `README.crates.md` (`readme = "README.crates.md"`) with absolute links; and
+  fixed `repository` (was the non-existent `imazen/zensvg`) to the `zenextras`
+  monorepo.
+
 #### Fixed
 
 - README "SVG Optimization" doctest failed under default features (it uses
@@ -123,6 +138,14 @@ member entries here reference those files.
 - zencodec floor bumped 0.1.13 → 0.1.24 (for `AllocPreference` + the
   `estimate` module).
 
+#### Changed
+
+- Docs: added a README (the crate had none) with the full badge row (CI badge →
+  the `zenextras` workflow), a Quick start, an output-format table, and the
+  crosslink footer; split a CI-badge-only `README.crates.md`
+  (`readme = "README.crates.md"`); and fixed `repository` (was the non-existent
+  `imazen/zenjp2`) to the `zenextras` monorepo.
+
 ## zenpdf
 
 ### [Unreleased]
@@ -146,3 +169,11 @@ member entries here reference those files.
   plumbing never perturbs output.
 - zencodec floor bumped 0.1.13 → 0.1.24 (for `AllocPreference` + the
   `estimate` module).
+
+#### Changed
+
+- Docs: README overhaul — CI badge retargeted to the `zenextras` workflow;
+  refreshed crosslink footer; split a CI-badge-only `README.crates.md`
+  (`readme = "README.crates.md"`, `README.md` retained for the `include_str!`
+  docs path) with absolute license links; and `repository` set to the
+  `zenextras` monorepo.

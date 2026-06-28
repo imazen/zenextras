@@ -7,8 +7,12 @@ license = "Apache-2.0 OR MIT"
 description = "SVG rendering and lossless optimization with zencodec integration"
 categories = ["multimedia::images", "graphics"]
 keywords = ["svg", "svgz", "render", "optimize", "image"]
-repository = "https://github.com/imazen/zensvg"
-include = ["/src/**", "/README.md", "/CHANGELOG.md", "/LICENSE*"]
+repository = "https://github.com/imazen/zenextras"
+documentation = "https://docs.rs/zensvg"
+# README.md stays in the package: src/lib.rs does `#![doc = include_str!("../README.md")]`
+# (it is the docs.rs source). README.crates.md is the crates.io-rendered copy.
+readme = "README.crates.md"
+include = ["/src/**", "/README.md", "/README.crates.md", "/CHANGELOG.md", "/LICENSE*"]
 
 [lib]
 name = "zensvg"
