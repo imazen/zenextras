@@ -1,6 +1,6 @@
 <!-- GENERATED FROM README.md by zenutils gen-readme-crates.sh — DO NOT EDIT. -->
 
-# zenpdf [![CI](https://img.shields.io/github/actions/workflow/status/imazen/zenextras/ci.yml?style=flat-square&label=CI)](https://github.com/imazen/zenextras/actions/workflows/ci.yml)
+# zenpdf
 
 Pure-Rust PDF page renderer built on the [hayro](https://crates.io/crates/hayro)
 rendering engine. zenpdf rasterizes PDF pages to `PixelBuffer<Rgba<u8>>`

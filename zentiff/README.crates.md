@@ -1,6 +1,6 @@
 <!-- GENERATED FROM README.md by zenutils gen-readme-crates.sh — DO NOT EDIT. -->
 
-# zentiff [![CI](https://img.shields.io/github/actions/workflow/status/imazen/zenextras/ci.yml?style=flat-square&label=CI)](https://github.com/imazen/zenextras/actions/workflows/ci.yml)
+# zentiff
 
 TIFF decoding and encoding with [zenpixels](https://crates.io/crates/zenpixels)
 integration. zentiff wraps the well-maintained [`tiff`](https://crates.io/crates/tiff)

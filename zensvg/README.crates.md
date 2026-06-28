@@ -1,6 +1,6 @@
 <!-- GENERATED FROM README.md by zenutils gen-readme-crates.sh — DO NOT EDIT. -->
 
-# zensvg [![CI](https://img.shields.io/github/actions/workflow/status/imazen/zenextras/ci.yml?style=flat-square&label=CI)](https://github.com/imazen/zenextras/actions/workflows/ci.yml)
+# zensvg
 
 SVG rendering and lossless optimization for the zen\* codec ecosystem. zensvg
 rasterizes SVG/SVGZ to straight-alpha RGBA8 on the well-maintained

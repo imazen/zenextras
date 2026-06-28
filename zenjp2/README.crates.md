@@ -1,6 +1,6 @@
 <!-- GENERATED FROM README.md by zenutils gen-readme-crates.sh — DO NOT EDIT. -->
 
-# zenjp2 [![CI](https://img.shields.io/github/actions/workflow/status/imazen/zenextras/ci.yml?style=flat-square&label=CI)](https://github.com/imazen/zenextras/actions/workflows/ci.yml)
+# zenjp2
 
 JPEG 2000 decoder for the zen\* codec ecosystem. zenjp2 wraps the
 well-maintained [hayro-jpeg2000](https://crates.io/crates/hayro-jpeg2000) decoder
