@@ -34,6 +34,12 @@ codec-corpus = "1.0.3"
 # zencodec adapter's orientation tests — image-tiff is already a normal dep,
 # but not re-exported, so the tests reach it directly.
 tiff = { version = "0.11.3", default-features = false }
+# zencodec conformance harness (unpublished companion crate). Git-pinned to the
+# SAME zencodec rev as the [patch.crates-io] in the workspace root so both
+# resolve to one unified zencodec. Provides check_decode_truncation_series
+# (EOF/truncation). Drop for a crates.io version dep once zencodec 0.1.26 +
+# testkit publish.
+zencodec-testkit = { git = "https://github.com/imazen/zencodec", rev = "2427387f86c77fdf773ae2fa219926a49cd32d99" }
 
 [features]
 default = ["std", "deflate", "lzw"]
@@ -45,7 +51,12 @@ jpeg = ["tiff/jpeg"]
 lzw = ["tiff/lzw"]
 webp = ["tiff/webp"]
 zstd = ["tiff/zstd"]
-zencodec = ["dep:zencodec", "dep:zenpixels-convert"]
+# `zencodec/std` is requested unconditionally here (not tied to zentiff's own
+# `std` feature) because zentiff always links `std` (see `extern crate std;` in
+# lib.rs) and `TiffError::Io` always holds a real `std::io::Error` — this just
+# unlocks zencodec's `CodecIoKind::from(&std::io::Error)` so the `Io` category
+# preserves the real `ErrorKind` instead of falling back to `CodecIoKind::opaque()`.
+zencodec = ["dep:zencodec", "dep:zenpixels-convert", "zencodec/std"]
 # Palette TIFF support requires tiff crate's color_map() API, which is
 # not available in tiff 0.11.x (only on git main). Enable this feature
 # once tiff 0.12+ is released. Not included in all-codecs or default.

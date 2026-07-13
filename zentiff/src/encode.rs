@@ -68,7 +68,7 @@ impl Compression {
             #[cfg(feature = "lzw")]
             Self::Lzw => Ok(tiff::encoder::Compression::Lzw),
             #[cfg(not(feature = "lzw"))]
-            Self::Lzw => Err(at!(TiffError::Unsupported(
+            Self::Lzw => Err(at!(TiffError::InvalidInput(
                 "LZW compression requires the `lzw` feature".into(),
             ))),
             #[cfg(feature = "deflate")]
@@ -76,7 +76,7 @@ impl Compression {
                 tiff::encoder::DeflateLevel::Balanced,
             )),
             #[cfg(not(feature = "deflate"))]
-            Self::Deflate => Err(at!(TiffError::Unsupported(
+            Self::Deflate => Err(at!(TiffError::InvalidInput(
                 "Deflate compression requires the `deflate` feature".into(),
             ))),
             Self::PackBits => Ok(tiff::encoder::Compression::Packbits),
@@ -580,7 +580,7 @@ fn write_image<W: std::io::Write + std::io::Seek, K: tiff::encoder::TiffKind>(
         }
 
         _ => {
-            return Err(at!(TiffError::Unsupported(alloc::format!(
+            return Err(at!(TiffError::InvalidInput(alloc::format!(
                 "cannot encode {layout:?}/{ct:?} to TIFF"
             ))));
         }
@@ -743,7 +743,7 @@ fn write_image_with_meta<W: std::io::Write + std::io::Seek, K: tiff::encoder::Ti
         }
 
         _ => {
-            return Err(at!(TiffError::Unsupported(alloc::format!(
+            return Err(at!(TiffError::InvalidInput(alloc::format!(
                 "cannot encode {layout:?}/{ct:?} to TIFF"
             ))));
         }

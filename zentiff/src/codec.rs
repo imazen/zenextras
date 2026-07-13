@@ -6,15 +6,14 @@
 //! Feature-gated behind `zencodec`.
 
 use alloc::borrow::Cow;
-use alloc::format;
 use alloc::vec::Vec;
 use enough::Stop;
 use zencodec::decode::{DecodeCapabilities, DecodeOutput, DecodePolicy, OutputInfo};
 use zencodec::encode::{EncodeCapabilities, EncodeOutput, EncodePolicy};
 use zencodec::{
-    Cicp, ColorAuthority, ColorEmitPolicy, IccDisposition, ImageFormat, ImageInfo, ImageSequence,
-    Metadata, Orientation, OrientationHint, Resolution, ResolutionUnit, ResourceLimits,
-    SourceColor, resolve_color_emit,
+    Cicp, CodecError, ColorAuthority, ColorEmitPolicy, IccDisposition, ImageFormat, ImageInfo,
+    ImageSequence, Metadata, Orientation, OrientationHint, Resolution, ResolutionUnit,
+    ResourceLimits, SourceColor, resolve_color_emit,
 };
 use zenpixels::{PixelDescriptor, PixelSlice};
 
@@ -175,7 +174,7 @@ impl TiffEncoderCodecConfig {
 }
 
 impl zencodec::encode::EncoderConfig for TiffEncoderCodecConfig {
-    type Error = At<TiffError>;
+    type Error = At<CodecError>;
     type Job = TiffEncodeJob;
 
     fn format() -> ImageFormat {
@@ -242,7 +241,7 @@ pub struct TiffEncodeJob {
 }
 
 impl zencodec::encode::EncodeJob for TiffEncodeJob {
-    type Error = At<TiffError>;
+    type Error = At<CodecError>;
     type Enc = TiffCodecEncoder;
     type AnimationFrameEnc = ();
 
@@ -270,7 +269,7 @@ impl zencodec::encode::EncodeJob for TiffEncodeJob {
         self
     }
 
-    fn encoder(self) -> Result<TiffCodecEncoder, At<TiffError>> {
+    fn encoder(self) -> Result<TiffCodecEncoder, At<CodecError>> {
         Ok(TiffCodecEncoder {
             config: self.config,
             stop: self.stop,
@@ -280,10 +279,10 @@ impl zencodec::encode::EncodeJob for TiffEncodeJob {
         })
     }
 
-    fn animation_frame_encoder(self) -> Result<(), At<TiffError>> {
-        Err(at!(TiffError::from(
+    fn animation_frame_encoder(self) -> Result<(), At<CodecError>> {
+        Err(CodecError::of(at!(TiffError::from(
             zencodec::UnsupportedOperation::AnimationEncode,
-        )))
+        ))))
     }
 }
 
@@ -299,6 +298,14 @@ pub struct TiffCodecEncoder {
 }
 
 impl TiffCodecEncoder {
+    /// Enforce the configured [`ResourceLimits`] against the pixels to encode.
+    ///
+    /// Uses the typed [`zencodec::LimitExceeded`] (rather than a stringified
+    /// message) so the specific [`LimitKind`](zencodec::LimitKind) survives into
+    /// the error's [`ErrorCategory`](zencodec::ErrorCategory) — this helper lives
+    /// in the `zencodec`-gated `codec` module, so the typed cause is always
+    /// available here (contrast the native, zencodec-independent decode core's
+    /// coarser `TiffError::LimitExceeded(String)`).
     fn check_limits(&self, pixels: &PixelSlice<'_>) -> Result<(), At<TiffError>> {
         if let Some(ref limits) = self.limits {
             let width = pixels.width();
@@ -307,46 +314,45 @@ impl TiffCodecEncoder {
             if let Some(max_px) = limits.max_pixels
                 && pixel_count > max_px
             {
-                return Err(at!(TiffError::LimitExceeded(format!(
-                    "pixel count {pixel_count} exceeds limit {max_px}"
-                ))));
+                return Err(at!(TiffError::from(zencodec::LimitExceeded::Pixels {
+                    actual: pixel_count,
+                    max: max_px,
+                })));
             }
             if let Some(max_w) = limits.max_width
                 && width > max_w
             {
-                return Err(at!(TiffError::LimitExceeded(format!(
-                    "width {width} exceeds limit {max_w}"
-                ))));
+                return Err(at!(TiffError::from(zencodec::LimitExceeded::Width {
+                    actual: width,
+                    max: max_w,
+                })));
             }
             if let Some(max_h) = limits.max_height
                 && height > max_h
             {
-                return Err(at!(TiffError::LimitExceeded(format!(
-                    "height {height} exceeds limit {max_h}"
-                ))));
+                return Err(at!(TiffError::from(zencodec::LimitExceeded::Height {
+                    actual: height,
+                    max: max_h,
+                })));
             }
             if let Some(max_mem) = limits.max_memory_bytes {
                 let bpp = pixels.descriptor().bytes_per_pixel() as u64;
                 let estimated = pixel_count * bpp;
                 if estimated > max_mem {
-                    return Err(at!(TiffError::LimitExceeded(format!(
-                        "estimated memory {estimated} bytes exceeds limit {max_mem}"
-                    ))));
+                    return Err(at!(TiffError::from(zencodec::LimitExceeded::Memory {
+                        actual: estimated,
+                        max: max_mem,
+                    })));
                 }
             }
         }
         Ok(())
     }
-}
 
-impl zencodec::encode::Encoder for TiffCodecEncoder {
-    type Error = At<TiffError>;
-
-    fn reject(op: zencodec::UnsupportedOperation) -> At<TiffError> {
-        at!(TiffError::from(op))
-    }
-
-    fn encode(self, pixels: PixelSlice<'_>) -> Result<EncodeOutput, At<TiffError>> {
+    /// Native-error body for [`Encoder::encode`](zencodec::encode::Encoder::encode)
+    /// — returns the crate's own `At<TiffError>` so the trait method stays a thin
+    /// `.map_err(CodecError::of)` wrapper (Pattern B envelope boundary).
+    fn encode_inner(self, pixels: PixelSlice<'_>) -> crate::Result<EncodeOutput> {
         let stop: &dyn Stop = match &self.stop {
             Some(s) => s,
             None => &enough::Unstoppable,
@@ -360,6 +366,18 @@ impl zencodec::encode::Encoder for TiffCodecEncoder {
         let encoded =
             crate::encode::encode_with_meta(&pixels, &self.config.inner, &encode_meta, stop)?;
         Ok(EncodeOutput::new(encoded, ImageFormat::Tiff))
+    }
+}
+
+impl zencodec::encode::Encoder for TiffCodecEncoder {
+    type Error = At<CodecError>;
+
+    fn reject(op: zencodec::UnsupportedOperation) -> At<CodecError> {
+        CodecError::of(at!(TiffError::from(op)))
+    }
+
+    fn encode(self, pixels: PixelSlice<'_>) -> Result<EncodeOutput, At<CodecError>> {
+        self.encode_inner(pixels).map_err(CodecError::of)
     }
 }
 
@@ -500,7 +518,7 @@ impl TiffDecoderCodecConfig {
 }
 
 impl zencodec::decode::DecoderConfig for TiffDecoderCodecConfig {
-    type Error = At<TiffError>;
+    type Error = At<CodecError>;
     type Job<'a> = TiffDecodeJob;
 
     fn formats() -> &'static [ImageFormat] {
@@ -616,10 +634,10 @@ impl TiffDecodeJob {
 }
 
 impl<'a> zencodec::decode::DecodeJob<'a> for TiffDecodeJob {
-    type Error = At<TiffError>;
+    type Error = At<CodecError>;
     type Dec = TiffCodecDecoder<'a>;
-    type StreamDec = zencodec::Unsupported<At<TiffError>>;
-    type AnimationFrameDec = zencodec::Unsupported<At<TiffError>>;
+    type StreamDec = zencodec::Unsupported<At<CodecError>>;
+    type AnimationFrameDec = zencodec::Unsupported<At<CodecError>>;
 
     fn with_stop(mut self, stop: zencodec::StopToken) -> Self {
         self.stop = Some(stop);
@@ -642,8 +660,8 @@ impl<'a> zencodec::decode::DecodeJob<'a> for TiffDecodeJob {
         self
     }
 
-    fn probe(&self, data: &[u8]) -> Result<ImageInfo, At<TiffError>> {
-        let tiff_info = crate::probe(data)?;
+    fn probe(&self, data: &[u8]) -> Result<ImageInfo, At<CodecError>> {
+        let tiff_info = crate::probe(data).map_err(CodecError::of)?;
         let mut info = tiff_info_to_image_info(&tiff_info);
         // Report consistently with what `decode()` produces under this hint.
         // `Preserve` (default) keeps the stored dims + intrinsic EXIF tag that
@@ -654,8 +672,8 @@ impl<'a> zencodec::decode::DecodeJob<'a> for TiffDecodeJob {
         Ok(info)
     }
 
-    fn output_info(&self, data: &[u8]) -> Result<OutputInfo, At<TiffError>> {
-        let tiff_info = crate::probe(data)?;
+    fn output_info(&self, data: &[u8]) -> Result<OutputInfo, At<CodecError>> {
+        let tiff_info = crate::probe(data).map_err(CodecError::of)?;
         let has_alpha = has_alpha_from_color_type(tiff_info.color_type);
         let native_format = descriptor_for_probe(&tiff_info);
         // Report the post-orientation output geometry + the transform the
@@ -681,13 +699,15 @@ impl<'a> zencodec::decode::DecodeJob<'a> for TiffDecodeJob {
         self,
         data: Cow<'a, [u8]>,
         _preferred: &[PixelDescriptor],
-    ) -> Result<TiffCodecDecoder<'a>, At<TiffError>> {
+    ) -> Result<TiffCodecDecoder<'a>, At<CodecError>> {
         if let Some(max) = self.max_input_bytes
             && data.len() as u64 > max
         {
-            return Err(at!(TiffError::LimitExceeded(format!(
-                "input size {} exceeds limit {max}",
-                data.len()
+            return Err(CodecError::of(at!(TiffError::from(
+                zencodec::LimitExceeded::InputSize {
+                    actual: data.len() as u64,
+                    max,
+                }
             ))));
         }
         let decode_config = self.effective_decode_config();
@@ -708,7 +728,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for TiffDecodeJob {
         preferred: &[PixelDescriptor],
     ) -> Result<OutputInfo, Self::Error> {
         zencodec::helpers::copy_decode_to_sink(self, data, sink, preferred, |e| {
-            at!(TiffError::InvalidInput(e.to_string()))
+            CodecError::of(at!(TiffError::InvalidInput(e.to_string())))
         })
     }
 
@@ -716,20 +736,20 @@ impl<'a> zencodec::decode::DecodeJob<'a> for TiffDecodeJob {
         self,
         _data: Cow<'a, [u8]>,
         _preferred: &[PixelDescriptor],
-    ) -> Result<zencodec::Unsupported<At<TiffError>>, At<TiffError>> {
-        Err(at!(TiffError::from(
+    ) -> Result<zencodec::Unsupported<At<CodecError>>, At<CodecError>> {
+        Err(CodecError::of(at!(TiffError::from(
             zencodec::UnsupportedOperation::RowLevelDecode,
-        )))
+        ))))
     }
 
     fn animation_frame_decoder(
         self,
         _data: Cow<'a, [u8]>,
         _preferred: &[PixelDescriptor],
-    ) -> Result<zencodec::Unsupported<At<TiffError>>, At<TiffError>> {
-        Err(at!(TiffError::from(
+    ) -> Result<zencodec::Unsupported<At<CodecError>>, At<CodecError>> {
+        Err(CodecError::of(at!(TiffError::from(
             zencodec::UnsupportedOperation::AnimationDecode,
-        )))
+        ))))
     }
 }
 
@@ -764,10 +784,12 @@ impl TiffCodecDecoder<'_> {
     }
 }
 
-impl zencodec::decode::Decode for TiffCodecDecoder<'_> {
-    type Error = At<TiffError>;
-
-    fn decode(self) -> Result<DecodeOutput, At<TiffError>> {
+impl TiffCodecDecoder<'_> {
+    /// Native-error body for [`Decode::decode`](zencodec::decode::Decode::decode)
+    /// — returns the crate's own `crate::Result` (`At<TiffError>`) so the trait
+    /// method stays a thin `.map_err(CodecError::of)` wrapper (Pattern B
+    /// envelope boundary).
+    fn decode_inner(self) -> crate::Result<DecodeOutput> {
         let stop: &dyn Stop = match &self.stop {
             Some(s) => s,
             None => &enough::Unstoppable,
@@ -785,6 +807,14 @@ impl zencodec::decode::Decode for TiffCodecDecoder<'_> {
         // pixels + stored dims + intrinsic EXIF tag. A bake hint physically
         // rotates the buffer and rewrites the reported dims/tag to match.
         Ok(apply_orientation_to_output(decoded, self.orientation))
+    }
+}
+
+impl zencodec::decode::Decode for TiffCodecDecoder<'_> {
+    type Error = At<CodecError>;
+
+    fn decode(self) -> Result<DecodeOutput, At<CodecError>> {
+        self.decode_inner().map_err(CodecError::of)
     }
 }
 

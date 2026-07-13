@@ -1050,7 +1050,7 @@ fn convert_to_pixel_buffer(
         }
         #[cfg(not(feature = "_palette"))]
         tiff::ColorType::Palette(_) => {
-            return Err(at!(TiffError::Unsupported(
+            return Err(at!(TiffError::UnsupportedFeature(
                 "palette TIFF decoding requires the `_palette` feature \
                  (blocked on tiff crate 0.12+ release)"
                     .into(),
@@ -1384,7 +1384,7 @@ fn result_to_bytes(
 
         // Catch-all
         (_other, _) => {
-            return Err(at!(TiffError::Unsupported(alloc::format!(
+            return Err(at!(TiffError::UnsupportedFeature(alloc::format!(
                 "cannot convert TIFF sample type to {target_ct:?}"
             ))));
         }
@@ -1637,7 +1637,7 @@ fn convert_cmyk(
                 .map_err_at(TiffError::from)?;
             Ok((buf, desc))
         }
-        _ => Err(at!(TiffError::Unsupported(
+        _ => Err(at!(TiffError::UnsupportedFeature(
             "unsupported sample type for CMYK conversion".into(),
         ))),
     }
@@ -1685,7 +1685,7 @@ fn expand_palette(
             data.into_iter().map(|v| v as usize).collect()
         }
         _ => {
-            return Err(at!(TiffError::Unsupported(alloc::format!(
+            return Err(at!(TiffError::UnsupportedFeature(alloc::format!(
                 "unsupported palette bit depth: {bits}"
             ))));
         }

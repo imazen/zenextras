@@ -895,3 +895,24 @@ fn fallible_alloc_decode_matches_default() {
     let graya = PixelBuffer::from_vec(ga_data, 32, 24, PixelDescriptor::GRAYA8_SRGB).unwrap();
     assert_all_alloc_modes_agree(&encode_via_trait(&graya));
 }
+
+// ==========================================================================
+// EOF/truncation conformance (zencodec-testkit, PR #116 envelope migration)
+// ==========================================================================
+//
+// Cutting a known-good TIFF short must categorize as *incomplete client
+// input* — never panic, OOM, or surface as an internal (5xx) error for what
+// is a 4xx-class truncated request. This is only reachable now that
+// `TiffDecoderCodecConfig`'s zencodec trait impls return `At<CodecError>`
+// (Pattern B): the check drives the dyn-erased `push_decode` boundary and
+// downcasts the erased error back to `At<CodecError>` to read its category —
+// a native `type Error` (Pattern A) cannot survive that erasure.
+
+#[test]
+fn truncation_series_categorizes_as_incomplete_input() {
+    let valid = encode_via_trait(&make_rgb8(8, 8));
+    zencodec_testkit::check_decode_truncation_series(TiffDecoderCodecConfig::new(), &valid).expect(
+        "truncated TIFF must categorize as incomplete input (UnexpectedEof/MalformedImage/\
+             UnsupportedImageType/UnsupportedImageFeature), never panic, OOM, or Internal",
+    );
+}

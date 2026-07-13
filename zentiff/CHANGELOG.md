@@ -9,6 +9,37 @@ semantic versioning.
 ### QUEUED BREAKING CHANGES
 <!-- Breaking changes that will ship together in the next major (or minor for 0.x) release.
      Add items here as you discover them. Do NOT ship these piecemeal — batch them. -->
+- **zencodec trait `type Error` changed from `At<TiffError>` to
+  `At<zencodec::CodecError>`** on all six zencodec trait impls in `codec`
+  (`TiffEncoderCodecConfig`, `TiffEncodeJob`, `TiffCodecEncoder`,
+  `TiffDecoderCodecConfig`, `TiffDecodeJob`, `TiffCodecDecoder`) — the Pattern B
+  envelope migration (zencodec PR #116, unpublished, pinned via
+  `[patch.crates-io]`/git-rev dev-dep until 0.1.26 ships). `TiffError` is still
+  the detail error reachable via `CodecError::detail()` / `find_cause`; native
+  functions (`zentiff::decode`/`zentiff::encode`, not behind the `zencodec`
+  feature) are unaffected — they still return `whereat::At<TiffError>` directly.
+- `TiffError::Unsupported(String)` split by origin: bitstream-feature gaps
+  (unknown TIFF compression/color-type/predictor, from the `tiff` crate's own
+  decoder or an optional feature not compiled in) now use
+  `TiffError::UnsupportedFeature(String)`; the `zencodec`-only bridge for
+  `zencodec::UnsupportedOperation` now reuses the `Unsupported` name but with a
+  typed payload (`Unsupported(zencodec::UnsupportedOperation)`, was a
+  stringified message). Four encode-side "unsupported compression/pixel format"
+  sites (caller's own encode request, not incoming bitstream) moved to the
+  existing `InvalidInput(String)` instead.
+- Added `TiffError::Truncated(String)` (genuine `io::ErrorKind::UnexpectedEof`,
+  distinguished from the generic `Decode(String)`) and
+  `TiffError::IntSizeOverflow` (unit variant; was folded into
+  `LimitExceeded("image dimensions exceed platform limits")`) — both
+  `#[non_exhaustive]`-additive but the `IntSizeError` conversion path changed
+  variant. Added `TiffError::Limit(zencodec::LimitExceeded)` (`zencodec`-gated),
+  used by the `codec` module's `ResourceLimits` enforcement in place of a
+  stringified `LimitExceeded` for those call sites — preserves the
+  `zencodec::LimitKind` for categorization; the native (zencodec-independent)
+  decode-config cap checks still use the stringified `LimitExceeded(String)`.
+  `TiffError` now implements `zencodec::CategorizedError` (`zencodec`-gated),
+  mapping every variant to the new origin-first `ErrorCategory`
+  (`Image`/`Request`/`Resource`/`Policy`/`Lifecycle`/`Io`/`Internal`).
 - Removed the public `impl From<whereat::At<zenpixels::BufferError>> for TiffError`.
   It flattened the trace (`TiffError::Buffer(e.decompose().0)`); callers that relied
   on `?`/`From` to convert an `At<BufferError>` directly to a bare `TiffError` should
