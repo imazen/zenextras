@@ -8,6 +8,15 @@ use whereat::At;
 /// [`CategorizedError`](zencodec::CategorizedError) impl) so consumers can route
 /// on the category — HTTP status, retry policy, logging — without matching this
 /// enum directly.
+///
+/// Note: [`ImageError::Unsupported(UnsupportedImageKind::Feature)`](zencodec::UnsupportedImageKind::Feature)
+/// is structurally unreachable from this crate. `usvg` silently drops SVG
+/// features it doesn't implement while still returning `Ok(tree)` — it does
+/// not report *which* features were dropped (no error variant, no warning
+/// list), so zensvg has no signal to recover that origin from, even in
+/// principle. This is a foreign-library limitation, not a gap in this
+/// taxonomy mapping — there is deliberately no construction site forcing that
+/// variant to appear.
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum SvgError {
