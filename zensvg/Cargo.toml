@@ -23,9 +23,10 @@ usvg = "0.47.0"
 tiny-skia = "0.12.0"
 
 # zencodec integration
-zencodec = "0.1.24"
+zencodec = "0.1.25"
 zenpixels = "0.2.10"
 enough = "0.4.3"
+whereat = "0.1.5"
 
 # SVG optimization (optional)
 flate2 = { version = "1.1.9", optional = true }
@@ -38,3 +39,8 @@ text = []
 optimize = ["dep:flate2", "dep:quick-xml"]
 
 [dev-dependencies]
+# zencodec conformance harness (unpublished companion crate). Git-pinned to the
+# SAME zencodec rev as the workspace-root [patch.crates-io] so both resolve to
+# one unified zencodec. Provides check_decode_truncation_series (EOF/truncation).
+# Drop for a crates.io version dep once zencodec 0.1.26 + testkit publish.
+zencodec-testkit = { git = "https://github.com/imazen/zencodec", rev = "2427387f86c77fdf773ae2fa219926a49cd32d99" }

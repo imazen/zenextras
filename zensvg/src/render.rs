@@ -108,7 +108,11 @@ pub fn svg_dimensions(data: &[u8], options: &RenderOptions) -> Result<(u32, u32)
     let w = (size.width() * options.scale).ceil() as u32;
     let h = (size.height() * options.scale).ceil() as u32;
     if w == 0 || h == 0 {
-        return Err(SvgError::Render("SVG has zero dimensions".into()));
+        // usvg guarantees `tree.size()` is positive on a successful parse
+        // (`usvg::Error::InvalidSize` rejects <= 0 sizes at parse time), so
+        // reaching zero here is caused by the caller's `scale` — a request
+        // parameter, not the image's content.
+        return Err(SvgError::ZeroOutputDimensions);
     }
     Ok((w, h))
 }
@@ -126,8 +130,12 @@ pub fn render_tree(tree: &usvg::Tree, options: &RenderOptions) -> Result<RenderO
     let svg_h = svg_size.height();
 
     if svg_w <= 0.0 || svg_h <= 0.0 {
-        return Err(SvgError::Render(
-            "SVG has zero or negative dimensions".into(),
+        // This is `tree.size()` itself, before any caller scale/target is
+        // applied — no `RenderOptions` combination can fix a non-positive
+        // intrinsic size, so this is the image's own content, not the
+        // caller's request.
+        return Err(SvgError::Parse(
+            "SVG has zero or negative intrinsic dimensions".into(),
         ));
     }
 
@@ -138,8 +146,10 @@ pub fn render_tree(tree: &usvg::Tree, options: &RenderOptions) -> Result<RenderO
     check_limits(out_w, out_h, options)?;
 
     // Create pixmap
-    let mut pixmap = Pixmap::new(out_w, out_h)
-        .ok_or_else(|| SvgError::Render(format!("failed to create {out_w}x{out_h} pixmap")))?;
+    let mut pixmap = Pixmap::new(out_w, out_h).ok_or(SvgError::AllocationFailed {
+        width: out_w,
+        height: out_h,
+    })?;
 
     // Fill background if specified
     if let Some([r, g, b, a]) = options.background {
@@ -175,7 +185,10 @@ fn compute_output(
         let w = (svg_w * scale).ceil() as u32;
         let h = (svg_h * scale).ceil() as u32;
         if w == 0 || h == 0 {
-            return Err(SvgError::Render("computed dimensions are zero".into()));
+            // `svg_w`/`svg_h` are already known positive here (validated by
+            // the caller before `compute_output` runs); zero only happens via
+            // a caller-supplied non-positive `scale` — a request parameter.
+            return Err(SvgError::ZeroOutputDimensions);
         }
         return Ok((w, h, Transform::from_scale(scale, scale)));
     }
@@ -197,7 +210,7 @@ fn compute_output(
             let w = (svg_w * sx).ceil() as u32;
             let h = (svg_h * sy).ceil() as u32;
             if w == 0 || h == 0 {
-                return Err(SvgError::Render("computed dimensions are zero".into()));
+                return Err(SvgError::ZeroOutputDimensions);
             }
             Ok((w, h, Transform::from_scale(sx, sy)))
         }
@@ -207,7 +220,7 @@ fn compute_output(
             let w = (svg_w * s).ceil() as u32;
             let h = (svg_h * s).ceil() as u32;
             if w == 0 || h == 0 {
-                return Err(SvgError::Render("computed dimensions are zero".into()));
+                return Err(SvgError::ZeroOutputDimensions);
             }
             Ok((w, h, Transform::from_scale(s, s)))
         }
@@ -217,7 +230,7 @@ fn compute_output(
             let w = (svg_w * s).ceil() as u32;
             let h = (svg_h * s).ceil() as u32;
             if w == 0 || h == 0 {
-                return Err(SvgError::Render("computed dimensions are zero".into()));
+                return Err(SvgError::ZeroOutputDimensions);
             }
             Ok((w, h, Transform::from_scale(s, s)))
         }
@@ -226,26 +239,20 @@ fn compute_output(
 }
 
 fn check_limits(w: u32, h: u32, options: &RenderOptions) -> Result<(), SvgError> {
-    if let Some(max_w) = options.max_width {
-        if w > max_w {
-            return Err(SvgError::LimitExceeded(format!(
-                "width {w} exceeds limit {max_w}"
-            )));
+    if let Some(max) = options.max_width {
+        if w > max {
+            return Err(zencodec::LimitExceeded::Width { actual: w, max }.into());
         }
     }
-    if let Some(max_h) = options.max_height {
-        if h > max_h {
-            return Err(SvgError::LimitExceeded(format!(
-                "height {h} exceeds limit {max_h}"
-            )));
+    if let Some(max) = options.max_height {
+        if h > max {
+            return Err(zencodec::LimitExceeded::Height { actual: h, max }.into());
         }
     }
-    if let Some(max_px) = options.max_pixels {
-        let pixels = w as u64 * h as u64;
-        if pixels > max_px {
-            return Err(SvgError::LimitExceeded(format!(
-                "pixel count {pixels} exceeds limit {max_px}"
-            )));
+    if let Some(max) = options.max_pixels {
+        let actual = w as u64 * h as u64;
+        if actual > max {
+            return Err(zencodec::LimitExceeded::Pixels { actual, max }.into());
         }
     }
     Ok(())
@@ -337,7 +344,10 @@ mod tests {
             ..Default::default()
         };
         let result = render(SIMPLE_SVG, &opts);
-        assert!(matches!(result, Err(SvgError::LimitExceeded(_))));
+        assert!(matches!(
+            result,
+            Err(SvgError::Limit(zencodec::LimitExceeded::Pixels { .. }))
+        ));
     }
 
     #[test]

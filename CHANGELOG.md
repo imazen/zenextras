@@ -83,6 +83,29 @@ member entries here reference those files.
 
 #### Added
 
+- `zencodec::CategorizedError` impl for `SvgError` — maps every variant to the
+  origin-first, two-level `ErrorCategory` (`Image`/`Request`/`Resource`/`Policy`/
+  `Lifecycle`/`Io`/`Internal`, zencodec PR #116, unreleased). Full Pattern-B
+  migration: the `zencodec` decode trait boundary (`SvgDecoderConfig`/
+  `SvgDecodeJob`/`SvgDecoder`) now returns `whereat::At<zencodec::CodecError>`
+  instead of the bare native `SvgError`, via a new `From<SvgError> for
+  At<CodecError>` bridge (new `whereat` dependency). `usvg::Error` is now
+  mapped per-variant (`ElementsLimitReached` → `Resource::Limits(Scans)`;
+  every other variant → `Image::Malformed`) instead of blanket-stringified.
+  The former `SvgError::Render(String)` grab-bag (three distinct origins in
+  one variant) is split into `ZeroOutputDimensions` (Request, caller-fixable
+  render options), `AllocationFailed` (Resource::OutOfMemory, tiny-skia raster
+  alloc), `PixelBufferMismatch` (Internal::Bug, zensvg's own invariant), `Sink`
+  (Internal::Dependency, opaque caller sink failure), and `XmlWrite`
+  (Internal::Dependency, `optimize` feature). `SvgError::LimitExceeded(String)`
+  is replaced by `Limit(zencodec::LimitExceeded)` (typed, preserves
+  `LimitKind`) plus a new `DecompressionBomb { actual, max }` for the SVGZ
+  decompression-bomb guard (no `LimitExceeded` variant carries that shape).
+  `zencodec-testkit`'s `check_decode_truncation_series` now gates SVG
+  truncation handling in CI. Adds a `zencodec-testkit` dev-dependency and a
+  workspace-root `[patch.crates-io]` pin to the unreleased zencodec commit;
+  drop both once zencodec 0.1.26 publishes. zencodec floor bumped
+  0.1.24 → 0.1.25.
 - `DecoderConfig::estimate_decode_resources` — a conservative, uncalibrated
   render estimate (output RGBA8 raster as a firm floor + a generous
   content-dependent working-set multiple for the parsed `usvg` tree / tiny-skia

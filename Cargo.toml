@@ -9,13 +9,13 @@ members = [
 
 [patch.crates-io]
 # TEMP: until zencodec 0.1.26 ships (PR #103, superseded by PR #116's two-level
-# reshape) — provides the unreleased `CategorizedError` taxonomy (trait +
-# origin-first `ErrorCategory` + `LimitKind`) plus the zencodec-testkit
-# `check_decode_truncation_series` conformance check, used by zentiff and
-# zenpdf's zencodec_truncation.rs tests. A workspace member's own [patch] is
-# ignored by cargo, so it lives here at the workspace root. Remove this patch
-# and bump the `zencodec` version dependency once 0.1.26 is published. Pinned
-# to a commit rev (not the branch tip) for reproducible builds, and to the
-# SAME rev as each member's `zencodec-testkit` dev-dep so both resolve to one
-# unified zencodec; bump the rev deliberately.
+# origin-first `ErrorCategory` reshape) — provides the unreleased
+# `CategorizedError` taxonomy (trait + `ErrorCategory` + `LimitKind`) plus the
+# zencodec-testkit `check_decode_truncation_series` conformance check, used by
+# this workspace's members (zentiff, zensvg, zenjp2, zenpdf). A workspace
+# member's own [patch] is ignored by cargo, so it lives here at the workspace
+# root. Remove this patch and bump each member's `zencodec` version dependency
+# once 0.1.26 is published. Pinned to a commit rev (not the branch tip) for
+# reproducible builds, and to the SAME rev as each member's `zencodec-testkit`
+# dev-dep so both resolve to one unified zencodec; bump the rev deliberately.
 zencodec = { git = "https://github.com/imazen/zencodec", rev = "2427387f86c77fdf773ae2fa219926a49cd32d99" }

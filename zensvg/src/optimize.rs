@@ -119,16 +119,16 @@ const METADATA_ELEMENTS: &[&[u8]] = &[b"metadata", b"desc", b"title"];
 /// - Collapse whitespace
 /// - Optionally compress to SVGZ (gzip)
 ///
-/// Returns `Err(SvgError::LimitExceeded)` if the input exceeds
-/// [`OptimizeOptions::max_input_bytes`].
+/// Returns `Err(SvgError::Limit(zencodec::LimitExceeded::InputSize { .. }))` if
+/// the raw input exceeds [`OptimizeOptions::max_input_bytes`], or
+/// `Err(SvgError::DecompressionBomb { .. })` if an SVGZ input decompresses
+/// past that same ceiling.
 pub fn optimize(svg_data: &[u8], options: &OptimizeOptions) -> Result<Vec<u8>, SvgError> {
     // Check input size limit before any processing
     if let Some(max) = options.max_input_bytes {
-        if svg_data.len() as u64 > max {
-            return Err(SvgError::LimitExceeded(format!(
-                "input size {} exceeds limit {max}",
-                svg_data.len()
-            )));
+        let actual = svg_data.len() as u64;
+        if actual > max {
+            return Err(zencodec::LimitExceeded::InputSize { actual, max }.into());
         }
     }
 
@@ -170,10 +170,12 @@ fn decompress_gzip(data: &[u8], max_bytes: Option<u64>) -> Result<Vec<u8>, SvgEr
                 .take(max + 1)
                 .read_to_end(&mut output)
                 .map_err(|e| SvgError::Parse(format!("SVGZ decompression failed: {e}")))?;
-            if output.len() as u64 > max {
-                return Err(SvgError::LimitExceeded(format!(
-                    "decompressed SVGZ size exceeds limit {max}"
-                )));
+            let actual = output.len() as u64;
+            if actual > max {
+                // Decompression-bomb guard: the decompressed size blew past the
+                // declared input-size ceiling. No `zencodec::LimitExceeded`
+                // variant carries this (see `SvgError::DecompressionBomb`'s docs).
+                return Err(SvgError::DecompressionBomb { actual, max });
             }
             Ok(output)
         }
@@ -221,7 +223,7 @@ fn optimize_xml(input: &[u8], options: &OptimizeOptions) -> Result<Vec<u8>, SvgE
                 if text.starts_with(b"xml ") || text.starts_with(b"xml?") || text == b"xml" {
                     writer
                         .write_event(Event::PI(pi.clone()))
-                        .map_err(|e| SvgError::Render(format!("XML write error: {e}")))?;
+                        .map_err(|e| SvgError::XmlWrite(format!("{e}")))?;
                 }
             }
 
@@ -235,7 +237,7 @@ fn optimize_xml(input: &[u8], options: &OptimizeOptions) -> Result<Vec<u8>, SvgE
                 } else {
                     writer
                         .write_event(Event::Start(e.clone()))
-                        .map_err(|e| SvgError::Render(format!("XML write error: {e}")))?;
+                        .map_err(|e| SvgError::XmlWrite(format!("{e}")))?;
                 }
             }
 
@@ -259,19 +261,19 @@ fn optimize_xml(input: &[u8], options: &OptimizeOptions) -> Result<Vec<u8>, SvgE
                     if !text.is_empty() {
                         writer
                             .write_event(Event::Text(BytesText::new(" ")))
-                            .map_err(|e| SvgError::Render(format!("XML write error: {e}")))?;
+                            .map_err(|e| SvgError::XmlWrite(format!("{e}")))?;
                     }
                 } else {
                     writer
                         .write_event(Event::Text(t.clone()))
-                        .map_err(|e| SvgError::Render(format!("XML write error: {e}")))?;
+                        .map_err(|e| SvgError::XmlWrite(format!("{e}")))?;
                 }
             }
 
             Ok(event) => {
                 writer
                     .write_event(event)
-                    .map_err(|e| SvgError::Render(format!("XML write error: {e}")))?;
+                    .map_err(|e| SvgError::XmlWrite(format!("{e}")))?;
             }
 
             Err(e) => {
@@ -414,7 +416,10 @@ mod tests {
             ..Default::default()
         };
         let result = optimize(input, &opts);
-        assert!(matches!(result, Err(SvgError::LimitExceeded(_))));
+        assert!(matches!(
+            result,
+            Err(SvgError::Limit(zencodec::LimitExceeded::InputSize { .. }))
+        ));
     }
 
     #[test]
@@ -441,7 +446,7 @@ mod tests {
             ..Default::default()
         };
         let result = optimize(&compressed, &opts);
-        assert!(matches!(result, Err(SvgError::LimitExceeded(_))));
+        assert!(matches!(result, Err(SvgError::DecompressionBomb { .. })));
     }
 
     #[test]

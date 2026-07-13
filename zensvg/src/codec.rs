@@ -5,10 +5,11 @@
 
 use std::borrow::Cow;
 
+use whereat::At;
 use zencodec::decode::{
     DecodeCapabilities, DecodeOutput, DecodePolicy, DecodeRowSink, OutputInfo, SinkError,
 };
-use zencodec::{ImageFormat, ImageInfo, ResourceLimits, StopToken};
+use zencodec::{CodecError, ImageFormat, ImageInfo, ResourceLimits, StopToken};
 use zenpixels::{AlphaMode, ChannelLayout, ChannelType, PixelBuffer, PixelDescriptor};
 
 use enough::Stop;
@@ -129,7 +130,7 @@ impl SvgDecoderConfig {
 }
 
 impl zencodec::decode::DecoderConfig for SvgDecoderConfig {
-    type Error = SvgError;
+    type Error = At<CodecError>;
     type Job<'a> = SvgDecodeJob;
 
     fn formats() -> &'static [ImageFormat] {
@@ -227,10 +228,10 @@ impl SvgDecodeJob {
 }
 
 impl<'a> zencodec::decode::DecodeJob<'a> for SvgDecodeJob {
-    type Error = SvgError;
+    type Error = At<CodecError>;
     type Dec = SvgDecoder<'a>;
-    type StreamDec = zencodec::Unsupported<SvgError>;
-    type AnimationFrameDec = zencodec::Unsupported<SvgError>;
+    type StreamDec = zencodec::Unsupported<At<CodecError>>;
+    type AnimationFrameDec = zencodec::Unsupported<At<CodecError>>;
 
     fn with_stop(mut self, stop: StopToken) -> Self {
         self.stop = Some(stop);
@@ -257,16 +258,16 @@ impl<'a> zencodec::decode::DecodeJob<'a> for SvgDecodeJob {
         self // SVG decoding doesn't have strict/permissive modes
     }
 
-    fn probe(&self, data: &[u8]) -> Result<ImageInfo, SvgError> {
+    fn probe(&self, data: &[u8]) -> Result<ImageInfo, At<CodecError>> {
         if !crate::format::detect_svg(data) {
-            return Err(SvgError::NotSvg);
+            return Err(SvgError::NotSvg.into());
         }
 
         let (w, h) = crate::render::svg_dimensions(data, &self.config.render_options)?;
         Ok(self.build_image_info(w, h))
     }
 
-    fn probe_full(&self, data: &[u8]) -> Result<ImageInfo, SvgError> {
+    fn probe_full(&self, data: &[u8]) -> Result<ImageInfo, At<CodecError>> {
         // Full parse: validate the entire SVG tree, not just header detection.
         let tree = crate::render::parse_svg(data, &self.config.render_options)?;
         let size = tree.size();
@@ -274,12 +275,15 @@ impl<'a> zencodec::decode::DecodeJob<'a> for SvgDecodeJob {
         let w = (size.width() * scale).ceil() as u32;
         let h = (size.height() * scale).ceil() as u32;
         if w == 0 || h == 0 {
-            return Err(SvgError::Render("SVG has zero dimensions".into()));
+            // Same reasoning as `svg_dimensions`: usvg guarantees `tree.size()`
+            // is positive on success, so zero here traces to the caller's
+            // `scale`, not the image's content.
+            return Err(SvgError::ZeroOutputDimensions.into());
         }
         Ok(self.build_image_info(w, h))
     }
 
-    fn output_info(&self, data: &[u8]) -> Result<OutputInfo, SvgError> {
+    fn output_info(&self, data: &[u8]) -> Result<OutputInfo, At<CodecError>> {
         let (w, h) = crate::render::svg_dimensions(data, &self.config.render_options)?;
         Ok(OutputInfo::full_decode(w, h, RGBA8_SRGB).with_alpha(true))
     }
@@ -296,7 +300,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for SvgDecodeJob {
         self,
         data: Cow<'a, [u8]>,
         _preferred: &[PixelDescriptor],
-    ) -> Result<SvgDecoder<'a>, SvgError> {
+    ) -> Result<SvgDecoder<'a>, At<CodecError>> {
         self.check_input_size(data.len())?;
         self.check_stop()?;
 
@@ -330,25 +334,21 @@ impl<'a> zencodec::decode::DecodeJob<'a> for SvgDecodeJob {
         self,
         _data: Cow<'a, [u8]>,
         _preferred: &[PixelDescriptor],
-    ) -> Result<zencodec::Unsupported<SvgError>, SvgError> {
-        Err(SvgError::Unsupported(
-            zencodec::UnsupportedOperation::RowLevelDecode,
-        ))
+    ) -> Result<zencodec::Unsupported<At<CodecError>>, At<CodecError>> {
+        Err(SvgError::Unsupported(zencodec::UnsupportedOperation::RowLevelDecode).into())
     }
 
     fn animation_frame_decoder(
         self,
         _data: Cow<'a, [u8]>,
         _preferred: &[PixelDescriptor],
-    ) -> Result<zencodec::Unsupported<SvgError>, SvgError> {
-        Err(SvgError::Unsupported(
-            zencodec::UnsupportedOperation::AnimationDecode,
-        ))
+    ) -> Result<zencodec::Unsupported<At<CodecError>>, At<CodecError>> {
+        Err(SvgError::Unsupported(zencodec::UnsupportedOperation::AnimationDecode).into())
     }
 }
 
-fn wrap_sink_error(e: SinkError) -> SvgError {
-    SvgError::Render(e.to_string())
+fn wrap_sink_error(e: SinkError) -> At<CodecError> {
+    SvgError::Sink(e.to_string()).into()
 }
 
 // ══════════════════════════════════════════════════════════════════════
@@ -368,12 +368,15 @@ pub struct SvgDecoder<'a> {
 }
 
 impl zencodec::decode::Decode for SvgDecoder<'_> {
-    type Error = SvgError;
+    type Error = At<CodecError>;
 
-    fn decode(self) -> Result<DecodeOutput, SvgError> {
-        // Check stop before the expensive render
+    fn decode(self) -> Result<DecodeOutput, At<CodecError>> {
+        // Check stop before the expensive render. `enough::StopReason` does not
+        // implement `core::error::Error` (see `SvgError::Stopped`'s docs), so
+        // `?` can't convert it directly to `At<CodecError>` in one hop — route
+        // it through `SvgError` first.
         if let Some(ref stop) = self.stop {
-            stop.check()?;
+            stop.check().map_err(SvgError::from)?;
         }
 
         // The output raster is allocated inside tiny-skia (`Pixmap::new`) below,
@@ -385,7 +388,7 @@ impl zencodec::decode::Decode for SvgDecoder<'_> {
         let result = crate::render::render(&self.data, &self.config.render_options)?;
 
         let pixels = PixelBuffer::from_vec(result.data, result.width, result.height, RGBA8_SRGB)
-            .map_err(|e| SvgError::Render(format!("failed to create pixel buffer: {e}")))?;
+            .map_err(|e| SvgError::PixelBufferMismatch(format!("{e}")))?;
 
         let info = ImageInfo::new(result.width, result.height, svg_format())
             .with_alpha(true)

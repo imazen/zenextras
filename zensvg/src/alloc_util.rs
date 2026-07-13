@@ -11,8 +11,8 @@
 //! to convert (see the rollout brief's escape clause).
 //!
 //! Note that `tiny-skia` already fails *gracefully* on an oversized raster:
-//! `Pixmap::new` returns `None` (mapped to [`SvgError::Render`]) rather than
-//! aborting, so the untrusted-size path is non-aborting regardless of the
+//! `Pixmap::new` returns `None` (mapped to [`SvgError::AllocationFailed`])
+//! rather than aborting, so the untrusted-size path is non-aborting regardless of the
 //! preference — the [`Fallible`](AllocPref::Fallible) intent (a graceful error
 //! instead of an abort) is already satisfied by the dependency. zensvg also
 //! gates the requested dimensions against the resource limits *before* the
@@ -40,7 +40,7 @@
 //! together.
 //!
 //! [`Pixmap::new`]: resvg::tiny_skia::Pixmap::new
-//! [`SvgError::Render`]: crate::error::SvgError::Render
+//! [`SvgError::AllocationFailed`]: crate::error::SvgError::AllocationFailed
 
 use crate::error::SvgError;
 
@@ -91,7 +91,7 @@ pub(crate) fn resolve_fallible(pref: AllocPref, site_default_fallible: bool) -> 
 /// default when `pref` is [`CodecDefault`](AllocPref::CodecDefault).
 ///
 /// * fallible → `try_reserve_exact` then zero-fill, returning
-///   [`SvgError::Render`](crate::error::SvgError::Render) on allocation failure.
+///   [`SvgError::OutOfMemory`](crate::error::SvgError::OutOfMemory) on allocation failure.
 /// * infallible → `vec![0u8; n]` (single `calloc`, aborts on OOM).
 #[allow(dead_code)] // tested template; no zensvg-owned zeroed render site yet
 pub(crate) fn alloc_zeroed(
@@ -102,7 +102,7 @@ pub(crate) fn alloc_zeroed(
     if resolve_fallible(pref, site_default_fallible) {
         let mut v = Vec::new();
         v.try_reserve_exact(n)
-            .map_err(|_| SvgError::Render(format!("out of memory allocating {n} bytes")))?;
+            .map_err(|_| SvgError::OutOfMemory { bytes: n })?;
         v.resize(n, 0);
         Ok(v)
     } else {
@@ -118,7 +118,7 @@ pub(crate) fn alloc_zeroed(
 /// default when `pref` is [`CodecDefault`](AllocPref::CodecDefault).
 ///
 /// * fallible → `try_reserve_exact`, returning
-///   [`SvgError::Render`](crate::error::SvgError::Render) on allocation failure.
+///   [`SvgError::OutOfMemory`](crate::error::SvgError::OutOfMemory) on allocation failure.
 /// * infallible → `Vec::with_capacity(cap)` (aborts on OOM).
 ///
 /// The returned `Vec` is empty (length 0); the caller fills it.
@@ -130,12 +130,10 @@ pub(crate) fn vec_with_capacity<T>(
 ) -> Result<Vec<T>, SvgError> {
     if resolve_fallible(pref, site_default_fallible) {
         let mut v = Vec::new();
-        v.try_reserve_exact(cap).map_err(|_| {
-            SvgError::Render(format!(
-                "out of memory allocating {} bytes",
-                cap.saturating_mul(core::mem::size_of::<T>())
-            ))
-        })?;
+        v.try_reserve_exact(cap)
+            .map_err(|_| SvgError::OutOfMemory {
+                bytes: cap.saturating_mul(core::mem::size_of::<T>()),
+            })?;
         Ok(v)
     } else {
         Ok(Vec::with_capacity(cap))
@@ -196,16 +194,16 @@ mod tests {
     #[test]
     fn alloc_zeroed_fallible_oom_returns_err() {
         // Request an impossibly large allocation; the fallible path must
-        // return Err (mapped to Render) rather than abort.
+        // return Err (mapped to OutOfMemory) rather than abort.
         let r = alloc_zeroed(AllocPref::Fallible, true, usize::MAX);
         assert!(r.is_err());
-        assert!(matches!(r.unwrap_err(), SvgError::Render(_)));
+        assert!(matches!(r.unwrap_err(), SvgError::OutOfMemory { .. }));
     }
 
     #[test]
     fn vec_with_capacity_fallible_oom_returns_err() {
         let r: Result<Vec<u8>, _> = vec_with_capacity(AllocPref::Fallible, true, usize::MAX);
         assert!(r.is_err());
-        assert!(matches!(r.unwrap_err(), SvgError::Render(_)));
+        assert!(matches!(r.unwrap_err(), SvgError::OutOfMemory { .. }));
     }
 }
