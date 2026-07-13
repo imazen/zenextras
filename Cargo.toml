@@ -18,4 +18,4 @@ members = [
 # once 0.1.26 is published. Pinned to a commit rev (not the branch tip) for
 # reproducible builds, and to the SAME rev as each member's `zencodec-testkit`
 # dev-dep so both resolve to one unified zencodec; bump the rev deliberately.
-zencodec = { git = "https://github.com/imazen/zencodec", rev = "2427387f86c77fdf773ae2fa219926a49cd32d99" }
+zencodec = { git = "https://github.com/imazen/zencodec", rev = "44ca79279b265ba7dfe01a2b31ef74788429509a" }

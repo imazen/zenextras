@@ -28,7 +28,7 @@ enough = "0.4.3"
 # TEMP (drop at zencodec 0.1.26): unpublished companion crate carrying the
 # truncation-series conformance check. SAME rev as the workspace-root
 # [patch.crates-io] zencodec pin → one unified zencodec across the graph.
-zencodec-testkit = { git = "https://github.com/imazen/zencodec", rev = "2427387f86c77fdf773ae2fa219926a49cd32d99" }
+zencodec-testkit = { git = "https://github.com/imazen/zencodec", rev = "44ca79279b265ba7dfe01a2b31ef74788429509a" }
 
 [package.metadata.docs.rs]
 all-features = true

@@ -87,7 +87,7 @@ pub enum PdfError {
 pub type Result<T> = core::result::Result<T, PdfError>;
 
 // Codec-agnostic error taxonomy (zencodec PR #116, two-level origin-first
-// ErrorCategory: Image/Request/Resource/Policy/Lifecycle/Io/Internal). Maps
+// ErrorCategory: Image/Request/Resource/Policy/Stopped/Io/Internal). Maps
 // every `PdfError` variant to exactly one category so consumers can route on
 // it — HTTP status, retry policy, logging — without matching this enum
 // directly. `zencodec` is an optional dependency, so this impl (and the

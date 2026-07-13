@@ -123,7 +123,7 @@ pub enum SvgError {
 
     /// Operation stopped by cooperative cancellation. Delegates its category
     /// to the wrapped [`enough::StopReason`]
-    /// ([`ErrorCategory::Lifecycle`](zencodec::ErrorCategory::Lifecycle)).
+    /// ([`ErrorCategory::Stopped`](zencodec::ErrorCategory::Stopped)).
     Stopped(enough::StopReason),
 
     /// The caller-provided decode sink rejected a row or output — an opaque,
@@ -451,11 +451,11 @@ mod tests {
         );
         assert_eq!(
             SvgError::Stopped(enough::StopReason::Cancelled).category(),
-            C::Lifecycle(enough::StopReason::Cancelled)
+            C::Stopped(enough::StopReason::Cancelled)
         );
         assert_eq!(
             SvgError::Stopped(enough::StopReason::TimedOut).category(),
-            C::Lifecycle(enough::StopReason::TimedOut)
+            C::Stopped(enough::StopReason::TimedOut)
         );
     }
 

@@ -127,9 +127,9 @@ pub enum TiffError {
     /// Operation stopped by cooperative cancellation. Delegates its category to
     /// the wrapped [`enough::StopReason`] — carried directly (not re-derived),
     /// so both `Cancelled` and `TimedOut` map correctly to
-    /// [`ErrorCategory::Lifecycle`]`(reason)` with no special-casing needed here.
+    /// [`ErrorCategory::Stopped`]`(reason)` with no special-casing needed here.
     ///
-    /// [`ErrorCategory::Lifecycle`]: zencodec::ErrorCategory::Lifecycle
+    /// [`ErrorCategory::Stopped`]: zencodec::ErrorCategory::Stopped
     #[error("stopped: {0}")]
     Stopped(enough::StopReason),
 
@@ -361,11 +361,11 @@ mod category_tests {
     fn stopped_maps_both_cancelled_and_timed_out() {
         assert_eq!(
             TiffError::Stopped(enough::StopReason::Cancelled).category(),
-            C::Lifecycle(enough::StopReason::Cancelled)
+            C::Stopped(enough::StopReason::Cancelled)
         );
         assert_eq!(
             TiffError::Stopped(enough::StopReason::TimedOut).category(),
-            C::Lifecycle(enough::StopReason::TimedOut)
+            C::Stopped(enough::StopReason::TimedOut)
         );
     }
 
