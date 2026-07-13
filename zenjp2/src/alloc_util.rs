@@ -95,7 +95,7 @@ pub(crate) fn resolve_fallible(pref: AllocPref, site_default_fallible: bool) -> 
 /// default when `pref` is [`CodecDefault`](AllocPref::CodecDefault).
 ///
 /// * fallible → `try_reserve_exact` then zero-fill, returning
-///   [`Jp2Error::LimitExceeded`](crate::error::Jp2Error::LimitExceeded) on
+///   [`Jp2Error::OutOfMemory`](crate::error::Jp2Error::OutOfMemory) on
 ///   allocation failure.
 /// * infallible → `vec![0u8; n]` (single `calloc`, aborts on OOM).
 #[allow(dead_code)] // tested template; no zenjp2-owned zeroed decode site yet
@@ -107,7 +107,7 @@ pub(crate) fn alloc_zeroed(
     if resolve_fallible(pref, site_default_fallible) {
         let mut v = Vec::new();
         v.try_reserve_exact(n).map_err(|_| {
-            at!(Jp2Error::LimitExceeded(alloc::format!(
+            at!(Jp2Error::OutOfMemory(alloc::format!(
                 "out of memory allocating {n} bytes"
             )))
         })?;
@@ -126,7 +126,7 @@ pub(crate) fn alloc_zeroed(
 /// default when `pref` is [`CodecDefault`](AllocPref::CodecDefault).
 ///
 /// * fallible → `try_reserve_exact`, returning
-///   [`Jp2Error::LimitExceeded`](crate::error::Jp2Error::LimitExceeded) on
+///   [`Jp2Error::OutOfMemory`](crate::error::Jp2Error::OutOfMemory) on
 ///   allocation failure.
 /// * infallible → `Vec::with_capacity(cap)` (aborts on OOM).
 ///
@@ -140,7 +140,7 @@ pub(crate) fn vec_with_capacity<T>(
     if resolve_fallible(pref, site_default_fallible) {
         let mut v = Vec::new();
         v.try_reserve_exact(cap).map_err(|_| {
-            at!(Jp2Error::LimitExceeded(alloc::format!(
+            at!(Jp2Error::OutOfMemory(alloc::format!(
                 "out of memory allocating {} bytes",
                 cap.saturating_mul(core::mem::size_of::<T>())
             )))
@@ -208,13 +208,13 @@ mod tests {
         // return Err (mapped to LimitExceeded) rather than abort.
         let r = alloc_zeroed(AllocPref::Fallible, true, usize::MAX);
         assert!(r.is_err());
-        assert!(matches!(r.unwrap_err().error(), Jp2Error::LimitExceeded(_)));
+        assert!(matches!(r.unwrap_err().error(), Jp2Error::OutOfMemory(_)));
     }
 
     #[test]
     fn vec_with_capacity_fallible_oom_returns_err() {
         let r: Result<Vec<u8>, _> = vec_with_capacity(AllocPref::Fallible, true, usize::MAX);
         assert!(r.is_err());
-        assert!(matches!(r.unwrap_err().error(), Jp2Error::LimitExceeded(_)));
+        assert!(matches!(r.unwrap_err().error(), Jp2Error::OutOfMemory(_)));
     }
 }

@@ -9,16 +9,24 @@ use alloc::borrow::Cow;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
-use whereat::at;
+use whereat::At;
 use zencodec::decode::{
     Decode, DecodeCapabilities, DecodeJob, DecodeOutput, DecodePolicy, DecodeRowSink,
     DecoderConfig, OutputInfo,
 };
-use zencodec::{ImageFormat, ImageInfo, ResourceLimits, StopToken, Unsupported};
+use zencodec::{CodecError, ImageFormat, ImageInfo, ResourceLimits, StopToken, Unsupported};
 use zenpixels::{PixelBuffer, PixelDescriptor};
 
 use crate::alloc_util::AllocPref;
 use crate::error::Jp2Error;
+
+/// Shorthand for this codec's zencodec-facing error type — the shared
+/// envelope, located (Pattern B: `type Error = At<CodecError>`). A generic
+/// consumer recovers the `ErrorCategory` from this type even after erasure to
+/// `Box<dyn Error>` on the `Dyn*` dispatch path, by downcasting to it — see
+/// `Jp2Error`'s `CategorizedError` impl and its bridge `From<Jp2Error> for
+/// At<CodecError>` in `crate::error`.
+type CodecResult<T> = core::result::Result<T, At<CodecError>>;
 
 /// Lower the public zencodec [`AllocPreference`](zencodec::AllocPreference) onto
 /// the crate-internal [`AllocPref`], keeping the decode core free of any
@@ -103,7 +111,7 @@ impl Default for Jp2DecoderConfig {
 }
 
 impl DecoderConfig for Jp2DecoderConfig {
-    type Error = whereat::At<Jp2Error>;
+    type Error = At<CodecError>;
     type Job<'a> = Jp2DecodeJob;
 
     fn formats() -> &'static [ImageFormat] {
@@ -176,10 +184,10 @@ pub struct Jp2DecodeJob {
 }
 
 impl<'a> DecodeJob<'a> for Jp2DecodeJob {
-    type Error = whereat::At<Jp2Error>;
+    type Error = At<CodecError>;
     type Dec = Jp2Decoder<'a>;
-    type StreamDec = Unsupported<whereat::At<Jp2Error>>;
-    type AnimationFrameDec = Unsupported<whereat::At<Jp2Error>>;
+    type StreamDec = Unsupported<At<CodecError>>;
+    type AnimationFrameDec = Unsupported<At<CodecError>>;
 
     fn with_stop(mut self, stop: StopToken) -> Self {
         self.stop = Some(stop);
@@ -197,8 +205,7 @@ impl<'a> DecodeJob<'a> for Jp2DecodeJob {
     }
 
     fn probe(&self, data: &[u8]) -> core::result::Result<ImageInfo, Self::Error> {
-        let image = hayro_jpeg2000::Image::new(data, &self.settings)
-            .map_err(|e| at!(Jp2Error::InvalidData(alloc::format!("{e}"))))?;
+        let image = hayro_jpeg2000::Image::new(data, &self.settings).map_err(Jp2Error::Decode)?;
 
         let mut info = image_to_info(&image);
         apply_policy_to_info(&mut info, self.policy.as_ref());
@@ -219,7 +226,7 @@ impl<'a> DecodeJob<'a> for Jp2DecodeJob {
     ) -> core::result::Result<OutputInfo, Self::Error> {
         // JP2 doesn't support streaming — decode full image, then copy to sink.
         zencodec::helpers::copy_decode_to_sink(self, data, sink, preferred, |e| {
-            at!(Jp2Error::InvalidData(alloc::format!("sink error: {e}")))
+            Jp2Error::Sink(e).into()
         })
     }
 
@@ -231,12 +238,13 @@ impl<'a> DecodeJob<'a> for Jp2DecodeJob {
         // Pre-flight limit checks on input size
         if let Some(ref limits) = self.limits {
             if let Some(max_input) = limits.max_input_bytes {
-                if data.len() as u64 > max_input {
-                    return Err(at!(Jp2Error::LimitExceeded(alloc::format!(
-                        "input size {} exceeds limit {}",
-                        data.len(),
-                        max_input
-                    ))));
+                let actual = data.len() as u64;
+                if actual > max_input {
+                    return Err(Jp2Error::Limit(zencodec::LimitExceeded::InputSize {
+                        actual,
+                        max: max_input,
+                    })
+                    .into());
                 }
             }
         }
@@ -269,9 +277,7 @@ impl<'a> DecodeJob<'a> for Jp2DecodeJob {
         _data: Cow<'a, [u8]>,
         _preferred: &[PixelDescriptor],
     ) -> core::result::Result<Self::StreamDec, Self::Error> {
-        Err(at!(Jp2Error::from(
-            zencodec::UnsupportedOperation::RowLevelDecode
-        )))
+        Err(Jp2Error::UnsupportedOperation(zencodec::UnsupportedOperation::RowLevelDecode).into())
     }
 
     fn animation_frame_decoder(
@@ -279,9 +285,7 @@ impl<'a> DecodeJob<'a> for Jp2DecodeJob {
         _data: Cow<'a, [u8]>,
         _preferred: &[PixelDescriptor],
     ) -> core::result::Result<Self::AnimationFrameDec, Self::Error> {
-        Err(at!(Jp2Error::from(
-            zencodec::UnsupportedOperation::AnimationDecode
-        )))
+        Err(Jp2Error::UnsupportedOperation(zencodec::UnsupportedOperation::AnimationDecode).into())
     }
 }
 
@@ -303,7 +307,7 @@ pub struct Jp2Decoder<'a> {
 }
 
 impl Decode for Jp2Decoder<'_> {
-    type Error = whereat::At<Jp2Error>;
+    type Error = At<CodecError>;
 
     fn decode(self) -> core::result::Result<DecodeOutput, Self::Error> {
         // The output pixel buffer is allocated inside `hayro_jpeg2000` below,
@@ -313,8 +317,8 @@ impl Decode for Jp2Decoder<'_> {
         // here (it would govern a future crate-owned post-process buffer).
         let _ = self.alloc_pref;
 
-        let image = hayro_jpeg2000::Image::new(&self.data, &self.settings)
-            .map_err(|e| at!(Jp2Error::InvalidData(alloc::format!("{e}"))))?;
+        let image =
+            hayro_jpeg2000::Image::new(&self.data, &self.settings).map_err(Jp2Error::Decode)?;
 
         // Enforce dimension/pixel limits before decoding
         check_limits(&image, self.limits.as_ref())?;
@@ -324,14 +328,12 @@ impl Decode for Jp2Decoder<'_> {
         let has_alpha = image.has_alpha();
         let color_space = image.color_space().clone();
 
-        let pixels_u8 = image
-            .decode()
-            .map_err(|e| at!(Jp2Error::InvalidData(alloc::format!("{e}"))))?;
+        let pixels_u8 = image.decode().map_err(Jp2Error::Decode)?;
 
         let (descriptor, icc_profile) = pixel_format_and_icc(&color_space, has_alpha);
 
         let pixel_buffer = PixelBuffer::from_vec(pixels_u8, width, height, descriptor)
-            .map_err(|e| at!(Jp2Error::InvalidData(alloc::format!("pixel buffer: {e}"))))?;
+            .map_err(|e| Jp2Error::PixelBuffer(alloc::format!("{e}")))?;
 
         let mut info = ImageInfo::new(width, height, ImageFormat::Jp2).with_alpha(has_alpha);
 
@@ -428,47 +430,58 @@ fn descriptor_for_info(info: &ImageInfo) -> PixelDescriptor {
     }
 }
 
-/// Check resource limits before decoding.
+/// Check resource limits before decoding. Each cap maps to a distinct
+/// [`zencodec::LimitKind`] via the typed [`zencodec::LimitExceeded`] — these
+/// previously collapsed into one untyped string (2026-07-13 caterr audit
+/// finding #2).
 fn check_limits(
     image: &hayro_jpeg2000::Image<'_>,
     limits: Option<&ResourceLimits>,
-) -> crate::Result<()> {
+) -> CodecResult<()> {
     let Some(limits) = limits else {
         return Ok(());
     };
 
-    let w = image.width() as u64;
-    let h = image.height() as u64;
-    let pixels = w.saturating_mul(h);
+    let width = image.width();
+    let height = image.height();
+    let pixels = (width as u64).saturating_mul(height as u64);
 
     if let Some(max_w) = limits.max_width {
-        if w > max_w as u64 {
-            return Err(at!(Jp2Error::LimitExceeded(alloc::format!(
-                "width {w} exceeds limit {max_w}"
-            ))));
+        if width > max_w {
+            return Err(Jp2Error::Limit(zencodec::LimitExceeded::Width {
+                actual: width,
+                max: max_w,
+            })
+            .into());
         }
     }
     if let Some(max_h) = limits.max_height {
-        if h > max_h as u64 {
-            return Err(at!(Jp2Error::LimitExceeded(alloc::format!(
-                "height {h} exceeds limit {max_h}"
-            ))));
+        if height > max_h {
+            return Err(Jp2Error::Limit(zencodec::LimitExceeded::Height {
+                actual: height,
+                max: max_h,
+            })
+            .into());
         }
     }
     if let Some(max_px) = limits.max_pixels {
         if pixels > max_px {
-            return Err(at!(Jp2Error::LimitExceeded(alloc::format!(
-                "pixel count {pixels} exceeds limit {max_px}"
-            ))));
+            return Err(Jp2Error::Limit(zencodec::LimitExceeded::Pixels {
+                actual: pixels,
+                max: max_px,
+            })
+            .into());
         }
     }
     if let Some(max_mem) = limits.max_memory_bytes {
         // Conservative estimate: 4 bytes per pixel (RGBA worst case)
         let estimated_memory = pixels.saturating_mul(4);
         if estimated_memory > max_mem {
-            return Err(at!(Jp2Error::LimitExceeded(alloc::format!(
-                "estimated memory {estimated_memory} exceeds limit {max_mem}"
-            ))));
+            return Err(Jp2Error::Limit(zencodec::LimitExceeded::Memory {
+                actual: estimated_memory,
+                max: max_mem,
+            })
+            .into());
         }
     }
 

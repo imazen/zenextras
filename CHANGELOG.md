@@ -121,6 +121,33 @@ member entries here reference those files.
 
 #### Added
 
+- Migrated from a native `type Error = At<Jp2Error>` (Pattern A) to
+  `type Error = At<zencodec::CodecError>` (Pattern B) across all three
+  zencodec decode trait impls in `codec.rs`, and implemented
+  `zencodec::CategorizedError` for `Jp2Error` against the new two-level
+  origin-first `ErrorCategory` (zencodec PR #116, unpublished, patched via
+  the workspace-root `[patch.crates-io]` git-rev
+  `2427387f86c77fdf773ae2fa219926a49cd32d99`). `hayro_jpeg2000::DecodeError`
+  is matched variant-by-variant (not stringified): `DecodingError::UnexpectedEof`
+  → `Image(UnexpectedEof)`, `FormatError::Unsupported` →
+  `Image(Unsupported(Type))`, `MarkerError::Unsupported` →
+  `Image(Unsupported(Feature))`, everything else → `Image(Malformed)`. All 6
+  resource-cap sites (width/height/pixels/memory/input-size, previously one
+  stringified `LimitExceeded(String)`) now construct typed
+  `zencodec::LimitExceeded` variants so the `LimitKind` survives into the
+  category; the 2 genuine allocation-failure sites in `alloc_util.rs` (which
+  stay zencodec-feature-agnostic) are now `Jp2Error::OutOfMemory(String)` →
+  `Resource(OutOfMemory)`, distinct from a configured cap. The dead
+  `Unsupported(String)` variant (unused) was removed. Wired
+  `zencodec-testkit::check_decode_truncation_series` +
+  `check_decode_error_envelope` (dev-dep, same git rev) into
+  `tests/zencodec_truncation.rs` against tiny in-tree `test.jp2`/`test.j2k`
+  fixtures (16x16 gradient, both the JP2 container and raw J2K codestream
+  forms) — both passed on the first run against both fixtures, confirming
+  the envelope migration correctly survives the dyn-erased decode boundary
+  and every truncation offset categorizes inside the accepted `Image(_)` arm.
+  `zenjp2` has never been published, so this is not a break of any released
+  API.
 - `DecoderConfig::estimate_decode_resources` — an uncalibrated structural
   decode estimate (full output pixel plane + wavelet/tile working set + fixed
   overhead, ~60 Mpix/s, SERIAL, `at_cores`). Additive trait method only.
