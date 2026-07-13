@@ -250,3 +250,54 @@ fn estimate_decode_resources_scales_with_output() {
     assert!(est.wall_ms().is_some());
     assert_eq!(est.threading(), Some(ThreadingInformation::SERIAL));
 }
+
+// --- ErrorCategory / Pattern-B envelope tests ---
+
+/// Pattern B forcing test: drive the zenpdf decoder through the **dyn**
+/// surface so its `At<CodecError>` is erased to a boxed `dyn Error`, and
+/// assert a generic consumer still recovers the
+/// [`ErrorCategory`](zencodec::ErrorCategory) *and* the originating codec
+/// name. Under the prior Pattern A (`type Error = PdfError`, a bare native
+/// enum) both would be `None` after erasure — there is no shared concrete
+/// type to downcast to. This is the regression gate for the envelope.
+#[test]
+fn envelope_category_survives_dyn_erasure() {
+    use zencodec::decode::DynDecoderConfig;
+    use zencodec::{CodecError, CodecErrorExt, ErrorCategory, ImageError};
+
+    let cfg = PdfDecoderConfig::new();
+    let dyn_cfg: &dyn DynDecoderConfig = &cfg;
+    let erased = dyn_cfg
+        .dyn_job()
+        .probe(b"not a pdf")
+        .expect_err("malformed input must fail to probe");
+
+    // `open_pdf_owned` maps hayro's `LoadPdfError::Invalid` to
+    // `PdfError::Malformed`, which categorizes as `Image(Malformed)`; the
+    // envelope carries both that category and the codec name through erasure.
+    assert_eq!(
+        erased.error_category(),
+        Some(ErrorCategory::Image(ImageError::Malformed))
+    );
+    assert_eq!(
+        erased.codec_error().and_then(CodecError::codec),
+        Some("zenpdf")
+    );
+}
+
+/// A page-index-out-of-range failure (a caller-request fault, not an
+/// image-bytes fault) categorizes as `Request(Invalid(Parameters))` via the
+/// direct (non-zencodec) API — the same `PdfError` the zencodec trait
+/// boundary above bridges into the envelope.
+#[test]
+fn page_out_of_range_is_request_fault() {
+    use zencodec::{CategorizedError, ErrorCategory, InvalidKind, RequestError};
+
+    let data = test_pdf();
+    // Test PDF has 1 page — page 5 is out of range.
+    let err = zenpdf::page_dimensions(&data, 5).unwrap_err();
+    assert_eq!(
+        err.category(),
+        ErrorCategory::Request(RequestError::Invalid(InvalidKind::Parameters))
+    );
+}

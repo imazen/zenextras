@@ -17,10 +17,11 @@ extern crate alloc;
 
 use alloc::borrow::Cow;
 
+use whereat::At;
 use zencodec::decode::{DecodeCapabilities, DecodeOutput, DecodePolicy, OutputInfo};
 use zencodec::{
-    ImageFormat, ImageFormatDefinition, ImageInfo, ImageSequence, ResourceLimits, StopToken,
-    Unsupported, UnsupportedOperation,
+    CodecError, ImageFormat, ImageFormatDefinition, ImageInfo, ImageSequence, ResourceLimits,
+    StopToken, Unsupported, UnsupportedOperation,
 };
 use zenpixels::{PixelBuffer, PixelDescriptor};
 
@@ -141,7 +142,7 @@ impl Default for PdfDecoderConfig {
 static DECODE_DESCRIPTORS: &[PixelDescriptor] = &[PixelDescriptor::RGBA8_SRGB];
 
 impl zencodec::decode::DecoderConfig for PdfDecoderConfig {
-    type Error = PdfError;
+    type Error = At<CodecError>;
     type Job<'a> = PdfDecodeJob;
 
     fn formats() -> &'static [ImageFormat] {
@@ -233,10 +234,10 @@ impl PdfDecodeJob {
 }
 
 impl<'a> zencodec::decode::DecodeJob<'a> for PdfDecodeJob {
-    type Error = PdfError;
+    type Error = At<CodecError>;
     type Dec = PdfDecoder;
-    type StreamDec = Unsupported<PdfError>;
-    type AnimationFrameDec = Unsupported<PdfError>;
+    type StreamDec = Unsupported<At<CodecError>>;
+    type AnimationFrameDec = Unsupported<At<CodecError>>;
 
     fn with_stop(mut self, stop: StopToken) -> Self {
         self.stop = Some(stop);
@@ -257,7 +258,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for PdfDecodeJob {
         self
     }
 
-    fn probe(&self, data: &[u8]) -> Result<ImageInfo, PdfError> {
+    fn probe(&self, data: &[u8]) -> Result<ImageInfo, At<CodecError>> {
         self.check_input_size(data)?;
         let count = render::page_count(data)?;
         let (w, h) = if count > 0 {
@@ -275,7 +276,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for PdfDecodeJob {
         Ok(info)
     }
 
-    fn output_info(&self, data: &[u8]) -> Result<OutputInfo, PdfError> {
+    fn output_info(&self, data: &[u8]) -> Result<OutputInfo, At<CodecError>> {
         self.check_input_size(data)?;
         let count = render::page_count(data)?;
         let page = self.start_frame.min(count.saturating_sub(1));
@@ -294,7 +295,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for PdfDecodeJob {
         self,
         data: Cow<'a, [u8]>,
         _preferred: &[PixelDescriptor],
-    ) -> Result<PdfDecoder, PdfError> {
+    ) -> Result<PdfDecoder, At<CodecError>> {
         self.check_input_size(&data)?;
         let count = render::page_count(&data)?;
         let page = self.start_frame.min(count.saturating_sub(1));
@@ -330,24 +331,26 @@ impl<'a> zencodec::decode::DecodeJob<'a> for PdfDecodeJob {
         data: Cow<'a, [u8]>,
         sink: &mut dyn zencodec::decode::DecodeRowSink,
         preferred: &[PixelDescriptor],
-    ) -> Result<OutputInfo, PdfError> {
-        zencodec::helpers::copy_decode_to_sink(self, data, sink, preferred, PdfError::Sink)
+    ) -> Result<OutputInfo, At<CodecError>> {
+        zencodec::helpers::copy_decode_to_sink(self, data, sink, preferred, |e| {
+            PdfError::Sink(e).into()
+        })
     }
 
     fn streaming_decoder(
         self,
         _data: Cow<'a, [u8]>,
         _preferred: &[PixelDescriptor],
-    ) -> Result<Unsupported<PdfError>, PdfError> {
-        Err(UnsupportedOperation::RowLevelDecode.into())
+    ) -> Result<Unsupported<At<CodecError>>, At<CodecError>> {
+        Err(PdfError::Unsupported(UnsupportedOperation::RowLevelDecode).into())
     }
 
     fn animation_frame_decoder(
         self,
         _data: Cow<'a, [u8]>,
         _preferred: &[PixelDescriptor],
-    ) -> Result<Unsupported<PdfError>, PdfError> {
-        Err(UnsupportedOperation::AnimationDecode.into())
+    ) -> Result<Unsupported<At<CodecError>>, At<CodecError>> {
+        Err(PdfError::Unsupported(UnsupportedOperation::AnimationDecode).into())
     }
 }
 
@@ -371,9 +374,9 @@ pub struct PdfDecoder {
 }
 
 impl zencodec::decode::Decode for PdfDecoder {
-    type Error = PdfError;
+    type Error = At<CodecError>;
 
-    fn decode(self) -> Result<DecodeOutput, PdfError> {
+    fn decode(self) -> Result<DecodeOutput, At<CodecError>> {
         // The output raster is produced inside hayro (`hayro::render`) below,
         // which this crate cannot route through a `try_reserve`, so the lowered
         // allocation preference has no zenpdf-owned site to apply to. Bind it
@@ -417,6 +420,8 @@ fn compute_output_dims(
 ) -> Result<(u32, u32), PdfError> {
     // Guard against zero-area pages that would cause division by zero or NaN
     // when computing scale factors in FitWidth/FitHeight/FitBox/Exact modes.
+    // This is the PDF's own page geometry (before any caller bounds are
+    // applied) — an image-bytes fault, not a request fault.
     if !page_w.is_finite() || !page_h.is_finite() || page_w <= 0.0 || page_h <= 0.0 {
         return Err(PdfError::ZeroDimensions { page: 0 });
     }
@@ -443,8 +448,11 @@ fn compute_output_dims(
     };
 
     // Validate that results are finite and positive before casting to u32.
+    // Unlike the page-geometry check above, `page_w`/`page_h` are already
+    // known-good here — a degenerate result at this point comes from the
+    // caller-supplied `bounds`, so it's a request fault, not an image fault.
     if !raw_w.is_finite() || !raw_h.is_finite() || raw_w < 1.0 || raw_h < 1.0 {
-        return Err(PdfError::ZeroDimensions { page: 0 });
+        return Err(PdfError::InvalidRenderBounds { page: 0 });
     }
 
     Ok((raw_w.floor() as u32, raw_h.floor() as u32))

@@ -1544,6 +1544,7 @@ dependencies = [
  "thiserror",
  "whereat",
  "zencodec",
+ "zencodec-testkit",
  "zenpixels",
 ]
 

@@ -127,7 +127,7 @@ fn render_page_twice() {
 #[test]
 fn invalid_pdf() {
     let err = page_count(b"not a pdf").unwrap_err();
-    assert!(matches!(err, PdfError::InvalidPdf(_)));
+    assert!(matches!(err, PdfError::Malformed));
 }
 
 #[test]

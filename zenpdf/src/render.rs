@@ -214,7 +214,10 @@ fn render_pages_inner(pdf: &Pdf, config: &PdfConfig) -> Result<Vec<RenderedPage>
         let (page_w, page_h) = page.render_dimensions();
 
         // Reject zero-area or non-finite page dimensions early, before any
-        // scale computation that could produce NaN or Inf.
+        // scale computation that could produce NaN or Inf. This is the PDF's
+        // own declared page (MediaBox) geometry — an image-bytes fault, not a
+        // request fault (contrast `InvalidRenderBounds` below, which is about
+        // the caller-supplied `RenderBounds` instead).
         if !page_w.is_finite() || !page_h.is_finite() || page_w <= 0.0 || page_h <= 0.0 {
             return Err(PdfError::ZeroDimensions { page: idx });
         }
@@ -258,7 +261,15 @@ fn open_pdf(data: &[u8]) -> Result<Pdf> {
 /// Parse a PDF from already-owned data, avoiding a second copy.
 pub(crate) fn open_pdf_owned(data: Vec<u8>) -> Result<Pdf> {
     let arc_data: Arc<dyn AsRef<[u8]> + Send + Sync> = Arc::new(data);
-    Pdf::new(arc_data).map_err(|e| PdfError::InvalidPdf(format!("{e:?}")))
+    // Match hayro's real error variants instead of stringifying `{e:?}` into
+    // one opaque catch-all: `LoadPdfError` has exactly two variants, and each
+    // maps to a different `ErrorCategory` origin (see PdfError::Malformed /
+    // PdfError::Encrypted docs). hayro's `Invalid` doesn't structurally
+    // distinguish a truncated document from an otherwise-corrupt one.
+    Pdf::new(arc_data).map_err(|e| match e {
+        hayro::hayro_syntax::LoadPdfError::Decryption(reason) => PdfError::Encrypted(reason),
+        hayro::hayro_syntax::LoadPdfError::Invalid => PdfError::Malformed,
+    })
 }
 
 fn resolve_page_indices(selection: &PageSelection, count: u32) -> Result<Vec<u32>> {
@@ -330,8 +341,11 @@ fn compute_render_settings(
     };
 
     // Validate that scales are finite and positive before computing dimensions.
+    // `page_w`/`page_h` are already validated by the caller (`render_pages_inner`)
+    // before this function runs, so a degenerate result here comes from the
+    // caller-supplied `bounds` — a request fault, not an image fault.
     if !x_scale.is_finite() || !y_scale.is_finite() || x_scale <= 0.0 || y_scale <= 0.0 {
-        return Err(PdfError::ZeroDimensions { page: page_idx });
+        return Err(PdfError::InvalidRenderBounds { page: page_idx });
     }
 
     // Compute final pixel dimensions to validate them.
@@ -339,14 +353,14 @@ fn compute_render_settings(
     let raw_h = height.map_or_else(|| page_h * y_scale, |h| h as f32);
 
     if !raw_w.is_finite() || !raw_h.is_finite() || raw_w < 1.0 || raw_h < 1.0 {
-        return Err(PdfError::ZeroDimensions { page: page_idx });
+        return Err(PdfError::InvalidRenderBounds { page: page_idx });
     }
 
     let final_w = raw_w.floor() as u32;
     let final_h = raw_h.floor() as u32;
 
     if final_w == 0 || final_h == 0 {
-        return Err(PdfError::ZeroDimensions { page: page_idx });
+        return Err(PdfError::InvalidRenderBounds { page: page_idx });
     }
 
     if final_w > u16::MAX as u32 || final_h > u16::MAX as u32 {

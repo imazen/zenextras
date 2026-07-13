@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### QUEUED BREAKING CHANGES
+<!-- Breaking changes that will ship together in the next minor (0.x) release.
+     Do NOT ship these piecemeal — batch them. -->
+- `PdfError::InvalidPdf(String)` removed, replaced by `PdfError::Malformed`
+  (unit) and `PdfError::Encrypted(hayro::hayro_syntax::DecryptionError)` —
+  de-stringifies the hayro error match instead of formatting `{e:?}` into one
+  opaque catch-all variant.
+- `PdfError::ZeroDimensions { page }` narrows to only the PDF's-own-MediaBox
+  case; the caller-supplied-`RenderBounds` case now returns the new
+  `PdfError::InvalidRenderBounds { page }` instead.
+- `<PdfDecoderConfig as zencodec::decode::DecoderConfig>::Error` (and the
+  `DecodeJob`/`Decode` associated `Error` types) changed from `PdfError` to
+  `whereat::At<zencodec::CodecError>` — the zencodec-trait dyn-dispatch
+  boundary now returns the shared envelope so `ErrorCategory` survives type
+  erasure. The direct (non-zencodec) API — `render_page`, `render_pages`,
+  `page_count`, `page_dimensions` — is unaffected and still returns bare
+  `PdfError`.
+
+### Added
+
+- `zencodec::CategorizedError` impl for `PdfError`, mapping every variant to
+  the new two-level origin-first `ErrorCategory` (zencodec PR #116:
+  `Image`/`Request`/`Resource`/`Policy`/`Lifecycle`/`Io`/`Internal`) so
+  consumers can route on category without matching `PdfError` directly.
+- `tests/zencodec_truncation.rs`: wires `zencodec_testkit::check_decode_truncation_series`
+  as a conformance gate — every truncated-input prefix of the committed PDF
+  fixture must categorize as an incomplete-input (`Image(_)`) error, never
+  panic, OOM, or silently decode.
+- `tests/zencodec_integration.rs`: `envelope_category_survives_dyn_erasure`
+  regression test — proves `ErrorCategory` and the `"zenpdf"` codec name both
+  survive erasure to a boxed `dyn Error` through the zencodec dyn-dispatch
+  boundary (this is what the `type Error` change above enables).
+
 ### Changed
 
 - Docs: README overhaul — CI badge retargeted to the `zenextras` workflow;
@@ -14,6 +47,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`readme = "README.crates.md"`, `README.md` retained for the `include_str!`
   docs path) with absolute license links; and `repository` set to the
   `zenextras` monorepo.
+- `PdfError::DimensionOverflow`, `TooManyPages`, and `PixelLimitExceeded` now
+  categorize correctly instead of being unclassified: `DimensionOverflow` is a
+  fixed u16 rendering-backend ceiling (`Request(Invalid(Parameters))`, not a
+  configurable resource limit); `TooManyPages` → `Resource(Limits(Frames))`;
+  `PixelLimitExceeded` → `Resource(Limits(Pixels))`.
+- Bump `zencodec` dependency to 0.1.25 (git-pinned via workspace
+  `[patch.crates-io]` to an unreleased rev pending 0.1.26 — see QUEUED
+  BREAKING CHANGES above).
 
 ## [0.2.0] - 2026-04-17
 
