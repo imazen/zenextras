@@ -19,3 +19,11 @@ members = [
 # reproducible builds, and to the SAME rev as each member's `zencodec-testkit`
 # dev-dep so both resolve to one unified zencodec; bump the rev deliberately.
 zencodec = { git = "https://github.com/imazen/zencodec", rev = "44ca79279b265ba7dfe01a2b31ef74788429509a" }
+
+# TEMP (security): our lilith/hayro fork adds an output-size cap to the
+# FlateDecode/LZWDecode path (MAX_DECODED_STREAM_BYTES), fixing the
+# decompression-bomb DoS (2026-07-18 security audit C3) that upstream
+# hayro-syntax 0.7.2 still has. Drop this patch once the fix lands in a
+# published hayro-syntax release (or upstream merges it and releases). Pinned to
+# a commit rev for reproducible builds.
+hayro-syntax = { git = "https://github.com/lilith/hayro", rev = "c0d1d9c0c925798d62aeaaaede34461aafe3ff17" }
