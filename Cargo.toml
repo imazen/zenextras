@@ -26,7 +26,7 @@ zencodec = { git = "https://github.com/imazen/zencodec", rev = "44ca79279b265ba7
 # hayro-syntax 0.7.2 still has. Drop this patch once the fix lands in a
 # published hayro-syntax release (or upstream merges it and releases). Pinned to
 # a commit rev for reproducible builds.
-hayro-syntax = { git = "https://github.com/lilith/hayro", rev = "c0d1d9c0c925798d62aeaaaede34461aafe3ff17" }
+hayro-syntax = { git = "https://github.com/lilith/hayro", rev = "beec7225f7f8cec6cb62f6ecf116db738177d0b9" }
 
 # TEMP (security): our lilith/image-tiff fork bounds the per-tile-row scratch
 # allocation (derived from the attacker-controlled TileWidth) by the

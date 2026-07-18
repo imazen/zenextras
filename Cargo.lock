@@ -458,7 +458,7 @@ dependencies = [
 [[package]]
 name = "hayro-ccitt"
 version = "0.3.0"
-source = "git+https://github.com/lilith/hayro?rev=c0d1d9c0c925798d62aeaaaede34461aafe3ff17#c0d1d9c0c925798d62aeaaaede34461aafe3ff17"
+source = "git+https://github.com/lilith/hayro?rev=beec7225f7f8cec6cb62f6ecf116db738177d0b9#beec7225f7f8cec6cb62f6ecf116db738177d0b9"
 
 [[package]]
 name = "hayro-cmap"
@@ -492,7 +492,7 @@ dependencies = [
 [[package]]
 name = "hayro-jbig2"
 version = "0.3.0"
-source = "git+https://github.com/lilith/hayro?rev=c0d1d9c0c925798d62aeaaaede34461aafe3ff17#c0d1d9c0c925798d62aeaaaede34461aafe3ff17"
+source = "git+https://github.com/lilith/hayro?rev=beec7225f7f8cec6cb62f6ecf116db738177d0b9#beec7225f7f8cec6cb62f6ecf116db738177d0b9"
 dependencies = [
  "fearless_simd",
  "hayro-ccitt",
@@ -507,7 +507,7 @@ checksum = "c75ab947623ef4ccaa7acf0579edf7cbb5a73838e3839a7be73335e522f433a1"
 [[package]]
 name = "hayro-jpeg2000"
 version = "0.4.0"
-source = "git+https://github.com/lilith/hayro?rev=c0d1d9c0c925798d62aeaaaede34461aafe3ff17#c0d1d9c0c925798d62aeaaaede34461aafe3ff17"
+source = "git+https://github.com/lilith/hayro?rev=beec7225f7f8cec6cb62f6ecf116db738177d0b9#beec7225f7f8cec6cb62f6ecf116db738177d0b9"
 dependencies = [
  "fearless_simd",
 ]
@@ -521,7 +521,7 @@ checksum = "885c5ef0654933139a9b9546fc2c69e18d37f38aa2520f079092b1be18f1fcaa"
 [[package]]
 name = "hayro-syntax"
 version = "0.7.2"
-source = "git+https://github.com/lilith/hayro?rev=c0d1d9c0c925798d62aeaaaede34461aafe3ff17#c0d1d9c0c925798d62aeaaaede34461aafe3ff17"
+source = "git+https://github.com/lilith/hayro?rev=beec7225f7f8cec6cb62f6ecf116db738177d0b9#beec7225f7f8cec6cb62f6ecf116db738177d0b9"
 dependencies = [
  "flate2",
  "hayro-ccitt",
