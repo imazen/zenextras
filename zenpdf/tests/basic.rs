@@ -143,3 +143,41 @@ fn white_background() {
         assert_eq!(b, 255, "bottom of empty page should be white");
     }
 }
+
+/// A minimal PDF whose xref trailer sets `/Prev` to its own xref offset — a
+/// circular PREV chain. On hayro 0.5 this recursed unbounded and stack-overflowed
+/// the process during parse (SECURITY-AUDIT-2026-07-18 C1); hayro 0.7 bounds it
+/// with a visited-set (`MAX_XREF_CHAIN_DEPTH`).
+fn circular_xref_pdf() -> Vec<u8> {
+    let mut pdf = Vec::new();
+    pdf.extend_from_slice(b"%PDF-1.7\n");
+    let o1 = pdf.len();
+    pdf.extend_from_slice(b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n");
+    let o2 = pdf.len();
+    pdf.extend_from_slice(b"2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n");
+    let o3 = pdf.len();
+    pdf.extend_from_slice(
+        b"3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] >>\nendobj\n",
+    );
+    let xref_off = pdf.len();
+    // `/Prev {xref_off}` points the trailer's previous-xref pointer at this very
+    // xref section — the cycle.
+    let tail = format!(
+        "xref\n0 4\n0000000000 65535 f \n{o1:010} 00000 n \n{o2:010} 00000 n \n{o3:010} 00000 n \ntrailer\n<< /Size 4 /Root 1 0 R /Prev {xref_off} >>\nstartxref\n{xref_off}\n%%EOF"
+    );
+    pdf.extend_from_slice(tail.as_bytes());
+    pdf
+}
+
+#[test]
+fn circular_xref_prev_chain_does_not_stack_overflow() {
+    // The load-bearing property is that these RETURN rather than recursing until
+    // the stack overflows (which aborts the whole process). Whether the malformed
+    // document parses (Ok with the base xref) or is rejected (a clean error) is
+    // immaterial — either proves the recursion is bounded.
+    let pdf = circular_xref_pdf();
+    if let Ok(n) = page_count(&pdf) {
+        assert!(n <= 16, "sane page count on the crafted doc, got {n}");
+    }
+    let _ = render_pages(&pdf, &PdfConfig::default());
+}

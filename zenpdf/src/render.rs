@@ -1,4 +1,3 @@
-use alloc::sync::Arc;
 use alloc::vec::Vec;
 
 extern crate alloc;
@@ -208,6 +207,9 @@ fn render_pages_inner(pdf: &Pdf, config: &PdfConfig) -> Result<Vec<RenderedPage>
         config.background[3],
     );
 
+    // Font/image render cache, shared across pages (hayro 0.7 `render()` API).
+    let cache = hayro::RenderCache::new();
+
     let mut results = Vec::with_capacity(indices.len());
     for idx in indices {
         let page = &pages[idx as usize];
@@ -231,7 +233,7 @@ fn render_pages_inner(pdf: &Pdf, config: &PdfConfig) -> Result<Vec<RenderedPage>
             config.limits.max_pixels_per_page,
         )?;
 
-        let pixmap = hayro::render(page, &interp, &settings);
+        let pixmap = hayro::render(page, &cache, &interp, &settings);
 
         let w = pixmap.width() as u32;
         let h = pixmap.height() as u32;
@@ -254,19 +256,18 @@ fn render_pages_inner(pdf: &Pdf, config: &PdfConfig) -> Result<Vec<RenderedPage>
 // ---------------------------------------------------------------------------
 
 fn open_pdf(data: &[u8]) -> Result<Pdf> {
-    // Unavoidable copy: Pdf::new requires Arc<dyn AsRef<[u8]> + Send + Sync>.
+    // Unavoidable copy: `Pdf::new` takes owned data (`impl Into<PdfData>`).
     open_pdf_owned(data.to_vec())
 }
 
 /// Parse a PDF from already-owned data, avoiding a second copy.
 pub(crate) fn open_pdf_owned(data: Vec<u8>) -> Result<Pdf> {
-    let arc_data: Arc<dyn AsRef<[u8]> + Send + Sync> = Arc::new(data);
     // Match hayro's real error variants instead of stringifying `{e:?}` into
     // one opaque catch-all: `LoadPdfError` has exactly two variants, and each
     // maps to a different `ErrorCategory` origin (see PdfError::Malformed /
     // PdfError::Encrypted docs). hayro's `Invalid` doesn't structurally
     // distinguish a truncated document from an otherwise-corrupt one.
-    Pdf::new(arc_data).map_err(|e| match e {
+    Pdf::new(data).map_err(|e| match e {
         hayro::hayro_syntax::LoadPdfError::Decryption(reason) => PdfError::Encrypted(reason),
         hayro::hayro_syntax::LoadPdfError::Invalid => PdfError::Malformed,
     })
