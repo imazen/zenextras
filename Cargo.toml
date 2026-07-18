@@ -27,3 +27,12 @@ zencodec = { git = "https://github.com/imazen/zencodec", rev = "44ca79279b265ba7
 # published hayro-syntax release (or upstream merges it and releases). Pinned to
 # a commit rev for reproducible builds.
 hayro-syntax = { git = "https://github.com/lilith/hayro", rev = "c0d1d9c0c925798d62aeaaaede34461aafe3ff17" }
+
+# TEMP (security): our lilith/image-tiff fork bounds the per-tile-row scratch
+# allocation (derived from the attacker-controlled TileWidth) by the
+# intermediate-buffer limit, fixing the multi-GB-allocation DoS (2026-07-18
+# security audit C8) that upstream tiff 0.11.3 still has (it checks only for
+# integer overflow, not a byte limit). Used by zentiff. Drop this patch once the
+# fix lands in a published `tiff` release (or upstream merges it and releases).
+# Pinned to a commit rev for reproducible builds.
+tiff = { git = "https://github.com/lilith/image-tiff", rev = "ad468f42bb5a9a6d8ad3eff062c227e83212e1bc" }

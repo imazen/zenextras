@@ -1134,8 +1134,7 @@ dependencies = [
 [[package]]
 name = "tiff"
 version = "0.11.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b63feaf3343d35b6ca4d50483f94843803b0f51634937cc2ec519fc32232bc52"
+source = "git+https://github.com/lilith/image-tiff?rev=ad468f42bb5a9a6d8ad3eff062c227e83212e1bc#ad468f42bb5a9a6d8ad3eff062c227e83212e1bc"
 dependencies = [
  "fax",
  "flate2",
