@@ -1432,25 +1432,34 @@ fn adjust_channels_u16(
     let total = channel_buf_len(pixel_count, dst_ch)?;
     if src_ch > dst_ch {
         // Full-image channel buffer → fallible default.
+        // Preallocated slice writes, NOT per-element `Vec::push`. push pays a
+        // capacity check per element and blocks vectorization; measured 13-40x
+        // in the archived zentiff repo's benches/channel_expand.rs. `resize`
+        // after a successful `vec_with_capacity` cannot reallocate, so the
+        // fallible-allocation contract for untrusted input is preserved.
         let mut out = vec_with_capacity(alloc_pref, true, total)?;
-        for i in 0..pixel_count {
-            let base = i * src_ch;
-            for c in 0..dst_ch {
-                out.push(data[base + c]);
-            }
+        out.resize(total, 0u16);
+        for (px, o) in data
+            .chunks_exact(src_ch)
+            .zip(out.chunks_exact_mut(dst_ch))
+        {
+            o[..dst_ch].copy_from_slice(&px[..dst_ch]);
         }
         Ok(out)
     } else {
+        // Preallocated slice writes, NOT per-element `Vec::push`. push pays a
+        // capacity check per element and blocks vectorization; measured 13-40x
+        // in the archived zentiff repo's benches/channel_expand.rs. `resize`
+        // after a successful `vec_with_capacity` cannot reallocate, so the
+        // fallible-allocation contract for untrusted input is preserved.
         let mut out = vec_with_capacity(alloc_pref, true, total)?;
-        for i in 0..pixel_count {
-            let base = i * src_ch;
-            for c in 0..src_ch {
-                out.push(data[base + c]);
-            }
-            // Pad with max value (opaque alpha)
-            for _ in src_ch..dst_ch {
-                out.push(u16::MAX);
-            }
+        // Fill with the pad value up front, so trailing channels need no work.
+        out.resize(total, u16::MAX);
+        for (px, o) in data
+            .chunks_exact(src_ch)
+            .zip(out.chunks_exact_mut(dst_ch))
+        {
+            o[..src_ch].copy_from_slice(px);
         }
         Ok(out)
     }
@@ -1468,12 +1477,18 @@ fn truncate_channels(
     let pixel_count = data.len() / src_ch;
     let total = channel_buf_len(pixel_count, dst_ch)?;
     // Full-image channel buffer → fallible default.
+    // Preallocated slice writes, NOT per-element `Vec::push`. push pays a
+    // capacity check per element and blocks vectorization; measured 13-40x
+    // in the archived zentiff repo's benches/channel_expand.rs. `resize`
+    // after a successful `vec_with_capacity` cannot reallocate, so the
+    // fallible-allocation contract for untrusted input is preserved.
     let mut out = vec_with_capacity(alloc_pref, true, total)?;
-    for i in 0..pixel_count {
-        let base = i * src_ch;
-        for c in 0..dst_ch {
-            out.push(data[base + c]);
-        }
+    out.resize(total, 0u8);
+    for (px, o) in data
+        .chunks_exact(src_ch)
+        .zip(out.chunks_exact_mut(dst_ch))
+    {
+        o[..dst_ch].copy_from_slice(&px[..dst_ch]);
     }
     Ok(out)
 }
@@ -1491,13 +1506,19 @@ fn expand_channels(
     let pixel_count = data.len() / src_ch;
     let total = channel_buf_len(pixel_count, dst_ch)?;
     // Full-image channel buffer → fallible default.
+    // Preallocated slice writes, NOT per-element `Vec::push`. push pays a
+    // capacity check per element and blocks vectorization; measured 13-40x
+    // in the archived zentiff repo's benches/channel_expand.rs. `resize`
+    // after a successful `vec_with_capacity` cannot reallocate, so the
+    // fallible-allocation contract for untrusted input is preserved.
     let mut out = vec_with_capacity(alloc_pref, true, total)?;
-    for i in 0..pixel_count {
-        let base = i * src_ch;
-        for c in 0..src_ch {
-            out.push(data[base + c]);
-        }
-        out.extend(core::iter::repeat_n(255u8, dst_ch - src_ch));
+    // Fill with the pad value up front, so trailing channels need no work.
+    out.resize(total, 255u8);
+    for (px, o) in data
+        .chunks_exact(src_ch)
+        .zip(out.chunks_exact_mut(dst_ch))
+    {
+        o[..src_ch].copy_from_slice(px);
     }
     Ok(out)
 }
