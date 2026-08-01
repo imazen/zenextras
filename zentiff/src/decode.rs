@@ -8,7 +8,7 @@ use tiff::tags::Tag;
 use whereat::{ResultAtExt, at};
 use zenpixels::{ChannelType, PixelBuffer, PixelDescriptor};
 
-use crate::alloc_util::{AllocPref, vec_with_capacity};
+use crate::alloc_util::{AllocPref, vec_with_capacity, vec_zeroed};
 
 use crate::error::{Result, TiffError};
 
@@ -1541,24 +1541,27 @@ fn convert_cmyk(
             let pixel_count = data.len() / src_channels;
             // Full-image RGBA output → fallible default; the 3-mode pref can
             // still force the infallible fast path.
-            let mut rgba = vec_with_capacity(alloc_pref, true, channel_buf_len(pixel_count, 4)?)?;
+            // Preallocated slice writes, NOT per-element `Vec::push`: push
+            // re-checks capacity every element and its possible realloc blocks
+            // vectorization, so LLVM cannot widen the stores. `chunks_exact`
+            // yields exactly `pixel_count` chunks by construction
+            // (`pixel_count == data.len() / src_channels`), so the zip covers
+            // the whole output. See benchmarks/channel_expand_2026-08-01.md.
+            let mut rgba = vec_zeroed(alloc_pref, true, channel_buf_len(pixel_count, 4)?)?;
 
-            for i in 0..pixel_count {
-                let base = i * src_channels;
-                let c = data[base] as f32 / 255.0;
-                let m = data[base + 1] as f32 / 255.0;
-                let y = data[base + 2] as f32 / 255.0;
-                let k = data[base + 3] as f32 / 255.0;
+            for (px, out) in data
+                .chunks_exact(src_channels)
+                .zip(rgba.chunks_exact_mut(4))
+            {
+                let c = px[0] as f32 / 255.0;
+                let m = px[1] as f32 / 255.0;
+                let y = px[2] as f32 / 255.0;
+                let k = px[3] as f32 / 255.0;
 
-                let r = ((1.0 - c) * (1.0 - k) * 255.0 + 0.5) as u8;
-                let g = ((1.0 - m) * (1.0 - k) * 255.0 + 0.5) as u8;
-                let b = ((1.0 - y) * (1.0 - k) * 255.0 + 0.5) as u8;
-                let a = if has_alpha { data[base + 4] } else { 255 };
-
-                rgba.push(r);
-                rgba.push(g);
-                rgba.push(b);
-                rgba.push(a);
+                out[0] = ((1.0 - c) * (1.0 - k) * 255.0 + 0.5) as u8;
+                out[1] = ((1.0 - m) * (1.0 - k) * 255.0 + 0.5) as u8;
+                out[2] = ((1.0 - y) * (1.0 - k) * 255.0 + 0.5) as u8;
+                out[3] = if has_alpha { px[4] } else { 255 };
             }
 
             let desc = PixelDescriptor::RGBA8;
@@ -1570,28 +1573,26 @@ fn convert_cmyk(
             // Signed CMYK: offset to unsigned first, then convert
             let src_channels: usize = if has_alpha { 5 } else { 4 };
             let pixel_count = data.len() / src_channels;
-            let mut rgba = vec_with_capacity(alloc_pref, true, channel_buf_len(pixel_count, 4)?)?;
+            // Slice writes — see the U8 arm above for why.
+            let mut rgba = vec_zeroed(alloc_pref, true, channel_buf_len(pixel_count, 4)?)?;
 
-            for i in 0..pixel_count {
-                let base = i * src_channels;
-                let c = data[base].wrapping_add(i8::MIN) as u8 as f32 / 255.0;
-                let m = data[base + 1].wrapping_add(i8::MIN) as u8 as f32 / 255.0;
-                let y = data[base + 2].wrapping_add(i8::MIN) as u8 as f32 / 255.0;
-                let k = data[base + 3].wrapping_add(i8::MIN) as u8 as f32 / 255.0;
+            for (px, out) in data
+                .chunks_exact(src_channels)
+                .zip(rgba.chunks_exact_mut(4))
+            {
+                let c = px[0].wrapping_add(i8::MIN) as u8 as f32 / 255.0;
+                let m = px[1].wrapping_add(i8::MIN) as u8 as f32 / 255.0;
+                let y = px[2].wrapping_add(i8::MIN) as u8 as f32 / 255.0;
+                let k = px[3].wrapping_add(i8::MIN) as u8 as f32 / 255.0;
 
-                let r = ((1.0 - c) * (1.0 - k) * 255.0 + 0.5) as u8;
-                let g = ((1.0 - m) * (1.0 - k) * 255.0 + 0.5) as u8;
-                let b = ((1.0 - y) * (1.0 - k) * 255.0 + 0.5) as u8;
-                let a = if has_alpha {
-                    data[base + 4].wrapping_add(i8::MIN) as u8
+                out[0] = ((1.0 - c) * (1.0 - k) * 255.0 + 0.5) as u8;
+                out[1] = ((1.0 - m) * (1.0 - k) * 255.0 + 0.5) as u8;
+                out[2] = ((1.0 - y) * (1.0 - k) * 255.0 + 0.5) as u8;
+                out[3] = if has_alpha {
+                    px[4].wrapping_add(i8::MIN) as u8
                 } else {
                     255
                 };
-
-                rgba.push(r);
-                rgba.push(g);
-                rgba.push(b);
-                rgba.push(a);
             }
 
             let desc = PixelDescriptor::RGBA8;
@@ -1602,26 +1603,24 @@ fn convert_cmyk(
         DR::U16(data) => {
             let src_channels: usize = if has_alpha { 5 } else { 4 };
             let pixel_count = data.len() / src_channels;
+            // Slice writes — see the U8 arm above for why.
             let mut rgba: Vec<u16> =
-                vec_with_capacity(alloc_pref, true, channel_buf_len(pixel_count, 4)?)?;
+                vec_zeroed(alloc_pref, true, channel_buf_len(pixel_count, 4)?)?;
 
             let max = u16::MAX as f64;
-            for i in 0..pixel_count {
-                let base = i * src_channels;
-                let c = data[base] as f64 / max;
-                let m = data[base + 1] as f64 / max;
-                let y = data[base + 2] as f64 / max;
-                let k = data[base + 3] as f64 / max;
+            for (px, out) in data
+                .chunks_exact(src_channels)
+                .zip(rgba.chunks_exact_mut(4))
+            {
+                let c = px[0] as f64 / max;
+                let m = px[1] as f64 / max;
+                let y = px[2] as f64 / max;
+                let k = px[3] as f64 / max;
 
-                let r = ((1.0 - c) * (1.0 - k) * max + 0.5) as u16;
-                let g = ((1.0 - m) * (1.0 - k) * max + 0.5) as u16;
-                let b = ((1.0 - y) * (1.0 - k) * max + 0.5) as u16;
-                let a = if has_alpha { data[base + 4] } else { u16::MAX };
-
-                rgba.push(r);
-                rgba.push(g);
-                rgba.push(b);
-                rgba.push(a);
+                out[0] = ((1.0 - c) * (1.0 - k) * max + 0.5) as u16;
+                out[1] = ((1.0 - m) * (1.0 - k) * max + 0.5) as u16;
+                out[2] = ((1.0 - y) * (1.0 - k) * max + 0.5) as u16;
+                out[3] = if has_alpha { px[4] } else { u16::MAX };
             }
 
             let desc = PixelDescriptor::RGBA16;
@@ -1632,25 +1631,23 @@ fn convert_cmyk(
         DR::F32(data) => {
             let src_channels: usize = if has_alpha { 5 } else { 4 };
             let pixel_count = data.len() / src_channels;
+            // Slice writes — see the U8 arm above for why.
             let mut rgba: Vec<f32> =
-                vec_with_capacity(alloc_pref, true, channel_buf_len(pixel_count, 4)?)?;
+                vec_zeroed(alloc_pref, true, channel_buf_len(pixel_count, 4)?)?;
 
-            for i in 0..pixel_count {
-                let base = i * src_channels;
-                let c = data[base];
-                let m = data[base + 1];
-                let y = data[base + 2];
-                let k = data[base + 3];
+            for (px, out) in data
+                .chunks_exact(src_channels)
+                .zip(rgba.chunks_exact_mut(4))
+            {
+                let c = px[0];
+                let m = px[1];
+                let y = px[2];
+                let k = px[3];
 
-                let r = (1.0 - c) * (1.0 - k);
-                let g = (1.0 - m) * (1.0 - k);
-                let b = (1.0 - y) * (1.0 - k);
-                let a = if has_alpha { data[base + 4] } else { 1.0 };
-
-                rgba.push(r);
-                rgba.push(g);
-                rgba.push(b);
-                rgba.push(a);
+                out[0] = (1.0 - c) * (1.0 - k);
+                out[1] = (1.0 - m) * (1.0 - k);
+                out[2] = (1.0 - y) * (1.0 - k);
+                out[3] = if has_alpha { px[4] } else { 1.0 };
             }
 
             let desc = PixelDescriptor::RGBAF32;
@@ -1721,8 +1718,14 @@ fn expand_palette(
     }
 
     // Full-image RGB output → fallible default.
-    let mut rgb = vec_with_capacity(alloc_pref, true, channel_buf_len(pixel_count, 3)?)?;
-    for &idx in &indices[..pixel_count] {
+    // Slice writes rather than per-element push (see the CMYK arms). The
+    // out-of-range early return is unchanged: the zip visits indices in the same
+    // order, so the same first bad index still aborts before any later write.
+    let mut rgb = vec_zeroed(alloc_pref, true, channel_buf_len(pixel_count, 3)?)?;
+    for (&idx, out) in indices[..pixel_count]
+        .iter()
+        .zip(rgb.chunks_exact_mut(3))
+    {
         if idx >= num_entries {
             return Err(at!(TiffError::Decode(alloc::format!(
                 "palette index {idx} out of range (max {})",
@@ -1730,9 +1733,9 @@ fn expand_palette(
             ))));
         }
         // Color map layout: [R0..Rn, G0..Gn, B0..Bn]
-        rgb.push((color_map[idx] >> 8) as u8);
-        rgb.push((color_map[num_entries + idx] >> 8) as u8);
-        rgb.push((color_map[2 * num_entries + idx] >> 8) as u8);
+        out[0] = (color_map[idx] >> 8) as u8;
+        out[1] = (color_map[num_entries + idx] >> 8) as u8;
+        out[2] = (color_map[2 * num_entries + idx] >> 8) as u8;
     }
 
     let desc = PixelDescriptor::RGB8;

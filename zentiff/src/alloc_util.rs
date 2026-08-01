@@ -132,6 +132,46 @@ pub(crate) fn vec_with_capacity<T>(
     }
 }
 
+/// Allocate a **zero-filled** `Vec<T>` of LENGTH `len`, honoring the per-site
+/// fallibility — the slice-write counterpart to [`vec_with_capacity`].
+///
+/// Use this wherever a conversion writes a fixed number of output elements per
+/// input pixel. Filling a preallocated slice through `chunks_exact_mut` is much
+/// faster than `Vec::push`: `push` re-checks capacity on every element and the
+/// possible reallocation blocks vectorization, so LLVM cannot widen the stores.
+/// Measured 13-40x on exactly these channel-expansion loops
+/// (`benchmarks/channel_expand_2026-08-01.md`).
+///
+/// The zero-fill is not an extra pass on the infallible path: `vec![T::default();
+/// len]` for a zeroable `T` lowers to a single `calloc`, which the allocator
+/// serves from already-zeroed pages.
+///
+/// * fallible → `try_reserve_exact` + `resize`, returning
+///   [`TiffError::LimitExceeded`](crate::error::TiffError::LimitExceeded) on
+///   allocation failure.
+/// * infallible → `vec![T::default(); len]` (aborts on OOM).
+///
+/// The returned `Vec` has `len() == len`; the caller overwrites it.
+pub(crate) fn vec_zeroed<T: Clone + Default>(
+    pref: AllocPref,
+    site_default_fallible: bool,
+    len: usize,
+) -> Result<Vec<T>, At<TiffError>> {
+    if resolve_fallible(pref, site_default_fallible) {
+        let mut v = Vec::new();
+        v.try_reserve_exact(len).map_err(|_| {
+            at!(TiffError::LimitExceeded(alloc::format!(
+                "out of memory allocating {} bytes",
+                len.saturating_mul(core::mem::size_of::<T>())
+            )))
+        })?;
+        v.resize(len, T::default());
+        Ok(v)
+    } else {
+        Ok(alloc::vec![T::default(); len])
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -198,6 +238,29 @@ mod tests {
     #[test]
     fn vec_with_capacity_fallible_oom_returns_err() {
         let r: Result<Vec<u8>, _> = vec_with_capacity(AllocPref::Fallible, true, usize::MAX);
+        assert!(r.is_err());
+        assert!(matches!(
+            r.unwrap_err().error(),
+            TiffError::LimitExceeded(_)
+        ));
+    }
+
+    #[test]
+    fn vec_zeroed_has_full_length_and_is_zeroed_on_both_paths() {
+        // The whole point of the slice-write conversion: unlike
+        // `vec_with_capacity`, this returns len == n so `chunks_exact_mut` has
+        // something to walk. Both fallibility paths must agree on that.
+        let a: Vec<u8> = vec_zeroed(AllocPref::Infallible, false, 1024).unwrap();
+        let b: Vec<u16> = vec_zeroed(AllocPref::Fallible, false, 1024).unwrap();
+        assert_eq!(a.len(), 1024);
+        assert_eq!(b.len(), 1024);
+        assert!(a.iter().all(|&v| v == 0));
+        assert!(b.iter().all(|&v| v == 0));
+    }
+
+    #[test]
+    fn vec_zeroed_fallible_oom_returns_err() {
+        let r: Result<Vec<u8>, _> = vec_zeroed(AllocPref::Fallible, true, usize::MAX);
         assert!(r.is_err());
         assert!(matches!(
             r.unwrap_err().error(),

@@ -30,6 +30,9 @@ bytemuck = { version = "1.25.0", default-features = false, features = ["extern_c
 
 [dev-dependencies]
 codec-corpus = "1.0.3"
+# Interleaved paired-statistics bench harness (workspace standard). Dev-only —
+# consumers never build it. Drives benches/channel_expand.rs.
+zenbench = "0.1.9"
 # Build TIFF fixtures with a native EXIF Orientation tag (tag 274) for the
 # zencodec adapter's orientation tests — image-tiff is already a normal dep,
 # but not re-exported, so the tests reach it directly.
@@ -79,3 +82,7 @@ opt-level = 2
 # dev-dependency encoder. No extra features needed.
 [[example]]
 name = "heaptrack_decode"
+
+[[bench]]
+name = "channel_expand"
+harness = false
