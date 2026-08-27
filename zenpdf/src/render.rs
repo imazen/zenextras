@@ -185,7 +185,7 @@ fn render_pages_inner(pdf: &Pdf, config: &PdfConfig) -> Result<Vec<RenderedPage>
     let pages = pdf.pages();
     let count = pages.len() as u32;
 
-    let indices = resolve_page_indices(&config.pages, count)?;
+    let indices = resolve_page_indices(&config.pages, count, config.limits.max_pages)?;
 
     // Enforce page-count limit before doing any rendering work.
     if indices.len() > config.limits.max_pages {
@@ -273,9 +273,25 @@ pub(crate) fn open_pdf_owned(data: Vec<u8>) -> Result<Pdf> {
     })
 }
 
-fn resolve_page_indices(selection: &PageSelection, count: u32) -> Result<Vec<u32>> {
+fn resolve_page_indices(
+    selection: &PageSelection,
+    count: u32,
+    max_pages: usize,
+) -> Result<Vec<u32>> {
     match selection {
-        PageSelection::All => Ok((0..count).collect()),
+        // Bound the count BEFORE materializing the index list: a document
+        // declaring millions of pages would otherwise allocate the whole
+        // `Vec<u32>` just to be rejected by the `max_pages` check that
+        // follows (zenextras#2).
+        PageSelection::All => {
+            if count as usize > max_pages {
+                return Err(PdfError::TooManyPages {
+                    requested: count as usize,
+                    limit: max_pages,
+                });
+            }
+            Ok((0..count).collect())
+        }
         PageSelection::Single(i) => {
             if *i >= count {
                 return Err(PdfError::PageOutOfRange { index: *i, count });
@@ -408,4 +424,26 @@ fn pixmap_to_buffer(
         })
         .collect();
     Ok(PixelBuffer::from_pixels(pixels, w, h)?)
+}
+
+#[cfg(test)]
+mod page_selection_tests {
+    use super::*;
+
+    /// `PageSelection::All` must be rejected by `max_pages` BEFORE the index
+    /// list is materialized (zenextras#2): a document declaring more pages
+    /// than the limit errors without allocating `count` indices.
+    #[test]
+    fn all_pages_is_bounded_before_materializing_indices() {
+        let r = resolve_page_indices(&PageSelection::All, 1_000_000, 8);
+        match r {
+            Err(PdfError::TooManyPages { requested, limit }) => {
+                assert_eq!((requested, limit), (1_000_000, 8));
+            }
+            other => panic!("expected TooManyPages before allocation, got {other:?}"),
+        }
+        // Within the limit the full range is produced.
+        let ok = resolve_page_indices(&PageSelection::All, 3, 8).expect("in range");
+        assert_eq!(ok, vec![0, 1, 2]);
+    }
 }

@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `PageSelection::All` is bounded by `Limits::max_pages` before the page-index
+  list is materialized (zenextras#2).
+- Stable fuzz replay gate `tests/fuzz_regression.rs` over
+  `fuzz/regression/fuzz_render/` with the farm's OOM/slow-unit artifacts, all
+  verified fixed on current main (zenextras#13, #14).
+
 ### QUEUED BREAKING CHANGES
 <!-- Breaking changes that will ship together in the next minor (0.x) release.
      Do NOT ship these piecemeal — batch them. -->
