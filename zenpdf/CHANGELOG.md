@@ -49,6 +49,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- deps: `zencodec = "0.1.26"` and `zencodec-testkit = "0.1.0"` from crates.io;
+  the workspace-root `[patch.crates-io]` 44ca7927 git-rev pin and the git-rev
+  testkit dev-dep are dropped. No source change — the two-level
+  `ErrorCategory` taxonomy was already implemented against the pre-release.
 - Docs: README overhaul — CI badge retargeted to the `zenextras` workflow;
   refreshed crosslink footer; split a CI-badge-only `README.crates.md`
   (`readme = "README.crates.md"`, `README.md` retained for the `include_str!`

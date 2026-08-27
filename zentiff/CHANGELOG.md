@@ -113,6 +113,10 @@ semantic versioning.
   unbounded growth). `examples/**` added to the package `include`.
 
 ### Changed
+- deps: `zencodec = "0.1.26"` and `zencodec-testkit = "0.1.0"` from crates.io;
+  the workspace-root `[patch.crates-io]` 44ca7927 git-rev pin and the git-rev
+  testkit dev-dep are dropped. No source change — the two-level
+  `ErrorCategory` taxonomy was already implemented against the pre-release.
 - **deps: migrate to published `zencodec 0.1.24` estimate API; drop git-rev
   patch.** Removed the temporary `[patch.crates-io] zencodec = { git, rev =
   "0f71295" }` from the `zenextras` workspace root now that `zencodec 0.1.24` is

@@ -18,6 +18,16 @@ member entries here reference those files.
   are checked. Previously the only workflow was scheduled fuzzing
   (`fuzz-r2.yml`) — pushes ran no tests.
 
+#### Changed
+
+- deps: `zencodec` moved to the published `0.1.26` and `zencodec-testkit` to
+  the published `0.1.0` (crates.io) in every member; the workspace-root
+  `[patch.crates-io] zencodec = { git, rev = "44ca7927" }` pre-release pin and
+  the matching git-rev testkit dev-deps are removed. The `hayro-syntax` and
+  `tiff` security-fork patches are unchanged. No source changes were needed —
+  all members already implement the two-level `ErrorCategory` taxonomy that
+  0.1.26 ships.
+
 ## zentiff
 
 ### [Unreleased]
@@ -68,6 +78,8 @@ member entries here reference those files.
 
 #### Changed
 
+- deps: `zencodec = "0.1.26"` / `zencodec-testkit = "0.1.0"` from crates.io;
+  the 44ca7927 git-rev pin is dropped (see Workspace).
 - zencodec floor bumped 0.1.21 → 0.1.22; the adapter's local `hint_bakes`
   shim (inlined while 0.1.21 was the published ceiling) is replaced by the
   real `OrientationHint::bakes()` at all call sites, per the shim's own
@@ -151,6 +163,8 @@ member entries here reference those files.
 
 #### Changed
 
+- deps: `zencodec = "0.1.26"` / `zencodec-testkit = "0.1.0"` from crates.io;
+  the 44ca7927 git-rev pin is dropped (see Workspace).
 - Docs: README overhaul — added the full badge row (CI badge → the `zenextras`
   workflow), a Quick start, and the crosslink footer; split a CI-badge-only
   `README.crates.md` (`readme = "README.crates.md"`) with absolute links; and
@@ -217,6 +231,8 @@ member entries here reference those files.
 
 #### Changed
 
+- deps: `zencodec = "0.1.26"` / `zencodec-testkit = "0.1.0"` from crates.io;
+  the 44ca7927 git-rev pin is dropped (see Workspace).
 - Docs: added a README (the crate had none) with the full badge row (CI badge →
   the `zenextras` workflow), a Quick start, an output-format table, and the
   crosslink footer; split a CI-badge-only `README.crates.md`
@@ -261,6 +277,8 @@ member entries here reference those files.
 
 #### Changed
 
+- deps: `zencodec = "0.1.26"` / `zencodec-testkit = "0.1.0"` from crates.io;
+  the 44ca7927 git-rev pin is dropped (see Workspace).
 - Docs: README overhaul — CI badge retargeted to the `zenextras` workflow;
   refreshed crosslink footer; split a CI-badge-only `README.crates.md`
   (`readme = "README.crates.md"`, `README.md` retained for the `include_str!`
