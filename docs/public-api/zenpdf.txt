@@ -1,0 +1,111 @@
+# zenpdf public API — supported surface (default features)
+# (regenerated on every `cargo test` by zenutils-apidoc; ZEN_API_DOC=check verifies, =off skips).
+# Encodings: crate-name prefix stripped; auto traits collapse to a
+# count + exceptions; trait impls collapse to one roster line per
+# type (method signatures live at the trait definition); blanket
+# impls omitted; re-export duplicates annotated `[also: path]`.
+# DO NOT EDIT BY HAND — commit regenerated changes with the code.
+#
+# files: zenpdf.txt 77 lines (supported surface) | zenpdf.features.txt 0 added (features: zencodec) | zenpdf.internal.txt 2 lines (2 hidden + 0 excluded-feature)
+
+## summary
+#
+#   pub modules                                 1
+#   pub types (struct/enum/trait/alias)         8
+#   pub consts/statics                          1
+#   free functions                              4
+#   inherent methods                            5
+#   struct fields                              27
+#   enum variants                              22
+#   trait roster entries (type × trait)        26
+#   auto-trait-complete types                   6
+#   auto-trait exceptions                       1
+#
+# per-module pub lines:
+#   (root)                           68
+
+## items (68 lines)
+
+pub mod zenpdf
+pub enum PageSelection
+pub PageSelection::All
+pub PageSelection::Pages(alloc::vec::Vec<u32>)
+pub PageSelection::Range
+pub PageSelection::Range::end: u32
+pub PageSelection::Range::start: u32
+pub PageSelection::Single(u32)
+#[non_exhaustive] pub enum PdfError
+pub PdfError::Buffer(whereat::at::At<zenpixels::buffer::BufferError>)
+pub PdfError::DimensionOverflow
+pub PdfError::DimensionOverflow::height: u32
+pub PdfError::DimensionOverflow::width: u32
+pub PdfError::Encrypted(hayro_syntax::crypto::DecryptionError)
+pub PdfError::InvalidRenderBounds
+pub PdfError::InvalidRenderBounds::page: u32
+pub PdfError::LimitExceeded(zencodec::limits::LimitExceeded)
+pub PdfError::Malformed
+pub PdfError::PageOutOfRange
+pub PdfError::PageOutOfRange::count: u32
+pub PdfError::PageOutOfRange::index: u32
+pub PdfError::PixelLimitExceeded
+pub PdfError::PixelLimitExceeded::limit: u64
+pub PdfError::PixelLimitExceeded::pixels: u64
+pub PdfError::Sink(zencodec::sink::SinkError)
+pub PdfError::TooManyPages
+pub PdfError::TooManyPages::limit: usize
+pub PdfError::TooManyPages::requested: usize
+pub PdfError::Unsupported(zencodec::capabilities::UnsupportedOperation)
+pub PdfError::ZeroDimensions
+pub PdfError::ZeroDimensions::page: u32
+pub enum RenderBounds
+pub RenderBounds::Dpi(f32)
+pub RenderBounds::Exact
+pub RenderBounds::Exact::height: u32
+pub RenderBounds::Exact::width: u32
+pub RenderBounds::FitBox
+pub RenderBounds::FitBox::height: u32
+pub RenderBounds::FitBox::width: u32
+pub RenderBounds::FitHeight(u32)
+pub RenderBounds::FitWidth(u32)
+pub RenderBounds::Scale(f32)
+pub struct PdfConfig
+pub PdfConfig::background: [u8; 4]
+pub PdfConfig::bounds: RenderBounds
+pub PdfConfig::limits: RenderLimits
+pub PdfConfig::pages: PageSelection
+pub PdfConfig::render_annotations: bool
+pub struct PdfDecoderConfig
+pub fn PdfDecoderConfig::new() -> Self
+pub fn PdfDecoderConfig::with_background(self, [u8; 4]) -> Self
+pub fn PdfDecoderConfig::with_bounds(self, RenderBounds) -> Self
+pub fn PdfDecoderConfig::with_render_annotations(self, bool) -> Self
+pub struct RenderLimits
+pub RenderLimits::max_pages: usize
+pub RenderLimits::max_pixels_per_page: u64
+pub fn RenderLimits::unlimited() -> Self
+pub struct RenderedPage
+pub RenderedPage::buffer: zenpixels::buffer::PixelBuffer<rgb::formats::rgba::Rgba<u8>>
+pub RenderedPage::index: u32
+pub RenderedPage::source_height_pt: f32
+pub RenderedPage::source_width_pt: f32
+pub static PDF_FORMAT: zencodec::format::ImageFormatDefinition
+pub fn page_count(&[u8]) -> Result<u32>
+pub fn page_dimensions(&[u8], u32) -> Result<(f32, f32)>
+pub fn render_page(&[u8], u32, &RenderBounds) -> Result<RenderedPage>
+pub fn render_pages(&[u8], &PdfConfig) -> Result<alloc::vec::Vec<RenderedPage>>
+pub type Result<T> = core::result::Result<T, PdfError>
+
+## trait impls (7 types)
+
+PageSelection: Clone, Debug, Default
+PdfConfig: Clone, Debug, Default
+PdfDecoderConfig: Clone, Debug, Default, zencodec::traits::decoding::DecoderConfig
+PdfError: Debug, Display, Error, From<whereat::at::At<zenpixels::buffer::BufferError>>, From<zencodec::capabilities::UnsupportedOperation>, From<zencodec::limits::LimitExceeded>, zencodec::error::CategorizedError
+RenderBounds: Clone, Copy, Debug, Default
+RenderLimits: Clone, Copy, Debug, Default
+whereat::at::At<zencodec::error::CodecError>: From<PdfError>
+
+## auto traits
+
+6 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe
+PdfError: !RefUnwindSafe !UnwindSafe

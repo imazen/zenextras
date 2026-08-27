@@ -304,7 +304,13 @@ fn graya8_encodes_smaller_than_rgba_widening() {
     // Equivalent RGBA8 (gray replicated to RGB, alpha kept) — what the old path
     // produced.
     let mut rgba_bytes = Vec::with_capacity(64 * 64 * 4);
-    for chunk in graya.as_slice().contiguous_bytes().chunks_exact(2) {
+    for chunk in graya
+        .as_slice()
+        .contiguous_bytes()
+        .as_chunks::<2>()
+        .0
+        .iter()
+    {
         let (g, a) = (chunk[0], chunk[1]);
         rgba_bytes.extend_from_slice(&[g, g, g, a]);
     }

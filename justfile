@@ -24,6 +24,15 @@ fmt:
 clippy:
     cargo clippy --workspace --all-targets -- -D warnings
 
+# Regenerate the public-API surface snapshots (docs/public-api/, one set per
+# member crate). Needs a nightly toolchain for rustdoc JSON; never run by CI.
+api-doc:
+    cargo test --manifest-path apidoc/Cargo.toml
+
+# Verify the committed snapshots are current
+api-doc-check:
+    ZEN_API_DOC=check cargo test --manifest-path apidoc/Cargo.toml
+
 # ── Fuzz corpus management (R2-backed) ──
 
 # List all corpora in R2 with file counts and sizes

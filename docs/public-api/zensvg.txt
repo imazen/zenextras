@@ -1,0 +1,159 @@
+# zensvg public API — supported surface (default features)
+# (regenerated on every `cargo test` by zenutils-apidoc; ZEN_API_DOC=check verifies, =off skips).
+# Encodings: crate-name prefix stripped; auto traits collapse to a
+# count + exceptions; trait impls collapse to one roster line per
+# type (method signatures live at the trait definition); blanket
+# impls omitted; re-export duplicates annotated `[also: path]`.
+# DO NOT EDIT BY HAND — commit regenerated changes with the code.
+#
+# files: zensvg.txt 121 lines (supported surface) | zensvg.features.txt 31 added (features: optimize,std,text) | zensvg.internal.txt 1 lines (1 hidden + 0 excluded-feature)
+
+## summary
+#
+#   pub modules                                 5
+#   pub types (struct/enum/trait/alias)        14
+#   pub consts/statics                          2
+#   free functions                             11
+#   inherent methods                           18
+#   struct fields                              40
+#   enum variants                              34
+#   trait roster entries (type × trait)        23
+#   auto-trait-complete types                   5
+#   auto-trait exceptions                       2
+#
+# per-module pub lines:
+#   (root)                           55
+#   codec                            21
+#   error                            19
+#   format                            3
+#   render                           26
+
+## items (111 lines)
+
+pub mod zensvg
+pub mod codec
+pub fn codec::SvgDecoderConfig::new() -> Self
+pub fn codec::SvgDecoderConfig::render_options(&self) -> &render::RenderOptions
+pub fn codec::SvgDecoderConfig::render_options_mut(&mut self) -> &mut render::RenderOptions
+pub fn codec::SvgDecoderConfig::with_background(self, [u8; 4]) -> Self
+pub fn codec::SvgDecoderConfig::with_dpi(self, f32) -> Self
+pub fn codec::SvgDecoderConfig::with_fit(self, render::FitMode) -> Self
+pub fn codec::SvgDecoderConfig::with_height(self, u32) -> Self
+pub fn codec::SvgDecoderConfig::with_scale(self, f32) -> Self
+pub fn codec::SvgDecoderConfig::with_width(self, u32) -> Self
+pub mod error
+pub error::SvgError::AllocationFailed
+pub error::SvgError::AllocationFailed::height: u32
+pub error::SvgError::AllocationFailed::width: u32
+pub error::SvgError::DecompressionBomb
+pub error::SvgError::DecompressionBomb::actual: u64
+pub error::SvgError::DecompressionBomb::max: u64
+pub error::SvgError::Limit(zencodec::limits::LimitExceeded)
+pub error::SvgError::NotSvg
+pub error::SvgError::OutOfMemory
+pub error::SvgError::OutOfMemory::bytes: usize
+pub error::SvgError::Parse(alloc::string::String)
+pub error::SvgError::PixelBufferMismatch(alloc::string::String)
+pub error::SvgError::RendererPanicked(alloc::string::String)
+pub error::SvgError::Sink(alloc::string::String)
+pub error::SvgError::Stopped(enough::reason::StopReason)
+pub error::SvgError::TooManyElements
+pub error::SvgError::Unsupported(zencodec::capabilities::UnsupportedOperation)
+pub error::SvgError::ZeroOutputDimensions
+pub mod format
+pub mod render
+pub render::FitMode::Contain
+pub render::FitMode::Cover
+pub render::FitMode::Fill
+pub render::FitMode::Original
+pub render::RenderOptions::background: core::option::Option<[u8; 4]>
+pub render::RenderOptions::default_font_family: core::option::Option<alloc::string::String>
+pub render::RenderOptions::dpi: f32
+pub render::RenderOptions::fit: render::FitMode
+pub render::RenderOptions::font_paths: alloc::vec::Vec<std::path::PathBuf>
+pub render::RenderOptions::height: core::option::Option<u32>
+pub render::RenderOptions::load_system_fonts: bool
+pub render::RenderOptions::max_height: core::option::Option<u32>
+pub render::RenderOptions::max_pixels: core::option::Option<u64>
+pub render::RenderOptions::max_width: core::option::Option<u32>
+pub render::RenderOptions::scale: f32
+pub render::RenderOptions::width: core::option::Option<u32>
+pub render::RenderOutput::data: alloc::vec::Vec<u8>
+pub render::RenderOutput::height: u32
+pub render::RenderOutput::width: u32
+pub fn render::parse_svg(&[u8], &render::RenderOptions) -> core::result::Result<usvg::tree::Tree, error::SvgError>
+pub enum FitMode [also: render]
+pub FitMode::Contain
+pub FitMode::Cover
+pub FitMode::Fill
+pub FitMode::Original
+#[non_exhaustive] pub enum SvgError [also: error]
+pub SvgError::AllocationFailed
+pub SvgError::AllocationFailed::height: u32
+pub SvgError::AllocationFailed::width: u32
+pub SvgError::DecompressionBomb
+pub SvgError::DecompressionBomb::actual: u64
+pub SvgError::DecompressionBomb::max: u64
+pub SvgError::Limit(zencodec::limits::LimitExceeded)
+pub SvgError::NotSvg
+pub SvgError::OutOfMemory
+pub SvgError::OutOfMemory::bytes: usize
+pub SvgError::Parse(alloc::string::String)
+pub SvgError::PixelBufferMismatch(alloc::string::String)
+pub SvgError::RendererPanicked(alloc::string::String)
+pub SvgError::Sink(alloc::string::String)
+pub SvgError::Stopped(enough::reason::StopReason)
+pub SvgError::TooManyElements
+pub SvgError::Unsupported(zencodec::capabilities::UnsupportedOperation)
+pub SvgError::ZeroOutputDimensions
+pub struct RenderOptions [also: render]
+pub RenderOptions::background: core::option::Option<[u8; 4]>
+pub RenderOptions::default_font_family: core::option::Option<alloc::string::String>
+pub RenderOptions::dpi: f32
+pub RenderOptions::fit: render::FitMode
+pub RenderOptions::font_paths: alloc::vec::Vec<std::path::PathBuf>
+pub RenderOptions::height: core::option::Option<u32>
+pub RenderOptions::load_system_fonts: bool
+pub RenderOptions::max_height: core::option::Option<u32>
+pub RenderOptions::max_pixels: core::option::Option<u64>
+pub RenderOptions::max_width: core::option::Option<u32>
+pub RenderOptions::scale: f32
+pub RenderOptions::width: core::option::Option<u32>
+pub struct RenderOutput [also: render]
+pub RenderOutput::data: alloc::vec::Vec<u8>
+pub RenderOutput::height: u32
+pub RenderOutput::width: u32
+pub struct SvgDecodeJob [also: codec]
+pub struct SvgDecoder<'a> [also: codec]
+pub struct SvgDecoderConfig [also: codec]
+pub fn codec::SvgDecoderConfig::new() -> Self
+pub fn codec::SvgDecoderConfig::render_options(&self) -> &render::RenderOptions
+pub fn codec::SvgDecoderConfig::render_options_mut(&mut self) -> &mut render::RenderOptions
+pub fn codec::SvgDecoderConfig::with_background(self, [u8; 4]) -> Self
+pub fn codec::SvgDecoderConfig::with_dpi(self, f32) -> Self
+pub fn codec::SvgDecoderConfig::with_fit(self, render::FitMode) -> Self
+pub fn codec::SvgDecoderConfig::with_height(self, u32) -> Self
+pub fn codec::SvgDecoderConfig::with_scale(self, f32) -> Self
+pub fn codec::SvgDecoderConfig::with_width(self, u32) -> Self
+pub static SVG_FORMAT_DEFINITION: zencodec::format::ImageFormatDefinition [also: format]
+pub fn detect_svg(&[u8]) -> bool [also: format]
+pub fn render(&[u8], &render::RenderOptions) -> core::result::Result<render::RenderOutput, error::SvgError> [also: render]
+pub fn render_tree(&usvg::tree::Tree, &render::RenderOptions) -> core::result::Result<render::RenderOutput, error::SvgError> [also: render]
+pub fn svg_dimensions(&[u8], &render::RenderOptions) -> core::result::Result<(u32, u32), error::SvgError> [also: render]
+pub fn svg_format() -> zencodec::format::ImageFormat [also: format]
+
+## trait impls (7 types)
+
+codec::SvgDecodeJob: zencodec::traits::decoding::DecodeJob<'a>
+codec::SvgDecoder<'_>: zencodec::traits::decoder::Decode
+codec::SvgDecoderConfig: Clone, Debug, Default, zencodec::traits::decoding::DecoderConfig
+error::SvgError: Debug, Display, Error, From<enough::reason::StopReason>, From<usvg::parser::Error>, From<zencodec::capabilities::UnsupportedOperation>, From<zencodec::limits::LimitExceeded>, zencodec::error::CategorizedError
+render::FitMode: Clone, Copy, Debug, Default, PartialEq
+render::RenderOptions: Clone, Debug, Default
+whereat::at::At<zencodec::error::CodecError>: From<error::SvgError>
+
+## auto traits
+
+5 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe
+codec::SvgDecodeJob: !RefUnwindSafe !UnwindSafe
+codec::SvgDecoder<'a>: !RefUnwindSafe !UnwindSafe

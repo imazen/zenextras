@@ -1,0 +1,62 @@
+# zentiff public API — additions from non-default features
+# features: all-codecs,deflate,fax,jpeg,lzw,std,webp,zencodec,zstd
+# (regenerated on every `cargo test` by zenutils-apidoc; ZEN_API_DOC=check verifies, =off skips).
+# Encodings: crate-name prefix stripped; auto traits collapse to a
+# count + exceptions; trait impls collapse to one roster line per
+# type (method signatures live at the trait definition); blanket
+# impls omitted; re-export duplicates annotated `[also: path]`.
+# DO NOT EDIT BY HAND — commit regenerated changes with the code.
+
+## summary
+#
+#   pub modules                                 1
+#   pub types (struct/enum/trait/alias)         7
+#   inherent methods                            8
+#   enum variants                               2
+#   trait roster entries (type × trait)        19
+#   auto-trait-complete types                   3
+#   auto-trait exceptions                       4
+#
+# per-module pub lines:
+#   (root)                            3
+#   codec                            15
+
+## items (18 lines)
+
+pub mod codec
+pub struct codec::TiffCodecDecoder<'a>
+pub struct codec::TiffCodecEncoder
+pub struct codec::TiffDecodeJob
+pub struct codec::TiffDecoderCodecConfig
+pub fn codec::TiffDecoderCodecConfig::from_config(TiffDecodeConfig) -> Self
+pub fn codec::TiffDecoderCodecConfig::inner(&self) -> &TiffDecodeConfig
+pub fn codec::TiffDecoderCodecConfig::inner_mut(&mut self) -> &mut TiffDecodeConfig
+pub fn codec::TiffDecoderCodecConfig::new() -> Self
+pub struct codec::TiffEncodeJob
+pub struct codec::TiffEncoderCodecConfig
+pub fn codec::TiffEncoderCodecConfig::from_config(TiffEncodeConfig) -> Self
+pub fn codec::TiffEncoderCodecConfig::inner(&self) -> &TiffEncodeConfig
+pub fn codec::TiffEncoderCodecConfig::inner_mut(&mut self) -> &mut TiffEncodeConfig
+pub fn codec::TiffEncoderCodecConfig::new() -> Self
+pub struct codec::TiffSourceEncoding
+pub TiffError::Limit(zencodec::limits::LimitExceeded)
+pub TiffError::Unsupported(zencodec::capabilities::UnsupportedOperation)
+
+## trait impls (8 types)
+
+TiffError: From<zencodec::capabilities::UnsupportedOperation>, From<zencodec::limits::LimitExceeded>, zencodec::error::CategorizedError
+codec::TiffCodecDecoder<'_>: zencodec::traits::decoder::Decode
+codec::TiffCodecEncoder: zencodec::traits::encoder::Encoder
+codec::TiffDecodeJob: zencodec::traits::decoding::DecodeJob<'a>
+codec::TiffDecoderCodecConfig: Clone, Debug, Default, zencodec::traits::decoding::DecoderConfig
+codec::TiffEncodeJob: zencodec::traits::encoding::EncodeJob
+codec::TiffEncoderCodecConfig: Clone, Debug, Default, zencodec::traits::encoding::EncoderConfig
+codec::TiffSourceEncoding: Clone, Copy, Debug, zencodec::detect::SourceEncodingDetails
+
+## auto traits
+
+3 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe
+codec::TiffCodecDecoder<'a>: !RefUnwindSafe !UnwindSafe
+codec::TiffCodecEncoder: !RefUnwindSafe !UnwindSafe
+codec::TiffDecodeJob: !RefUnwindSafe !UnwindSafe
+codec::TiffEncodeJob: !RefUnwindSafe !UnwindSafe

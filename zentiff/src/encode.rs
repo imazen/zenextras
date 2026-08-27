@@ -472,7 +472,9 @@ fn as_u16_slice(data: &[u8]) -> Result<std::borrow::Cow<'_, [u16]>> {
     match bytemuck::try_cast_slice(data) {
         Ok(s) => Ok(Cow::Borrowed(s)),
         Err(bytemuck::PodCastError::TargetAlignmentGreaterAndInputNotAligned) => Ok(Cow::Owned(
-            data.chunks_exact(2)
+            data.as_chunks::<2>()
+                .0
+                .iter()
                 .map(|c| u16::from_ne_bytes([c[0], c[1]]))
                 .collect(),
         )),
@@ -489,7 +491,9 @@ fn as_f32_slice(data: &[u8]) -> Result<std::borrow::Cow<'_, [f32]>> {
     match bytemuck::try_cast_slice(data) {
         Ok(s) => Ok(Cow::Borrowed(s)),
         Err(bytemuck::PodCastError::TargetAlignmentGreaterAndInputNotAligned) => Ok(Cow::Owned(
-            data.chunks_exact(4)
+            data.as_chunks::<4>()
+                .0
+                .iter()
                 .map(|c| f32::from_ne_bytes([c[0], c[1], c[2], c[3]]))
                 .collect(),
         )),
@@ -1212,11 +1216,13 @@ fn write_exif_entry<W: std::io::Write + std::io::Seek, K: tiff::encoder::TiffKin
 
     macro_rules! write_scalar_list {
         ($read:expr, $ty:ty) => {{
-            let mut out: Vec<$ty> = Vec::with_capacity(n);
             let step = core::mem::size_of::<$ty>();
+            // Bound by the bytes actually present BEFORE reserving `n`
+            // elements — `n` is the untrusted IFD count (zenextras#3).
             if entry.bytes.len() < n * step {
                 return Ok(false);
             }
+            let mut out: Vec<$ty> = Vec::with_capacity(n);
             for k in 0..n {
                 out.push($read(&entry.bytes[k * step..k * step + step]));
             }

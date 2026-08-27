@@ -6,6 +6,12 @@ semantic versioning.
 
 ## [Unreleased]
 
+### Fixed
+- Sub-byte unpackers return `TiffError::Truncated` instead of index-panicking
+  on a strip buffer shorter than the IFD dims imply; `probe()` runs under the
+  default decode limits; EXIF scalar-list writer checks bytes before reserving
+  (zenextras#3).
+
 ### QUEUED BREAKING CHANGES
 <!-- Breaking changes that will ship together in the next major (or minor for 0.x) release.
      Add items here as you discover them. Do NOT ship these piecemeal — batch them. -->

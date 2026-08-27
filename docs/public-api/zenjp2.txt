@@ -1,0 +1,69 @@
+# zenjp2 public API — supported surface (default features)
+# (regenerated on every `cargo test` by zenutils-apidoc; ZEN_API_DOC=check verifies, =off skips).
+# Encodings: crate-name prefix stripped; auto traits collapse to a
+# count + exceptions; trait impls collapse to one roster line per
+# type (method signatures live at the trait definition); blanket
+# impls omitted; re-export duplicates annotated `[also: path]`.
+# DO NOT EDIT BY HAND — commit regenerated changes with the code.
+#
+# files: zenjp2.txt 34 lines (supported surface) | zenjp2.features.txt 0 added (features: std,zencodec) | zenjp2.internal.txt 0 lines (0 hidden + 0 excluded-feature)
+
+## summary
+#
+#   pub modules                                 3
+#   pub types (struct/enum/trait/alias)        10
+#   free functions                              1
+#   inherent methods                            2
+#   enum variants                              12
+#   re-exports                                  3
+#   trait roster entries (type × trait)        14
+#   auto-trait-complete types                   2
+#   auto-trait exceptions                       2
+#
+# per-module pub lines:
+#   (root)                           18
+#   codec                             5
+#   error                             8
+
+## items (26 lines)
+
+pub mod zenjp2
+pub use ColorSpace
+pub use DecodeSettings
+pub use Image
+pub mod codec
+pub fn codec::Jp2DecoderConfig::new() -> Self
+pub mod error
+pub error::Jp2Error::Decode(hayro_jpeg2000::error::DecodeError)
+pub error::Jp2Error::Limit(zencodec::limits::LimitExceeded)
+pub error::Jp2Error::OutOfMemory(alloc::string::String)
+pub error::Jp2Error::PixelBuffer(alloc::string::String)
+pub error::Jp2Error::Sink(zencodec::sink::SinkError)
+pub error::Jp2Error::UnsupportedOperation(zencodec::capabilities::UnsupportedOperation)
+#[non_exhaustive] pub enum Jp2Error [also: error]
+pub Jp2Error::Decode(hayro_jpeg2000::error::DecodeError)
+pub Jp2Error::Limit(zencodec::limits::LimitExceeded)
+pub Jp2Error::OutOfMemory(alloc::string::String)
+pub Jp2Error::PixelBuffer(alloc::string::String)
+pub Jp2Error::Sink(zencodec::sink::SinkError)
+pub Jp2Error::UnsupportedOperation(zencodec::capabilities::UnsupportedOperation)
+pub struct Jp2DecodeJob [also: codec]
+pub struct Jp2Decoder<'a> [also: codec]
+pub struct Jp2DecoderConfig [also: codec]
+pub fn codec::Jp2DecoderConfig::new() -> Self
+pub fn is_jpeg2000(&[u8]) -> bool
+pub type Result<T> = core::result::Result<T, whereat::at::At<error::Jp2Error>> [also: error]
+
+## trait impls (5 types)
+
+codec::Jp2DecodeJob: zencodec::traits::decoding::DecodeJob<'a>
+codec::Jp2Decoder<'_>: zencodec::traits::decoder::Decode
+codec::Jp2DecoderConfig: Clone, Debug, Default, zencodec::traits::decoding::DecoderConfig
+error::Jp2Error: Debug, Display, Error, From<hayro_jpeg2000::error::DecodeError>, From<zencodec::capabilities::UnsupportedOperation>, From<zencodec::limits::LimitExceeded>, zencodec::error::CategorizedError
+whereat::at::At<zencodec::error::CodecError>: From<error::Jp2Error>
+
+## auto traits
+
+2 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe
+codec::Jp2DecodeJob: !RefUnwindSafe !UnwindSafe
+error::Jp2Error: !RefUnwindSafe !UnwindSafe

@@ -41,3 +41,5 @@ Thumbs.db
 .idea/
 .vscode/
 *.iml
+apidoc/target/
+apidoc/Cargo.lock

@@ -1,0 +1,72 @@
+# zensvg public API — additions from non-default features
+# features: optimize,std,text
+# (regenerated on every `cargo test` by zenutils-apidoc; ZEN_API_DOC=check verifies, =off skips).
+# Encodings: crate-name prefix stripped; auto traits collapse to a
+# count + exceptions; trait impls collapse to one roster line per
+# type (method signatures live at the trait definition); blanket
+# impls omitted; re-export duplicates annotated `[also: path]`.
+# DO NOT EDIT BY HAND — commit regenerated changes with the code.
+
+## summary
+#
+#   pub modules                                 1
+#   pub types (struct/enum/trait/alias)         2
+#   free functions                              2
+#   inherent methods                            6
+#   struct fields                              14
+#   enum variants                               4
+#   trait roster entries (type × trait)         4
+#   auto-trait-complete types                   1
+#   auto-trait exceptions                       1
+#
+# per-module pub lines:
+#   (root)                           12
+#   error                             2
+#   optimize                         15
+
+## items (27 lines)
+
+pub error::SvgError::Io(core::io::error::Error)
+pub error::SvgError::XmlWrite(alloc::string::String)
+pub mod optimize
+pub optimize::OptimizeOptions::compression_level: u32
+pub optimize::OptimizeOptions::max_input_bytes: core::option::Option<u64>
+pub optimize::OptimizeOptions::minify_whitespace: bool
+pub optimize::OptimizeOptions::strip_comments: bool
+pub optimize::OptimizeOptions::strip_metadata: bool
+pub optimize::OptimizeOptions::strip_processing_instructions: bool
+pub optimize::OptimizeOptions::svgz: bool
+pub fn optimize::OptimizeOptions::max_compression() -> Self
+pub fn optimize::OptimizeOptions::minify() -> Self
+pub fn optimize::OptimizeOptions::with_max_input_bytes(self, u64) -> Self
+pub SvgError::Io(core::io::error::Error)
+pub SvgError::XmlWrite(alloc::string::String)
+pub struct OptimizeOptions [also: optimize]
+pub OptimizeOptions::compression_level: u32
+pub OptimizeOptions::max_input_bytes: core::option::Option<u64>
+pub OptimizeOptions::minify_whitespace: bool
+pub OptimizeOptions::strip_comments: bool
+pub OptimizeOptions::strip_metadata: bool
+pub OptimizeOptions::strip_processing_instructions: bool
+pub OptimizeOptions::svgz: bool
+pub fn optimize::OptimizeOptions::max_compression() -> Self
+pub fn optimize::OptimizeOptions::minify() -> Self
+pub fn optimize::OptimizeOptions::with_max_input_bytes(self, u64) -> Self
+pub fn optimize(&[u8], &optimize::OptimizeOptions) -> core::result::Result<alloc::vec::Vec<u8>, error::SvgError> [also: optimize]
+
+## trait impls (2 types)
+
+error::SvgError: From<core::io::error::Error>
+optimize::OptimizeOptions: Clone, Debug, Default
+
+## auto traits
+
+1 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe
+error::SvgError: !Freeze !RefUnwindSafe !Send !Sync !Unpin !UnwindSafe
+
+## removed by features (4 lines)
+
+impl core::panic::unwind_safe::RefUnwindSafe for error::SvgError
+impl core::panic::unwind_safe::UnwindSafe for error::SvgError
+impl core::panic::unwind_safe::RefUnwindSafe for error::SvgError
+impl core::panic::unwind_safe::UnwindSafe for error::SvgError

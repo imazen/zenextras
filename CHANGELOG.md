@@ -22,6 +22,19 @@ member entries here reference those files.
 
 ### [Unreleased]
 
+#### Fixed (2026-08-27, zenextras#3)
+
+- Sub-byte unpackers (`unpack_subbyte`, `unpack_palette_indices`) index-panicked
+  when the strip buffer was shorter than the IFD dims implied; they now return
+  `TiffError::Truncated` (regressions in `decode::tests`, mutation-verified).
+- `probe()` now runs the image-tiff decoder under the default
+  `TiffDecodeConfig` limits, so IFD-value / intermediate-buffer caps apply to
+  metadata reads on untrusted input (they already applied to `decode`).
+- EXIF scalar-list writer reserved `count` elements before checking the bytes
+  were present; the check now precedes the allocation.
+- Public-API snapshots (`docs/public-api/zentiff*.txt`) via the new
+  workspace `apidoc/` runner (`just api-doc`).
+
 #### Added
 
 - `InternalParams` cross-codec bundle (`__expert`). `zentiff::internal_params::InternalParams`
@@ -80,6 +93,20 @@ member entries here reference those files.
 ## zensvg
 
 ### [Unreleased]
+
+#### Fixed (2026-08-27, zenextras#15, #16)
+
+- **Untrusted SVG can no longer take the process down through a third-party
+  panic.** The fuzz farm found `transform-origin` values that index-panic in
+  svgtypes 0.16.1 (`transform_origin.rs:184`) and degenerate paths that trip
+  tiny-skia 0.12.0 assertions (`scan/path.rs:221`, `alpha_runs.rs:189`,
+  `pipeline/mod.rs:181`); no newer release of either crate exists. `parse_svg`
+  and `render_tree` now run usvg/resvg behind a `catch_unwind` boundary and
+  surface a new `SvgError::RendererPanicked(String)` (category
+  `Internal(Dependency)`). Stable replay gate `tests/fuzz_regression.rs` over
+  `fuzz/regression/{fuzz_render,fuzz_parse}/` with the five minimized farm
+  artifacts (all ≤ 3.4 KB); mutation-verified (guard off → 4 seeds escape).
+  Consumers built with `panic = "abort"` still need a sandbox.
 
 #### Added
 
@@ -199,6 +226,18 @@ member entries here reference those files.
 ## zenpdf
 
 ### [Unreleased]
+
+#### Fixed (2026-08-27, zenextras#2, #13, #14)
+
+- `PageSelection::All` is bounded by `max_pages` BEFORE the index list is
+  materialized (a document declaring millions of pages no longer allocates
+  them just to be rejected). Unit test, mutation-verified.
+- Farm OOM (#13) and slow-unit (#14) artifacts verified fixed on current main
+  (hayro 0.7 + the `lilith/hayro` decompression cap): all four run in < 1 ms at
+  ~200 MB peak. Committed as `fuzz/regression/fuzz_render/` seeds replayed by
+  the new stable `tests/fuzz_regression.rs` (panic + 5 s wall budget gate).
+- Residual from #2: hayro-interpret still allocates embedded images at their
+  declared dimensions (CLAUDE.md item 4) — documented, not fixable in zenpdf.
 
 #### Added
 

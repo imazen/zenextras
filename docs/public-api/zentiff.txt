@@ -1,0 +1,146 @@
+# zentiff public API — supported surface (default features)
+# (regenerated on every `cargo test` by zenutils-apidoc; ZEN_API_DOC=check verifies, =off skips).
+# Encodings: crate-name prefix stripped; auto traits collapse to a
+# count + exceptions; trait impls collapse to one roster line per
+# type (method signatures live at the trait definition); blanket
+# impls omitted; re-export duplicates annotated `[also: path]`.
+# DO NOT EDIT BY HAND — commit regenerated changes with the code.
+#
+# files: zentiff.txt 111 lines (supported surface) | zentiff.features.txt 31 added (features: all-codecs,deflate,fax,jpeg,lzw,std,webp,zencodec,zstd) | zentiff.internal.txt 19 lines (6 hidden + 38 excluded-feature)
+
+## summary
+#
+#   pub modules                                 2
+#   pub types (struct/enum/trait/alias)        12
+#   pub consts/statics                          7
+#   free functions                             10
+#   inherent methods                            9
+#   struct fields                              42
+#   enum variants                              16
+#   trait roster entries (type × trait)        35
+#   auto-trait-complete types                  10
+#   auto-trait exceptions                       1
+#
+# per-module pub lines:
+#   (root)                           71
+#   sweep                            27
+
+## items (98 lines)
+
+pub mod zentiff
+pub mod sweep
+pub struct sweep::SweepAxes
+pub sweep::SweepAxes::big_tiff: alloc::vec::Vec<bool>
+pub sweep::SweepAxes::compressions: alloc::vec::Vec<Compression>
+pub sweep::SweepAxes::predictors: alloc::vec::Vec<Predictor>
+pub fn sweep::SweepAxes::modes_full() -> Self
+pub fn sweep::SweepAxes::rd_core() -> Self
+pub fn sweep::SweepAxes::scalar_dense() -> Self
+pub struct sweep::SweepCell
+pub sweep::SweepCell::deviations: u8
+pub sweep::SweepCell::fingerprint: u64
+pub sweep::SweepCell::id: alloc::string::String
+pub sweep::SweepCell::variant: sweep::SweepVariant
+pub struct sweep::SweepPlan
+pub sweep::SweepPlan::cells: alloc::vec::Vec<sweep::SweepCell>
+pub sweep::SweepPlan::compute_tier_skipped: alloc::vec::Vec<alloc::string::String>
+pub struct sweep::SweepVariant
+pub sweep::SweepVariant::big_tiff: bool
+pub sweep::SweepVariant::compression: Compression
+pub sweep::SweepVariant::predictor: Predictor
+pub fn sweep::SweepVariant::build(&self) -> TiffEncodeConfig
+pub fn sweep::SweepVariant::predictor_applies(Compression) -> bool
+pub fn sweep::compiled_compressions() -> alloc::vec::Vec<Compression>
+pub fn sweep::compute_tier(&sweep::SweepVariant) -> u8
+pub fn sweep::fingerprint(&sweep::SweepVariant) -> u64
+pub fn sweep::plan(&sweep::SweepAxes) -> sweep::SweepPlan
+pub fn sweep::plan_constrained(&sweep::SweepAxes, core::option::Option<u8>, core::option::Option<u8>) -> sweep::SweepPlan
+pub fn sweep::variant_from_cell_id(&str) -> core::result::Result<sweep::SweepVariant, alloc::string::String>
+#[non_exhaustive] pub enum Compression
+pub Compression::Deflate
+pub Compression::Lzw
+pub Compression::PackBits
+pub Compression::Uncompressed
+#[non_exhaustive] pub enum Predictor
+pub Predictor::Horizontal
+pub Predictor::None
+#[non_exhaustive] pub enum TiffError
+pub TiffError::Buffer(zenpixels::buffer::BufferError)
+pub TiffError::Decode(alloc::string::String)
+pub TiffError::Encode(alloc::string::String)
+pub TiffError::IntSizeOverflow
+pub TiffError::InvalidInput(alloc::string::String)
+pub TiffError::Io(core::io::error::Error)
+pub TiffError::LimitExceeded(alloc::string::String)
+pub TiffError::Stopped(enough::reason::StopReason)
+pub TiffError::Truncated(alloc::string::String)
+pub TiffError::UnsupportedFeature(alloc::string::String)
+#[non_exhaustive] pub struct TiffDecodeConfig
+pub TiffDecodeConfig::max_height: core::option::Option<u32>
+pub TiffDecodeConfig::max_memory_bytes: core::option::Option<u64>
+pub TiffDecodeConfig::max_pixels: core::option::Option<u64>
+pub TiffDecodeConfig::max_width: core::option::Option<u32>
+pub const TiffDecodeConfig::DEFAULT_MAX_MEMORY: u64
+pub const TiffDecodeConfig::DEFAULT_MAX_PIXELS: u64
+pub const fn TiffDecodeConfig::none() -> Self
+pub const fn TiffDecodeConfig::with_max_height(self, u32) -> Self
+pub const fn TiffDecodeConfig::with_max_memory(self, u64) -> Self
+pub const fn TiffDecodeConfig::with_max_pixels(self, u64) -> Self
+pub const fn TiffDecodeConfig::with_max_width(self, u32) -> Self
+#[non_exhaustive] pub struct TiffDecodeOutput
+pub TiffDecodeOutput::info: TiffInfo
+pub TiffDecodeOutput::pixels: zenpixels::buffer::PixelBuffer
+#[non_exhaustive] pub struct TiffEncodeConfig
+pub TiffEncodeConfig::big_tiff: bool
+pub TiffEncodeConfig::compression: Compression
+pub TiffEncodeConfig::predictor: Predictor
+pub fn TiffEncodeConfig::new() -> Self
+pub fn TiffEncodeConfig::with_big_tiff(self, bool) -> Self
+pub fn TiffEncodeConfig::with_compression(self, Compression) -> Self
+pub fn TiffEncodeConfig::with_predictor(self, Predictor) -> Self
+#[non_exhaustive] pub struct TiffInfo
+pub TiffInfo::bit_depth: u8
+pub TiffInfo::channels: u16
+pub TiffInfo::color_type: tiff::ColorType
+pub TiffInfo::compression: core::option::Option<u16>
+pub TiffInfo::dpi: core::option::Option<(f64, f64)>
+pub TiffInfo::exif: core::option::Option<alloc::vec::Vec<u8>>
+pub TiffInfo::height: u32
+pub TiffInfo::icc_profile: core::option::Option<alloc::vec::Vec<u8>>
+pub TiffInfo::iptc: core::option::Option<alloc::vec::Vec<u8>>
+pub TiffInfo::is_float: bool
+pub TiffInfo::is_signed: bool
+pub TiffInfo::orientation: core::option::Option<u16>
+pub TiffInfo::page_count: core::option::Option<u32>
+pub TiffInfo::page_name: core::option::Option<alloc::string::String>
+pub TiffInfo::photometric: core::option::Option<u16>
+pub TiffInfo::resolution_unit: core::option::Option<u16>
+pub TiffInfo::samples_per_pixel: core::option::Option<u16>
+pub TiffInfo::width: u32
+pub TiffInfo::x_resolution: core::option::Option<(u32, u32)>
+pub TiffInfo::xmp: core::option::Option<alloc::vec::Vec<u8>>
+pub TiffInfo::y_resolution: core::option::Option<(u32, u32)>
+pub fn decode(&[u8], &TiffDecodeConfig, &dyn enough::Stop) -> core::result::Result<TiffDecodeOutput, whereat::at::At<TiffError>>
+pub fn encode(&zenpixels::buffer::PixelSlice<'_>, &TiffEncodeConfig, &dyn enough::Stop) -> core::result::Result<alloc::vec::Vec<u8>, whereat::at::At<TiffError>>
+pub fn encode_into(&zenpixels::buffer::PixelSlice<'_>, &TiffEncodeConfig, &dyn enough::Stop, &mut alloc::vec::Vec<u8>) -> core::result::Result<(), whereat::at::At<TiffError>>
+pub fn probe(&[u8]) -> core::result::Result<TiffInfo, whereat::at::At<TiffError>>
+pub type Result<T> = core::result::Result<T, whereat::at::At<TiffError>>
+
+## trait impls (11 types)
+
+Compression: Clone, Copy, Debug, Default, Eq, PartialEq
+Predictor: Clone, Copy, Debug, Default, Eq, PartialEq
+TiffDecodeConfig: Clone, Debug, Default
+TiffDecodeOutput: Debug
+TiffEncodeConfig: Clone, Debug, Default
+TiffError: Debug, Display, Error, From<enough::reason::StopReason>, From<tiff::error::TiffError>, From<zenpixels::buffer::BufferError>
+TiffInfo: Clone, Debug
+sweep::SweepAxes: Clone, Debug
+sweep::SweepCell: Clone, Debug
+sweep::SweepPlan: Clone, Debug
+sweep::SweepVariant: Clone, Debug
+
+## auto traits
+
+10 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe
+TiffError: !RefUnwindSafe !UnwindSafe

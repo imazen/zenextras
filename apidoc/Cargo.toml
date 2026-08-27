@@ -1,0 +1,16 @@
+# CI-free public-API snapshot runner — the only package depending on
+# zenutils-apidoc. Plain `cargo test --workspace` and every CI job never compile
+# this tree or run rustdoc. Regenerate via `just api-doc`; verify with
+# `just api-doc-check`.
+[package]
+name = "zenextras-apidoc"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+zenutils-apidoc = "0.1.0"
+
+# Self-contained: keeps this runner out of the enclosing zenextras workspace
+# (which would otherwise try to build it on every `--workspace` command).
+[workspace]

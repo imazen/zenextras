@@ -70,7 +70,7 @@ fn cmyk8_slice(data: &[u8], has_alpha: bool) -> Vec<u8> {
     let mut rgba = vec![0u8; pixel_count * 4];
     for (px, out) in data
         .chunks_exact(src_channels)
-        .zip(rgba.chunks_exact_mut(4))
+        .zip(rgba.as_chunks_mut::<4>().0.iter_mut())
     {
         let c = px[0] as f32 / 255.0;
         let m = px[1] as f32 / 255.0;
@@ -112,7 +112,7 @@ fn cmyk16_slice(data: &[u16], has_alpha: bool) -> Vec<u16> {
     let max = u16::MAX as f64;
     for (px, out) in data
         .chunks_exact(src_channels)
-        .zip(rgba.chunks_exact_mut(4))
+        .zip(rgba.as_chunks_mut::<4>().0.iter_mut())
     {
         let c = px[0] as f64 / max;
         let m = px[1] as f64 / max;
@@ -149,7 +149,7 @@ fn cmykf_slice(data: &[f32], has_alpha: bool) -> Vec<f32> {
     let mut rgba = vec![0f32; pixel_count * 4];
     for (px, out) in data
         .chunks_exact(src_channels)
-        .zip(rgba.chunks_exact_mut(4))
+        .zip(rgba.as_chunks_mut::<4>().0.iter_mut())
     {
         let (c, m, y, k) = (px[0], px[1], px[2], px[3]);
         out[0] = (1.0 - c) * (1.0 - k);
@@ -174,7 +174,7 @@ fn palette_push(indices: &[usize], color_map: &[u16], num_entries: usize) -> Vec
 
 fn palette_slice(indices: &[usize], color_map: &[u16], num_entries: usize) -> Vec<u8> {
     let mut rgb = vec![0u8; indices.len() * 3];
-    for (&idx, out) in indices.iter().zip(rgb.chunks_exact_mut(3)) {
+    for (&idx, out) in indices.iter().zip(rgb.as_chunks_mut::<3>().0.iter_mut()) {
         out[0] = (color_map[idx] >> 8) as u8;
         out[1] = (color_map[num_entries + idx] >> 8) as u8;
         out[2] = (color_map[2 * num_entries + idx] >> 8) as u8;
@@ -248,7 +248,9 @@ fn bench_channel_expand(suite: &mut Suite) {
         let idx: Vec<usize> = src8(PX).iter().map(|&v| v as usize).collect();
         let cmap: Vec<u16> = src16(NE * 3);
         let (i2, c2) = (idx.clone(), cmap.clone());
-        g.bench("slice", move |bn| bn.iter(|| palette_slice(&idx, &cmap, NE)));
+        g.bench("slice", move |bn| {
+            bn.iter(|| palette_slice(&idx, &cmap, NE))
+        });
         g.bench("push", move |bn| bn.iter(|| palette_push(&i2, &c2, NE)));
     });
 }

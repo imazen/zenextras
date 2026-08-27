@@ -1,0 +1,49 @@
+# zentiff public API — doc(hidden) items and excluded-feature surface
+# excluded features: __expert,_palette
+# (regenerated on every `cargo test` by zenutils-apidoc; ZEN_API_DOC=check verifies, =off skips).
+# Encodings: crate-name prefix stripped; auto traits collapse to a
+# count + exceptions; trait impls collapse to one roster line per
+# type (method signatures live at the trait definition); blanket
+# impls omitted; re-export duplicates annotated `[also: path]`.
+# DO NOT EDIT BY HAND — commit regenerated changes with the code.
+
+## summary
+#
+#   pub modules                                 1
+#   pub types (struct/enum/trait/alias)         2
+#   inherent methods                            6
+#   struct fields                               6
+#   trait roster entries (type × trait)         8
+#   auto-trait-complete types                   1
+#
+# per-module pub lines:
+#   (root)                           11
+#   internal_params                   4
+
+## items (14 lines)
+
+#[non_exhaustive] pub struct InternalParams [also: internal_params]
+pub fn Compression::assert_fields_are_eq(&self)
+pub fn InternalParams::clone(&self) -> InternalParams
+pub fn InternalParams::default() -> InternalParams
+pub fn InternalParams::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub fn Predictor::assert_fields_are_eq(&self)
+pub fn TiffEncodeConfig::with_internal_params(self, InternalParams) -> Self
+pub mod internal_params
+pub InternalParams::big_tiff: core::option::Option<bool>
+pub InternalParams::compression: core::option::Option<Compression>
+pub InternalParams::predictor: core::option::Option<Predictor>
+pub internal_params::InternalParams::big_tiff: core::option::Option<bool>
+pub internal_params::InternalParams::compression: core::option::Option<Compression>
+pub internal_params::InternalParams::predictor: core::option::Option<Predictor>
+
+## trait impls (4 types)
+
+Compression: TrivialClone
+InternalParams: Clone, Copy, Debug, Default, TrivialClone
+Predictor: TrivialClone
+codec::TiffSourceEncoding: TrivialClone
+
+## auto traits
+
+1 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe

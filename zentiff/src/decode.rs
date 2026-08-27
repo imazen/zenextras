@@ -701,8 +701,12 @@ pub fn probe(data: &[u8]) -> Result<TiffInfo> {
     // layer. A caught panic maps to a `TiffError::Decode`.
     let guarded = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<TiffInfo> {
         let cursor = std::io::Cursor::new(data);
-        let mut decoder =
-            tiff::decoder::Decoder::new(cursor).map_err(|e| at!(TiffError::from(e)))?;
+        // Probe has no caller config, so it runs under the DEFAULT decode
+        // limits: image-tiff's IFD-value / intermediate-buffer caps must apply
+        // to metadata reads on untrusted input too (zenextras#3).
+        let mut decoder = tiff::decoder::Decoder::new(cursor)
+            .map_err(|e| at!(TiffError::from(e)))?
+            .with_limits(derive_tiff_limits(&TiffDecodeConfig::default()));
         let (width, height) = decoder.dimensions().map_err(|e| at!(TiffError::from(e)))?;
         let color_type = decoder.colortype().map_err(|e| at!(TiffError::from(e)))?;
 
@@ -1082,6 +1086,26 @@ fn vec_to_bytes<T: bytemuck::Pod>(v: Vec<T>) -> Vec<u8> {
 /// Unpack sub-byte samples (1, 2, 4, 6-bit) packed into bytes to one byte per sample.
 ///
 /// The tiff crate returns packed data for sub-8-bit depths: e.g., 8 pixels per byte
+/// A packed sub-byte buffer must hold every byte-padded row the IFD dims
+/// imply; the sub-byte unpackers slice rows unchecked after this passes.
+/// Untrusted dims × a short strip buffer used to index-panic instead of
+/// erroring (zenextras#3).
+fn check_packed_len(packed: &[u8], packed_row_bytes: usize, height: u32) -> Result<()> {
+    let needed = packed_row_bytes
+        .checked_mul(height as usize)
+        .ok_or_else(|| at!(TiffError::IntSizeOverflow))?;
+    if packed.len() < needed {
+        return Err(at!(TiffError::Truncated(format!(
+            "packed sub-byte data is {} bytes, {} rows of {} bytes need {}",
+            packed.len(),
+            height,
+            packed_row_bytes,
+            needed
+        ))));
+    }
+    Ok(())
+}
+
 /// for 1-bit, 4 pixels per byte for 2-bit, etc. Each row is padded to byte boundary.
 /// This function expands to one sample per byte, scaled to full 0-255 range.
 fn unpack_subbyte(
@@ -1102,6 +1126,7 @@ fn unpack_subbyte(
 
     let bits_per_row = samples_per_row * bits as usize;
     let packed_row_bytes = bits_per_row.div_ceil(8);
+    check_packed_len(packed, packed_row_bytes, height)?;
 
     for row in 0..height as usize {
         let row_start = row * packed_row_bytes;
@@ -1439,10 +1464,7 @@ fn adjust_channels_u16(
         // fallible-allocation contract for untrusted input is preserved.
         let mut out = vec_with_capacity(alloc_pref, true, total)?;
         out.resize(total, 0u16);
-        for (px, o) in data
-            .chunks_exact(src_ch)
-            .zip(out.chunks_exact_mut(dst_ch))
-        {
+        for (px, o) in data.chunks_exact(src_ch).zip(out.chunks_exact_mut(dst_ch)) {
             o[..dst_ch].copy_from_slice(&px[..dst_ch]);
         }
         Ok(out)
@@ -1455,10 +1477,7 @@ fn adjust_channels_u16(
         let mut out = vec_with_capacity(alloc_pref, true, total)?;
         // Fill with the pad value up front, so trailing channels need no work.
         out.resize(total, u16::MAX);
-        for (px, o) in data
-            .chunks_exact(src_ch)
-            .zip(out.chunks_exact_mut(dst_ch))
-        {
+        for (px, o) in data.chunks_exact(src_ch).zip(out.chunks_exact_mut(dst_ch)) {
             o[..src_ch].copy_from_slice(px);
         }
         Ok(out)
@@ -1484,10 +1503,7 @@ fn truncate_channels(
     // fallible-allocation contract for untrusted input is preserved.
     let mut out = vec_with_capacity(alloc_pref, true, total)?;
     out.resize(total, 0u8);
-    for (px, o) in data
-        .chunks_exact(src_ch)
-        .zip(out.chunks_exact_mut(dst_ch))
-    {
+    for (px, o) in data.chunks_exact(src_ch).zip(out.chunks_exact_mut(dst_ch)) {
         o[..dst_ch].copy_from_slice(&px[..dst_ch]);
     }
     Ok(out)
@@ -1514,10 +1530,7 @@ fn expand_channels(
     let mut out = vec_with_capacity(alloc_pref, true, total)?;
     // Fill with the pad value up front, so trailing channels need no work.
     out.resize(total, 255u8);
-    for (px, o) in data
-        .chunks_exact(src_ch)
-        .zip(out.chunks_exact_mut(dst_ch))
-    {
+    for (px, o) in data.chunks_exact(src_ch).zip(out.chunks_exact_mut(dst_ch)) {
         o[..src_ch].copy_from_slice(px);
     }
     Ok(out)
@@ -1551,7 +1564,7 @@ fn convert_cmyk(
 
             for (px, out) in data
                 .chunks_exact(src_channels)
-                .zip(rgba.chunks_exact_mut(4))
+                .zip(rgba.as_chunks_mut::<4>().0.iter_mut())
             {
                 let c = px[0] as f32 / 255.0;
                 let m = px[1] as f32 / 255.0;
@@ -1578,7 +1591,7 @@ fn convert_cmyk(
 
             for (px, out) in data
                 .chunks_exact(src_channels)
-                .zip(rgba.chunks_exact_mut(4))
+                .zip(rgba.as_chunks_mut::<4>().0.iter_mut())
             {
                 let c = px[0].wrapping_add(i8::MIN) as u8 as f32 / 255.0;
                 let m = px[1].wrapping_add(i8::MIN) as u8 as f32 / 255.0;
@@ -1610,7 +1623,7 @@ fn convert_cmyk(
             let max = u16::MAX as f64;
             for (px, out) in data
                 .chunks_exact(src_channels)
-                .zip(rgba.chunks_exact_mut(4))
+                .zip(rgba.as_chunks_mut::<4>().0.iter_mut())
             {
                 let c = px[0] as f64 / max;
                 let m = px[1] as f64 / max;
@@ -1637,7 +1650,7 @@ fn convert_cmyk(
 
             for (px, out) in data
                 .chunks_exact(src_channels)
-                .zip(rgba.chunks_exact_mut(4))
+                .zip(rgba.as_chunks_mut::<4>().0.iter_mut())
             {
                 let c = px[0];
                 let m = px[1];
@@ -1724,7 +1737,7 @@ fn expand_palette(
     let mut rgb = vec_zeroed(alloc_pref, true, channel_buf_len(pixel_count, 3)?)?;
     for (&idx, out) in indices[..pixel_count]
         .iter()
-        .zip(rgb.chunks_exact_mut(3))
+        .zip(rgb.as_chunks_mut::<3>().0.iter_mut())
     {
         if idx >= num_entries {
             return Err(at!(TiffError::Decode(alloc::format!(
@@ -1762,6 +1775,7 @@ fn unpack_palette_indices(
 
     let bits_per_row = samples_per_row * bits as usize;
     let packed_row_bytes = bits_per_row.div_ceil(8);
+    check_packed_len(packed, packed_row_bytes, height)?;
 
     for row in 0..height as usize {
         let row_start = row * packed_row_bytes;
@@ -1865,6 +1879,41 @@ mod tests {
         );
         assert_eq!(d.layout(), ChannelLayout::GrayAlpha);
         assert_eq!(d.channel_type(), ChannelType::U8);
+    }
+
+    /// Untrusted dims against a short packed buffer must error, not panic
+    /// (zenextras#3): 3 rows of 1-bit 8-px data need 3 bytes; give 2.
+    #[test]
+    fn unpack_subbyte_short_buffer_errors_instead_of_panicking() {
+        let packed = [0b1010_1010u8, 0b0101_0101];
+        let r = std::panic::catch_unwind(|| {
+            unpack_subbyte(&packed, 8, 3, 1, 1, AllocPref::CodecDefault)
+        });
+        let r = r.expect("must not panic on a short buffer");
+        assert!(
+            matches!(
+                r.as_ref().map_err(|e| e.error()),
+                Err(TiffError::Truncated(_))
+            ),
+            "{r:?}"
+        );
+    }
+
+    #[cfg(feature = "_palette")]
+    #[test]
+    fn unpack_palette_indices_short_buffer_errors_instead_of_panicking() {
+        let packed = [0xF0u8];
+        let r = std::panic::catch_unwind(|| {
+            unpack_palette_indices(&packed, 4, 2, 4, AllocPref::CodecDefault)
+        });
+        let r = r.expect("must not panic on a short buffer");
+        assert!(
+            matches!(
+                r.as_ref().map_err(|e| e.error()),
+                Err(TiffError::Truncated(_))
+            ),
+            "{r:?}"
+        );
     }
 
     #[test]
