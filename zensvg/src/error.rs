@@ -89,6 +89,20 @@ pub enum SvgError {
     /// [`ErrorCategory::Internal(InternalKind::Bug)`]: zencodec::ErrorCategory::Internal
     PixelBufferMismatch(String),
 
+    /// The SVG parser or rasterizer (usvg / resvg / tiny-skia / svgtypes)
+    /// panicked on this input and the panic was caught at zensvg's boundary.
+    /// Untrusted SVG must never take the process down: the fuzz farm found
+    /// `transform-origin` values that index-panic in svgtypes and degenerate
+    /// paths that trip tiny-skia's scan-converter assertions (zenextras#15,
+    /// #16), none of which zensvg can pre-validate without re-implementing
+    /// the parser. Carries the panic message. Maps to
+    /// [`ErrorCategory::Internal(InternalKind::Dependency)`]. Note that a
+    /// consumer built with `panic = "abort"` cannot benefit from this
+    /// boundary — sandbox untrusted rendering there.
+    ///
+    /// [`ErrorCategory::Internal(InternalKind::Dependency)`]: zencodec::ErrorCategory::Internal
+    RendererPanicked(String),
+
     /// A configured resource limit was exceeded. Wraps the typed
     /// [`zencodec::LimitExceeded`] so the [`LimitKind`](zencodec::LimitKind) is
     /// preserved; delegates its category to
@@ -162,6 +176,9 @@ impl fmt::Display for SvgError {
             Self::OutOfMemory { bytes } => write!(f, "out of memory allocating {bytes} bytes"),
             Self::PixelBufferMismatch(msg) => {
                 write!(f, "internal error: rendered pixel buffer mismatch: {msg}")
+            }
+            Self::RendererPanicked(msg) => {
+                write!(f, "SVG renderer panicked on this input (caught): {msg}")
             }
             Self::Limit(e) => write!(f, "resource limit exceeded: {e}"),
             Self::DecompressionBomb { actual, max } => {
@@ -274,6 +291,10 @@ impl zencodec::CategorizedError for SvgError {
 
             // zensvg's own render-to-buffer handoff invariant broke.
             Self::PixelBufferMismatch(_) => C::Internal(InternalKind::Bug),
+
+            // A third-party parser/rasterizer panic caught at the boundary —
+            // the dependency failed on this input, not zensvg's own logic.
+            Self::RendererPanicked(_) => C::Internal(InternalKind::Dependency),
 
             // Delegate to the wrapped zencodec cause types — they carry their
             // own `CategorizedError` impl (kind / pixel-format / stop-reason).

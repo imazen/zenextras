@@ -202,3 +202,13 @@ Review critical paths before production use.
 [imageflow-dotnet]: https://github.com/imazen/imageflow-dotnet
 [imageflow-node]: https://github.com/imazen/imageflow-node
 [imageflow-go]: https://github.com/imazen/imageflow-go
+
+## Untrusted input
+
+`render`, `render_tree`, `parse_svg` and `svg_dimensions` run usvg/resvg behind
+a panic boundary: a panic inside the third-party parser or rasterizer (the fuzz
+farm found several in svgtypes and tiny-skia) is returned as
+`SvgError::RendererPanicked` instead of unwinding out of the codec. This only
+works when the final binary unwinds on panic — with `panic = "abort"` run
+untrusted rendering in a sandboxed process. Output size is bounded by
+`RenderOptions::{max_width, max_height, max_pixels}`.

@@ -98,7 +98,27 @@ pub fn parse_svg(data: &[u8], options: &RenderOptions) -> Result<usvg::Tree, Svg
         fontdb.load_font_file(path).ok();
     }
 
-    usvg::Tree::from_data(data, &usvg_options).map_err(SvgError::from)
+    guard_panic(|| usvg::Tree::from_data(data, &usvg_options).map_err(SvgError::from))
+}
+
+/// Run a usvg/resvg call with a panic boundary: a panic inside the
+/// third-party parser or rasterizer becomes [`SvgError::RendererPanicked`]
+/// instead of unwinding out of the codec on untrusted input (zenextras#15,
+/// #16). `AssertUnwindSafe` is sound here because every closure passed in
+/// either produces a fresh value or writes only into a pixmap that is
+/// discarded on error.
+fn guard_panic<T>(f: impl FnOnce() -> Result<T, SvgError>) -> Result<T, SvgError> {
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)) {
+        Ok(r) => r,
+        Err(payload) => {
+            let msg = payload
+                .downcast_ref::<String>()
+                .cloned()
+                .or_else(|| payload.downcast_ref::<&str>().map(|s| (*s).to_string()))
+                .unwrap_or_else(|| "non-string panic payload".to_string());
+            Err(SvgError::RendererPanicked(msg))
+        }
+    }
 }
 
 /// Query the intrinsic dimensions of an SVG without rendering.
@@ -157,8 +177,12 @@ pub fn render_tree(tree: &usvg::Tree, options: &RenderOptions) -> Result<RenderO
         pixmap.fill(color);
     }
 
-    // Render
-    resvg::render(tree, transform, &mut pixmap.as_mut());
+    // Render, behind the panic boundary: tiny-skia's scan converter asserts
+    // on some degenerate paths the fuzz farm produces (zenextras#16).
+    guard_panic(|| {
+        resvg::render(tree, transform, &mut pixmap.as_mut());
+        Ok(())
+    })?;
 
     // Convert premultiplied → straight alpha
     let mut data = pixmap.take();
