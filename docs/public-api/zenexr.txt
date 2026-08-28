@@ -1,0 +1,55 @@
+# zenexr public API — supported surface (default features)
+# (regenerated on every `cargo test` by zenutils-apidoc; ZEN_API_DOC=check verifies, =off skips).
+# Encodings: crate-name prefix stripped; auto traits collapse to a
+# count + exceptions; trait impls collapse to one roster line per
+# type (method signatures live at the trait definition); blanket
+# impls omitted; re-export duplicates annotated `[also: path]`.
+# DO NOT EDIT BY HAND — commit regenerated changes with the code.
+#
+# files: zenexr.txt 24 lines (supported surface) | zenexr.features.txt 0 added (features: none) | zenexr.internal.txt 0 lines (0 hidden + 0 excluded-feature)
+
+## summary
+#
+#   pub modules                                 1
+#   pub types (struct/enum/trait/alias)         4
+#   inherent methods                            9
+#   enum variants                               5
+#   trait roster entries (type × trait)         8
+#   auto-trait-complete types                   2
+#   auto-trait exceptions                       1
+#
+# per-module pub lines:
+#   (root)                           19
+
+## items (19 lines)
+
+pub mod zenexr
+#[non_exhaustive] pub enum ExrError
+pub ExrError::Allocation
+pub ExrError::Decode(exr::error::Error)
+pub ExrError::LimitExceeded(&'static str)
+pub ExrError::Stopped(enough::reason::StopReason)
+pub ExrError::Unsupported(&'static str)
+pub struct ExrDecoderConfig
+pub fn ExrDecoderConfig::decode(&self, &[u8], &dyn enough::Stop) -> Result<ExrImage>
+pub fn ExrDecoderConfig::new() -> Self
+pub fn ExrDecoderConfig::probe(&self, &[u8], &dyn enough::Stop) -> Result<exr::meta::header::Header>
+pub fn ExrDecoderConfig::with_max_input_bytes(self, u64) -> Self
+pub fn ExrDecoderConfig::with_max_output_bytes(self, u64) -> Self
+pub fn ExrDecoderConfig::with_max_pixels(self, u64) -> Self
+pub struct ExrImage
+pub fn ExrImage::header(&self) -> &exr::meta::header::Header
+pub fn ExrImage::into_pixels(self) -> zenpixels::buffer::PixelBuffer
+pub fn ExrImage::pixels(&self) -> &zenpixels::buffer::PixelBuffer
+pub type Result<T> = core::result::Result<T, whereat::at::At<ExrError>>
+
+## trait impls (3 types)
+
+ExrDecoderConfig: Clone, Debug, Default
+ExrError: Debug, Display, Error, From<exr::error::Error>
+ExrImage: Debug
+
+## auto traits
+
+2 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe
+ExrError: !RefUnwindSafe !UnwindSafe

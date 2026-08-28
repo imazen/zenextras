@@ -47,6 +47,11 @@ member entries here reference those files.
 
 #### Added
 
+- **`zenexr`**: OpenEXR wrapper around the Rust `exr` crate, with zen pixel
+  buffers, source metadata, limits and cancellation. See
+  [crate history](zenexr/CHANGELOG.md) and
+  [pixel validation](benchmarks/zenexr_validation_2026-09-08.md).
+
 - GitHub Actions CI (`.github/workflows/ci.yml`): 6-platform test matrix
   (Linux x64/aarch64, macOS arm64/x64, Windows x64/arm64), i686 via `cross`
   (QEMU), wasm32-wasip1 check of zentiff's `no_std` core, clippy

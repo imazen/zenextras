@@ -1,0 +1,17 @@
+[package]
+name = "zenexr"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.93"
+license = "MIT OR Apache-2.0"
+description = "OpenEXR reader for zen pixel buffers, wrapping the Rust exr crate"
+repository = "https://github.com/imazen/zenextras"
+readme = "README.md"
+include = ["/src/**", "/examples/**", "/README.md", "/CHANGELOG.md", "/LICENSE*"]
+
+[dependencies]
+exr = { version = "1.74.2", default-features = false }
+zenpixels = { version = ">=0.2.14, <0.4.0", default-features = false }
+enough = { version = "0.4.3", default-features = false }
+whereat = { version = "0.1.5", default-features = false }
+thiserror = { version = "2.0.20", default-features = false }

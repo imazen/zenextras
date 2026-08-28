@@ -70,7 +70,7 @@ pub TiffError::Decode(alloc::string::String)
 pub TiffError::Encode(alloc::string::String)
 pub TiffError::IntSizeOverflow
 pub TiffError::InvalidInput(alloc::string::String)
-pub TiffError::Io(core::io::error::Error)
+pub TiffError::Io(std::io::error::Error)
 pub TiffError::LimitExceeded(alloc::string::String)
 pub TiffError::Stopped(enough::reason::StopReason)
 pub TiffError::Truncated(alloc::string::String)

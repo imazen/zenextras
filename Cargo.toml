@@ -5,6 +5,7 @@ members = [
     "zensvg",
     "zenjp2",
     "zenpdf",
+    "zenexr",
 ]
 
 [patch.crates-io]
