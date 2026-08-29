@@ -8,6 +8,21 @@ member entries here reference those files.
 
 ### [Unreleased]
 
+#### Fixed
+
+- **Pushes to `main` now cancel their superseded CI runs.** `.github/workflows/ci.yml`
+  keyed its concurrency group on `${{ github.head_ref || github.run_id }}`.
+  `github.head_ref` is populated only for `pull_request` events, so on a push it
+  was empty and the group fell through to `github.run_id` — unique per run, so no
+  two pushes ever shared a group and `cancel-in-progress` could never fire. Every
+  push started a full matrix that ran to completion even when several commits
+  landed seconds apart. Now keyed on `${{ github.ref }}`, which is set for both
+  event types, so PR cancellation is unchanged and consecutive pushes supersede
+  each other. The same edit was applied to `zenpdf/.github/workflows/ci.yml` and
+  `zentiff/.github/workflows/ci.yml`, which are **inert** (Actions only reads
+  workflows from the repository root) but would carry the broken pattern forward
+  if either crate were split back out.
+
 #### Added
 
 - GitHub Actions CI (`.github/workflows/ci.yml`): 6-platform test matrix
