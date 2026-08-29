@@ -51,3 +51,14 @@ Required environment variables (already set in lilith's shell):
 See `regression/fuzz_decode/` and `regression/fuzz_decode_limits/`.
 The most interesting one is `oom-ec38252b...` (BigTIFF + GDAL_STRUCTURAL_METADATA, 20.5 KB)
 which is a real-world geospatial TIFF pattern that triggered OOM.
+
+These seeds are replayed on every `cargo test` by `tests/fuzz_regression.rs`
+(stable toolchain, no nightly): it walks `regression/` recursively and runs
+**every** seed through **every** entry point above, not just the target that
+found it. The seed count is pinned, so:
+
+- deleting a seed fails the test and says how many went missing;
+- a missing or unreadable `regression/` directory is a hard failure, never a
+  skip — a skip is exactly how a lost corpus reports green;
+- **adding a seed requires bumping `TRACKED_SEEDS` in
+  `tests/fuzz_regression.rs` in the same commit**, which is deliberate.
