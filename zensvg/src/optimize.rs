@@ -109,7 +109,9 @@ impl OptimizeOptions {
 }
 
 /// Metadata element names to strip.
-const METADATA_ELEMENTS: &[&[u8]] = &[b"metadata", b"desc", b"title"];
+// quick-xml 0.42 exposes names and text as `str` rather than `[u8]`, so these
+// are plain string literals now. Same three element names as before.
+const METADATA_ELEMENTS: &[&str] = &["metadata", "desc", "title"];
 
 /// Losslessly optimize SVG data.
 ///
@@ -220,7 +222,7 @@ fn optimize_xml(input: &[u8], options: &OptimizeOptions) -> Result<Vec<u8>, SvgE
             Ok(Event::PI(ref pi)) if options.strip_processing_instructions => {
                 // Keep <?xml declaration, strip others
                 let text = pi.as_ref();
-                if text.starts_with(b"xml ") || text.starts_with(b"xml?") || text == b"xml" {
+                if text.starts_with("xml ") || text.starts_with("xml?") || text == "xml" {
                     writer
                         .write_event(Event::PI(pi.clone()))
                         .map_err(|e| SvgError::XmlWrite(format!("{e}")))?;
@@ -257,7 +259,7 @@ fn optimize_xml(input: &[u8], options: &OptimizeOptions) -> Result<Vec<u8>, SvgE
             Ok(Event::Text(ref t)) if options.minify_whitespace => {
                 let text = t.as_ref();
                 // Collapse runs of whitespace to a single space
-                if text.iter().all(|b| b.is_ascii_whitespace()) {
+                if text.bytes().all(|b| b.is_ascii_whitespace()) {
                     if !text.is_empty() {
                         writer
                             .write_event(Event::Text(BytesText::new(" ")))
