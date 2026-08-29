@@ -8,6 +8,25 @@ member entries here reference those files.
 
 ### [Unreleased]
 
+#### Changed
+
+- **All four member crates' `zencodec` / `zencodec-testkit` / `zenpixels` /
+  `zenpixels-convert` requirements now span the published minor and the next
+  one** (13 requirement lines across `zentiff`, `zensvg`, `zenjp2`, `zenpdf`):
+  `zencodec >=0.1.26, <0.3.0`, `zencodec-testkit >=0.1.0, <0.3.0`, `zenpixels
+  >=0.2.10, <0.4.0`, `zenpixels-convert >=0.2.13, <0.4.0`. For a `0.x` crate
+  Cargo treats the minor as the major, so a plain `"0.1.26"` meant `^0.1.26` =
+  `>=0.1.26, <0.2.0` and a `zencodec 0.2.0` release would have been invisible
+  until all four manifests were hand-edited — the coordinated wave the 0.1.26
+  rollout already cost this repo. Floors are unchanged (each crate keeps its own
+  minimum) and nothing newer is published, so resolution is identical: `cargo
+  metadata --all-features` still yields exactly one copy of each. Partial
+  widening is what creates the two-copies trap — a `0.1.26` and a `0.2.0` in one
+  graph whose types do not unify — so the sweep was uniform. The standing
+  current-plus-next rule is documented in the zencodec repo's `CLAUDE.md`.
+  `[patch.crates-io]` is untouched: a patch replaces the source regardless of
+  the requirement.
+
 #### Fixed
 
 - **Pushes to `main` now cancel their superseded CI runs.** `.github/workflows/ci.yml`

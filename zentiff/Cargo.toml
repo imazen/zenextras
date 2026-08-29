@@ -17,15 +17,15 @@ tiff = { version = "0.11.3", default-features = false }
 thiserror = { version = "2.0.18", default-features = false }
 whereat = { version = "0.1.5", default-features = false }
 enough = { version = "0.4.3", default-features = false }
-zenpixels = { version = "0.2.10", default-features = false }
-zencodec = { version = "0.1.26", optional = true }
+zenpixels = { version = ">=0.2.10, <0.4.0", default-features = false }
+zencodec = { version = ">=0.1.26, <0.3.0", optional = true }
 # Two zencodec-adapter uses, gated under `zencodec` so the no_std core stays
 # dependency-free: (1) orientation baking (apply_orientation) for the bake
 # path — image-tiff itself has no orientation bake (see decode.rs Orientation
 # TODO), so the adapter resolves OrientationHint by physically rotating the
 # decoded buffer; (2) synthesizing an ICC profile from CICP primaries when
 # lowering a CICP-only source for a format (TIFF) with no CICP carrier.
-zenpixels-convert = { version = "0.2.13", default-features = false, optional = true }
+zenpixels-convert = { version = ">=0.2.13, <0.4.0", default-features = false, optional = true }
 bytemuck = { version = "1.25.0", default-features = false, features = ["extern_crate_alloc"] }
 
 [dev-dependencies]
@@ -39,7 +39,7 @@ zenbench = "0.1.9"
 tiff = { version = "0.11.3", default-features = false }
 # zencodec conformance harness. Provides check_decode_truncation_series
 # (EOF/truncation).
-zencodec-testkit = "0.1.0"
+zencodec-testkit = ">=0.1.0, <0.3.0"
 
 [features]
 default = ["std", "deflate", "lzw"]
