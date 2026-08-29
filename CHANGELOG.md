@@ -47,6 +47,12 @@ member entries here reference those files.
 
 #### Added
 
+- `tests/fuzz_regression.rs` — the four committed crash seeds under
+  `fuzz/regression/` had no harness anywhere in the crate and were never
+  replayed. They now run through all three fuzz entry points (4 x 3 = 12
+  invocations, all passing), with a pinned seed count and a hard failure on a
+  missing corpus so the gate cannot pass vacuously. See
+  [`zentiff/CHANGELOG.md`](zentiff/CHANGELOG.md).
 - `InternalParams` cross-codec bundle (`__expert`). `zentiff::internal_params::InternalParams`
   (`compression` + `predictor` + `big_tiff`, all `Option<_>`) +
   `TiffEncodeConfig::with_internal_params`, gated behind the new pure-visibility

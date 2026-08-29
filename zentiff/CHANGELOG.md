@@ -6,6 +6,35 @@ semantic versioning.
 
 ## [Unreleased]
 
+### Added
+- **`tests/fuzz_regression.rs` — the committed crash corpus is now actually
+  replayed.** `fuzz/regression/` has carried four minimized seeds
+  (`fuzz_decode/`: one crash and the two BigTIFF/GDAL OOM repros;
+  `fuzz_decode_limits/`: one crash) with **no harness anywhere in the crate** —
+  nothing fed them back through `zentiff::decode` or `zentiff::probe`, so they
+  were decoration, not a gate. (The sibling crates `zenpdf` and `zensvg` each
+  had one; `zentiff` was the hole.) The new test walks the corpus recursively —
+  the seeds live one level down, in a per-discovering-target subdirectory — and
+  replays **every seed through every one of the three fuzz entry points**
+  (`fuzz_decode`, `fuzz_decode_limits`, `fuzz_probe`), each body mirroring its
+  `fuzz/fuzz_targets/*.rs` counterpart: 4 seeds x 3 targets = 12 invocations,
+  0.02 s, on stable, so it rides a normal `cargo test` with no nightly. All
+  four seeds pass — none still reproduces a crash. It cannot pass vacuously: the
+  seed count is **pinned** to the four tracked seeds rather than merely required
+  to be non-zero, a missing or unreadable corpus directory is a hard failure
+  (never a skip — a skip is how a lost corpus reports green), and the count it
+  checks is produced inside the same filter that does the walking, so it cannot
+  drift from what actually ran. The guard mirrors the `min_seeds` /
+  `RegressionReport` shape of the shared `zenutils-fuzz` crate, kept in-file
+  rather than depended on until that API is released; migration is then an
+  import swap with the call chain unchanged. Mutation-verified, each failing
+  only as intended and each restored: renaming `fuzz/regression/` fails with
+  "does not exist"; emptying it fails with "yielded 0 seed(s) … 4 went missing";
+  deleting the single `fuzz_decode_limits/` seed fails with "1 seed(s) went
+  missing" (which also proves the subdirectory recursion is live); and a
+  deliberately panicking target is caught and reported with seed path, byte
+  count and target name, proving the replay is not vacuous.
+
 ### Fixed
 - Sub-byte unpackers return `TiffError::Truncated` instead of index-panicking
   on a strip buffer shorter than the IFD dims imply; `probe()` runs under the
