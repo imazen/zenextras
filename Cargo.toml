@@ -8,19 +8,8 @@ members = [
 ]
 
 [patch.crates-io]
-# TEMP (security): our lilith/hayro fork adds an output-size cap to the
-# FlateDecode/LZWDecode path (MAX_DECODED_STREAM_BYTES), fixing the
-# decompression-bomb DoS (2026-07-18 security audit C3) that upstream
-# hayro-syntax 0.7.2 still has. Drop this patch once the fix lands in a
-# published hayro-syntax release (or upstream merges it and releases). Pinned to
-# a commit rev for reproducible builds.
+# Pinned PDF stream resource-limit fork used by zenpdf.
 hayro-syntax = { git = "https://github.com/lilith/hayro", rev = "beec7225f7f8cec6cb62f6ecf116db738177d0b9" }
 
-# TEMP (security): our lilith/image-tiff fork bounds the per-tile-row scratch
-# allocation (derived from the attacker-controlled TileWidth) by the
-# intermediate-buffer limit, fixing the multi-GB-allocation DoS (2026-07-18
-# security audit C8) that upstream tiff 0.11.3 still has (it checks only for
-# integer overflow, not a byte limit). Used by zentiff. Drop this patch once the
-# fix lands in a published `tiff` release (or upstream merges it and releases).
-# Pinned to a commit rev for reproducible builds.
+# Pinned TIFF scratch-buffer resource-limit fork used by zentiff.
 tiff = { git = "https://github.com/lilith/image-tiff", rev = "ad468f42bb5a9a6d8ad3eff062c227e83212e1bc" }

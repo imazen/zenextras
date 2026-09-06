@@ -1,0 +1,33 @@
+warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
+package:   /Users/lilith/work/zen/zenextras/zentiff/Cargo.toml
+workspace: /Users/lilith/work/zen/zenextras/Cargo.toml
+   Compiling bytemuck v1.25.2
+   Compiling whereat v0.1.5
+   Compiling enough v0.4.4
+   Compiling almost-enough v0.4.4
+   Compiling zenpixels v0.2.14
+   Compiling zencodec v0.1.26
+   Compiling zencodec-testkit v0.1.0
+   Compiling zenjp2 v0.1.0 (/Users/lilith/work/zen/zenextras/zenjp2)
+    Finished `bench` profile [optimized] target(s) in 1.63s
+     Running benches/arm_decode.rs (target/release/deps/arm_decode-eeb8099e7547f18b)
+/Users/lilith/work/codec-artifacts/zenextras-arm-audit/cid22-64.jp2: 64x64
+/Users/lilith/work/codec-artifacts/zenextras-arm-audit/cid22-256.jp2: 256x256
+/Users/lilith/work/codec-artifacts/zenextras-arm-audit/cid22-1024.jp2: 1024x1024
+/Users/lilith/work/codec-artifacts/zenextras-arm-audit/cid22-4096.jp2: 4096x4096
+[zenbench] calibration: int=0.33ns/iter mem_bw=100.2GiB/s mem_lat=8.9ns
+[zenbench] timer resolution: 41ns, loop overhead: 0.23ns/iter, TSC: 1.000 ticks/ns (invariant)
+[zenbench] results → /Users/lilith/tmp/zenbench/zenbench-1788736031-2d18.txt
+
+═══════════════════════════════════════════════════════════════
+  zenbench  1788736031-2d18
+  git: e17bd6ca021b09cfeb24c3c470f1d6c3b4002e11
+═══════════════════════════════════════════════════════════════
+
+  jp2/cid22-64.jp2  200 rounds × 15 calls
+                         mean ±mad µs  95% CI vs base      ops/s
+  ╰─ hayro_jpeg2000   955.4 ±139.1µs  [933.1–977.2]µs     4.29M
+
+  total: 24.0s  (4 noisy rounds)
+═══════════════════════════════════════════════════════════════
+  filter: cargo bench -- --group=NAME  format: --format=llm|csv|md|json

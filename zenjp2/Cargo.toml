@@ -26,8 +26,13 @@ std = []
 zencodec = ["dep:zencodec"]
 
 [dev-dependencies]
+zenbench = "0.1.9"
 codec-corpus = "1"
 # zencodec conformance harness. Provides check_decode_truncation_series /
 # check_decode_error_envelope (EOF/truncation + envelope-survives-erasure
 # conformance).
 zencodec-testkit = ">=0.1.0, <0.3.0"
+
+[[bench]]
+name = "arm_decode"
+harness = false

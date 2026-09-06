@@ -83,3 +83,7 @@ name = "heaptrack_decode"
 [[bench]]
 name = "channel_expand"
 harness = false
+
+[[bench]]
+name = "arm_decode"
+harness = false

@@ -184,10 +184,6 @@ fn palette_slice(indices: &[usize], color_map: &[u16], num_entries: usize) -> Ve
 
 // ------------------------------------------------------------------ bench ---
 
-/// 1 MP — a realistic single-image conversion, large enough that the
-/// per-element capacity check dominates and small enough to stay in a few MB.
-const PX: usize = 1 << 20;
-
 /// The arms must agree bit-for-bit — a faster loop that changes pixels is a bug,
 /// not an optimization.
 ///
@@ -218,41 +214,44 @@ fn assert_arms_identical() {
 
 fn bench_channel_expand(suite: &mut Suite) {
     assert_arms_identical();
-    suite.compare("cmyk8 -> rgba8 (1 MP, alpha)", |g| {
-        g.throughput(Throughput::Bytes((PX * 4) as u64));
-        let d = src8(PX * 5);
-        let (a, b) = (d.clone(), d);
-        g.bench("slice", move |bn| bn.iter(|| cmyk8_slice(&a, true)));
-        g.bench("push", move |bn| bn.iter(|| cmyk8_push(&b, true)));
-    });
-
-    suite.compare("cmyk16 -> rgba16 (1 MP, alpha)", |g| {
-        g.throughput(Throughput::Bytes((PX * 8) as u64));
-        let d = src16(PX * 5);
-        let (a, b) = (d.clone(), d);
-        g.bench("slice", move |bn| bn.iter(|| cmyk16_slice(&a, true)));
-        g.bench("push", move |bn| bn.iter(|| cmyk16_push(&b, true)));
-    });
-
-    suite.compare("cmykf32 -> rgbaf32 (1 MP, alpha)", |g| {
-        g.throughput(Throughput::Bytes((PX * 16) as u64));
-        let d = srcf(PX * 5);
-        let (a, b) = (d.clone(), d);
-        g.bench("slice", move |bn| bn.iter(|| cmykf_slice(&a, true)));
-        g.bench("push", move |bn| bn.iter(|| cmykf_push(&b, true)));
-    });
-
-    suite.compare("palette -> rgb8 (1 MP)", |g| {
-        g.throughput(Throughput::Bytes((PX * 3) as u64));
-        const NE: usize = 256;
-        let idx: Vec<usize> = src8(PX).iter().map(|&v| v as usize).collect();
-        let cmap: Vec<u16> = src16(NE * 3);
-        let (i2, c2) = (idx.clone(), cmap.clone());
-        g.bench("slice", move |bn| {
-            bn.iter(|| palette_slice(&idx, &cmap, NE))
+    for side in [64usize, 256, 1024, 4096] {
+        let px = side * side;
+        suite.compare(format!("cmyk8/{side}/alpha"), move |g| {
+            g.throughput(Throughput::Bytes((px * 4) as u64));
+            let d = src8(px * 5);
+            let (a, b) = (d.clone(), d);
+            g.bench("slice", move |bn| bn.iter(|| cmyk8_slice(&a, true)));
+            g.bench("push", move |bn| bn.iter(|| cmyk8_push(&b, true)));
         });
-        g.bench("push", move |bn| bn.iter(|| palette_push(&i2, &c2, NE)));
-    });
+
+        suite.compare(format!("cmyk16/{side}/alpha"), move |g| {
+            g.throughput(Throughput::Bytes((px * 8) as u64));
+            let d = src16(px * 5);
+            let (a, b) = (d.clone(), d);
+            g.bench("slice", move |bn| bn.iter(|| cmyk16_slice(&a, true)));
+            g.bench("push", move |bn| bn.iter(|| cmyk16_push(&b, true)));
+        });
+
+        suite.compare(format!("cmykf32/{side}/alpha"), move |g| {
+            g.throughput(Throughput::Bytes((px * 16) as u64));
+            let d = srcf(px * 5);
+            let (a, b) = (d.clone(), d);
+            g.bench("slice", move |bn| bn.iter(|| cmykf_slice(&a, true)));
+            g.bench("push", move |bn| bn.iter(|| cmykf_push(&b, true)));
+        });
+
+        suite.compare(format!("palette/{side}"), move |g| {
+            g.throughput(Throughput::Bytes((px * 3) as u64));
+            const NE: usize = 256;
+            let idx: Vec<usize> = src8(px).iter().map(|&v| v as usize).collect();
+            let cmap: Vec<u16> = src16(NE * 3);
+            let (i2, c2) = (idx.clone(), cmap.clone());
+            g.bench("slice", move |bn| {
+                bn.iter(|| palette_slice(&idx, &cmap, NE))
+            });
+            g.bench("push", move |bn| bn.iter(|| palette_push(&i2, &c2, NE)));
+        });
+    }
 }
 
 zenbench::main!(bench_channel_expand);

@@ -1,0 +1,577 @@
+warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
+package:   /Users/lilith/work/zen/zenextras/zentiff/Cargo.toml
+workspace: /Users/lilith/work/zen/zenextras/Cargo.toml
+   Compiling bitflags v2.13.1
+   Compiling libc v0.2.189
+   Compiling cfg-if v1.0.4
+   Compiling syn v3.0.4
+   Compiling simd-adler32 v0.3.10
+   Compiling adler2 v2.0.1
+   Compiling memchr v2.8.3
+   Compiling miniz_oxide v0.9.1
+   Compiling crc32fast v1.5.1
+   Compiling bytemuck_derive v1.12.0
+   Compiling zlib-rs v0.6.7
+   Compiling whereat v0.1.5
+   Compiling libm v0.2.16
+   Compiling enough v0.4.4
+   Compiling flate2 v1.1.10
+   Compiling almost-enough v0.4.4
+   Compiling num-traits v0.2.19
+   Compiling zune-core v0.5.3
+   Compiling byteorder-lite v0.1.0
+   Compiling thiserror-impl v2.0.20
+   Compiling zune-jpeg v0.5.15
+   Compiling once_cell v1.21.4
+   Compiling smallvec v1.15.2
+   Compiling arrayvec v0.7.8
+   Compiling rustix v1.1.4
+   Compiling bytemuck v1.25.2
+   Compiling polycool v0.4.0
+   Compiling jobserver v0.1.35
+   Compiling errno v0.3.14
+   Compiling weezl v0.1.12
+   Compiling thiserror v2.0.20
+   Compiling serde_core v1.0.229
+   Compiling rgb v0.8.53
+   Compiling quick-error v2.0.1
+   Compiling zenpixels v0.2.14
+   Compiling siphasher v1.0.3
+   Compiling zencodec v0.1.26
+   Compiling cc v1.4.4
+   Compiling image-webp v0.2.4
+   Compiling zencodec-testkit v0.1.0
+   Compiling kurbo v0.13.1
+   Compiling zmij v1.0.23
+   Compiling log v0.4.34
+   Compiling zstd-sys v2.0.16+zstd.1.5.7
+   Compiling miniz_oxide v0.8.9
+   Compiling fdeflate v0.3.7
+   Compiling serde v1.0.229
+   Compiling serde_json v1.0.151
+   Compiling png v0.18.1
+   Compiling serde_derive v1.0.229
+   Compiling itoa v1.0.18
+   Compiling safe_unaligned_simd v0.2.5
+   Compiling option-ext v0.2.0
+   Compiling dirs-sys v0.5.0
+   Compiling archmage v0.9.26
+   Compiling utf8parse v0.2.2
+   Compiling dirs v6.0.0
+   Compiling anstyle-parse v1.0.0
+   Compiling fd-lock v4.0.4
+   Compiling colorchoice v1.0.5
+   Compiling anstyle-query v1.1.5
+   Compiling is_terminal_polyfill v1.70.2
+   Compiling anstyle v1.0.14
+   Compiling zerocopy v0.8.56
+   Compiling anstream v1.0.0
+   Compiling magetypes v0.9.26
+   Compiling objc2-core-foundation v0.3.2
+   Compiling strsim v0.11.1
+   Compiling heck v0.5.0
+   Compiling clap_lex v1.1.0
+   Compiling objc2-io-kit v0.3.2
+   Compiling clap_builder v4.6.6
+   Compiling clap_derive v4.6.4
+   Compiling linear-srgb v0.6.12
+   Compiling codec-corpus v1.1.0
+   Compiling garb v0.2.8
+   Compiling half v2.7.1
+   Compiling fax v0.2.7
+   Compiling fearless_simd v0.4.1
+   Compiling zenpixels-convert v0.2.13
+   Compiling clap v4.6.6
+   Compiling sysinfo v0.36.1
+   Compiling terminal_size v0.4.4
+   Compiling fs4 v1.1.0
+   Compiling alloc-no-stdlib v2.0.4
+   Compiling phf_shared v0.13.1
+   Compiling alloc-stdlib v0.2.4
+   Compiling pxfm v0.1.30
+   Compiling brotli-decompressor v5.0.3
+   Compiling zenbench v0.1.9
+   Compiling phf_generator v0.13.1
+   Compiling font-types v0.11.3
+   Compiling color v0.3.3
+   Compiling euclid v0.22.14
+   Compiling hayro-ccitt v0.3.0 (https://github.com/lilith/hayro?rev=beec7225f7f8cec6cb62f6ecf116db738177d0b9#beec7225)
+   Compiling foldhash v0.2.0
+   Compiling linebender_resource_handle v0.1.1
+   Compiling guillotiere v0.7.0
+   Compiling hashbrown v0.17.1
+   Compiling peniko v0.6.1
+   Compiling hayro-jbig2 v0.3.0 (https://github.com/lilith/hayro?rev=beec7225f7f8cec6cb62f6ecf116db738177d0b9#beec7225)
+   Compiling read-fonts v0.39.2
+   Compiling moxcms v0.8.1
+   Compiling zerofrom v0.1.8
+   Compiling phf_macros v0.13.1
+   Compiling brotli v8.0.4
+   Compiling hayro-jpeg2000 v0.4.0 (https://github.com/lilith/hayro?rev=beec7225f7f8cec6cb62f6ecf116db738177d0b9#beec7225)
+   Compiling font-types v0.12.4
+   Compiling rustc-hash v2.1.3
+   Compiling stable_deref_trait v1.2.1
+   Compiling hayro-postscript v0.1.0
+   Compiling float-cmp v0.9.0
+   Compiling hayro-syntax v0.7.2 (https://github.com/lilith/hayro?rev=beec7225f7f8cec6cb62f6ecf116db738177d0b9#beec7225)
+   Compiling hayro-cmap v0.1.0
+   Compiling strict-num v0.1.1
+   Compiling yoke v0.8.3
+   Compiling read-fonts v0.41.0
+   Compiling skrifa v0.42.1
+   Compiling phf v0.13.1
+   Compiling vello_common v0.0.8
+   Compiling tinyvec_macros v0.1.1
+   Compiling arrayref v0.3.9
+   Compiling hayro-interpret v0.7.0
+   Compiling tinyvec v1.12.0
+   Compiling tiny-skia-path v0.12.0
+   Compiling slotmap v1.1.1
+   Compiling vello_cpu v0.0.8
+   Compiling image v0.25.10
+   Compiling pic-scale v0.7.11
+   Compiling memmap2 v0.9.11
+   Compiling fontdb v0.24.0
+   Compiling harfrust v0.12.0
+   Compiling skrifa v0.44.0
+   Compiling hayro v0.7.1
+   Compiling simplecss v0.2.2
+   Compiling svgtypes v0.16.1
+   Compiling roxmltree v0.21.1
+   Compiling unicode-vo v0.1.0
+   Compiling color_quant v1.1.0
+   Compiling imagesize v0.15.0
+   Compiling unicode-script v0.5.8
+   Compiling pico-args v0.5.0
+   Compiling unicode-bidi v0.3.18
+   Compiling xmlwriter v0.1.0
+   Compiling base64 v0.23.1
+   Compiling data-url v0.3.2
+   Compiling gif v0.14.2
+   Compiling usvg v0.48.1
+   Compiling tiny-skia v0.12.0
+   Compiling zenpdf v0.2.0 (/Users/lilith/work/zen/zenextras/zenpdf)
+   Compiling quick-xml v0.42.0
+   Compiling resvg v0.48.1
+   Compiling hayro-jpeg2000 v0.3.5
+   Compiling zensvg v0.1.0 (/Users/lilith/work/zen/zenextras/zensvg)
+   Compiling zenjp2 v0.1.0 (/Users/lilith/work/zen/zenextras/zenjp2)
+   Compiling zstd-safe v7.2.4
+   Compiling zstd v0.13.3
+   Compiling tiff v0.11.3 (https://github.com/lilith/image-tiff?rev=ad468f42bb5a9a6d8ad3eff062c227e83212e1bc#ad468f42)
+   Compiling zentiff v0.1.2 (/Users/lilith/work/zen/zenextras/zentiff)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 7.99s
+     Running unittests src/lib.rs (target/debug/deps/zenjp2-cd5cb94f77e112ed)
+
+running 31 tests
+test alloc_util::tests::codec_default_keeps_site_default_true ... ok
+test alloc_util::tests::codec_default_keeps_site_default_false ... ok
+test alloc_util::tests::alloc_zeroed_fallible_oom_returns_err ... ok
+test alloc_util::tests::alloc_zeroed_all_modes_equal_bytes ... ok
+test alloc_util::tests::explicit_fallible_overrides_any_site_default ... ok
+test alloc_util::tests::explicit_infallible_overrides_any_site_default ... ok
+test alloc_util::tests::vec_with_capacity_fallible_oom_returns_err ... ok
+test alloc_util::tests::vec_with_capacity_reserves_and_is_empty ... ok
+test codec::tests::alloc_pref_boundary_lowers_in_all_modes ... ok
+test codec::tests::capabilities_advertised ... ok
+test codec::tests::config_returns_jp2_format ... ok
+test codec::tests::estimate_decode_resources_scales_with_output ... ok
+test codec::tests::format_detection ... ok
+test codec::tests::input_size_limit_enforced ... ok
+test codec::tests::unsupported_animation ... ok
+test codec::tests::unsupported_streaming ... ok
+test error::tests::error_display_decode ... ok
+test error::tests::error_display_out_of_memory ... ok
+test error::tests::error_display_pixel_buffer ... ok
+test error::tests::zencodec_tests::bridges_into_codec_error_envelope ... ok
+test error::tests::zencodec_tests::category_through_at ... ok
+test error::tests::zencodec_tests::codec_name_is_zenjp2 ... ok
+test error::tests::zencodec_tests::decode_everything_else_is_malformed ... ok
+test error::tests::zencodec_tests::decode_format_unsupported_is_unsupported_type ... ok
+test error::tests::zencodec_tests::decode_marker_unsupported_is_unsupported_feature ... ok
+test error::tests::zencodec_tests::decode_unexpected_eof_is_ideal_truncation_category ... ok
+test error::tests::zencodec_tests::limit_delegates_category_with_kind ... ok
+test error::tests::zencodec_tests::out_of_memory_is_resource_out_of_memory ... ok
+test error::tests::zencodec_tests::pixel_buffer_is_internal_bug ... ok
+test error::tests::zencodec_tests::sink_is_io ... ok
+test error::tests::zencodec_tests::unsupported_operation_delegates_category ... ok
+
+test result: ok. 31 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/zencodec_truncation.rs (target/debug/deps/zencodec_truncation-0354f3a149cd9222)
+
+running 3 tests
+test envelope_survives_dyn_erasure ... ok
+test truncation_series_jp2_container_categorizes_as_incomplete_input ... ok
+test truncation_series_j2k_codestream_categorizes_as_incomplete_input ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/zenpdf-99abf5d8883adb50)
+
+running 16 tests
+test alloc_util::tests::codec_default_keeps_site_default_false ... ok
+test alloc_util::tests::codec_default_keeps_site_default_true ... ok
+test alloc_util::tests::alloc_zeroed_fallible_oom_returns_err ... ok
+test alloc_util::tests::alloc_zeroed_all_modes_equal_bytes ... ok
+test alloc_util::tests::explicit_fallible_overrides_any_site_default ... ok
+test alloc_util::tests::explicit_infallible_overrides_any_site_default ... ok
+test alloc_util::tests::vec_with_capacity_fallible_oom_returns_err ... ok
+test alloc_util::tests::vec_with_capacity_reserves_and_is_empty ... ok
+test error::tests::buffer_allocation_failure_is_out_of_memory ... ok
+test error::tests::buffer_other_failure_is_internal_bug ... ok
+test error::tests::category_bridges_into_codec_error_envelope ... ok
+test error::tests::error_category_mapping ... ok
+test error::tests::error_from_limit_exceeded ... ok
+test error::tests::error_from_unsupported_operation ... ok
+test error::tests::sink_error_is_io_category ... ok
+test render::page_selection_tests::all_pages_is_bounded_before_materializing_indices ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/basic.rs (target/debug/deps/basic-d156a66c6354df3b)
+
+running 14 tests
+test invalid_pdf ... ok
+test dimensions ... ok
+test count ... ok
+test out_of_range ... ok
+test circular_xref_prev_chain_does_not_stack_overflow ... ok
+test render_fit_box ... ok
+test render_exact ... ok
+test render_all_pages ... ok
+test render_page_twice ... ok
+test render_fit_height ... ok
+test white_background ... ok
+test render_fit_width ... ok
+test render_scale_1x ... ok
+test render_dpi_144 ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.14s
+
+     Running tests/fuzz_regression.rs (target/debug/deps/fuzz_regression-cea3aab0f6605ca8)
+
+running 1 test
+test fuzz_render_seeds_finish_fast_without_panicking ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/zencodec_integration.rs (target/debug/deps/zencodec_integration-04ebce904c400fbb)
+
+running 17 tests
+test capabilities_are_accurate ... ok
+test estimate_decode_resources_scales_with_output ... ok
+test format_detection ... ok
+test animation_decode_unsupported ... ok
+test limits_reject_large_input ... ok
+test envelope_category_survives_dyn_erasure ... ok
+test limits_reject_large_output ... ok
+test limits_accept_within_bounds ... ok
+test output_info ... ok
+test page_out_of_range_is_request_fault ... ok
+test probe ... ok
+test push_decoder ... ok
+test alloc_pref_modes_render_byte_identical ... ok
+test streaming_decode_unsupported ... ok
+test one_shot_decode ... ok
+test start_frame_index_hint ... ok
+test one_shot_with_bounds ... ok
+
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.14s
+
+     Running tests/zencodec_truncation.rs (target/debug/deps/zencodec_truncation-ea9d4def40827d50)
+
+running 1 test
+test decode_truncation_series_is_incomplete_never_panic ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.21s
+
+     Running unittests src/lib.rs (target/debug/deps/zensvg-e384a524f62272b2)
+
+running 47 tests
+test alloc_util::tests::codec_default_keeps_site_default_false ... ok
+test alloc_util::tests::codec_default_keeps_site_default_true ... ok
+test alloc_util::tests::alloc_zeroed_fallible_oom_returns_err ... ok
+test alloc_util::tests::explicit_fallible_overrides_any_site_default ... ok
+test alloc_util::tests::explicit_infallible_overrides_any_site_default ... ok
+test alloc_util::tests::alloc_zeroed_all_modes_equal_bytes ... ok
+test alloc_util::tests::vec_with_capacity_fallible_oom_returns_err ... ok
+test alloc_util::tests::vec_with_capacity_reserves_and_is_empty ... ok
+test codec::tests::alloc_pref_boundary_lowers_in_all_modes ... ok
+test error::tests::error_category_through_bridge_into_codec_error ... ok
+test error::tests::error_category_mapping ... ok
+test error::tests::error_category_xml_write_and_io ... ok
+test codec::tests::estimate_decode_resources_scales_with_output ... ok
+test error::tests::error_from_limit_exceeded ... ok
+test error::tests::error_display_parse ... ok
+test error::tests::error_from_stop_reason ... ok
+test error::tests::error_display_zero_output_dimensions ... ok
+test error::tests::error_from_unsupported_operation ... ok
+test error::tests::error_from_usvg_elements_limit ... ok
+test error::tests::error_from_usvg_other_variants_are_parse ... ok
+test format::tests::detect_doctype_svg ... ok
+test format::tests::detect_plain_svg ... ok
+test format::tests::detect_svg_with_bom ... ok
+test format::tests::detect_svgz ... ok
+test format::tests::reject_non_svg ... ok
+test optimize::tests::builder_with_max_input_bytes ... ok
+test optimize::tests::max_input_bytes_rejects_oversized ... ok
+test optimize::tests::collapse_whitespace ... ok
+test optimize::tests::max_input_bytes_allows_within_limit ... ok
+test optimize::tests::no_optimization ... ok
+test optimize::tests::preserve_xml_declaration ... ok
+test optimize::tests::smaller_output ... ok
+test optimize::tests::strip_comments ... ok
+test optimize::tests::strip_desc_and_title ... ok
+test optimize::tests::strip_metadata_elements ... ok
+test optimize::tests::svgz_roundtrip ... ok
+test optimize::tests::svgz_decompression_bomb_protection ... ok
+test render::tests::limit_exceeded ... ok
+test render::tests::dimensions_query ... ok
+test render::tests::render_simple_svg ... ok
+test render::tests::render_with_background ... ok
+test render::tests::unpremultiply_half_alpha ... ok
+test render::tests::unpremultiply_identity_for_opaque ... ok
+test render::tests::unpremultiply_zero_alpha ... ok
+test render::tests::render_with_scale ... ok
+test render::tests::render_with_target_width ... ok
+test codec::tests::alloc_pref_modes_render_byte_identical ... ok
+
+test result: ok. 47 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.34s
+
+     Running tests/fuzz_regression.rs (target/debug/deps/fuzz_regression-a0957a3608637f6c)
+
+running 3 tests
+test external_crash_dir_does_not_panic ... ok
+test fuzz_render_seeds_do_not_panic ... ok
+test fuzz_parse_seeds_do_not_panic ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+     Running tests/integration.rs (target/debug/deps/integration-450916685d3c8456)
+
+running 1 test
+test truncation_series::truncation_series_categorizes_as_incomplete_input ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.63s
+
+     Running unittests src/lib.rs (target/debug/deps/zentiff-aa0b1efe9f54bd06)
+
+running 64 tests
+test alloc_util::tests::codec_default_keeps_site_default_false ... ok
+test alloc_util::tests::codec_default_keeps_site_default_true ... ok
+test alloc_util::tests::alloc_zeroed_fallible_oom_returns_err ... ok
+test alloc_util::tests::explicit_fallible_overrides_any_site_default ... ok
+test alloc_util::tests::explicit_infallible_overrides_any_site_default ... ok
+test alloc_util::tests::alloc_zeroed_all_modes_equal_bytes ... ok
+test alloc_util::tests::vec_with_capacity_fallible_oom_returns_err ... ok
+test alloc_util::tests::vec_zeroed_fallible_oom_returns_err ... ok
+test alloc_util::tests::vec_with_capacity_reserves_and_is_empty ... ok
+test codec::tests::animation_decode_rejected ... ok
+test codec::tests::animation_encode_rejected ... ok
+test codec::tests::decoder_config_traits ... ok
+test codec::tests::encoder_config_traits ... ok
+test codec::tests::fidelity_is_always_lossless ... ok
+test codec::tests::lossless_always_true ... ok
+test alloc_util::tests::vec_zeroed_has_full_length_and_is_zeroed_on_both_paths ... ok
+test codec::tests::output_info_via_trait ... ok
+test codec::tests::decode_policy_suppresses_metadata ... ok
+test codec::tests::roundtrip_rgb8 ... ok
+test codec::tests::streaming_decode_rejected ... ok
+test decode::tests::builder_sets_max_memory ... ok
+test decode::tests::builder_sets_max_pixels ... ok
+test decode::tests::decode_peak_factor_one_for_8bit_interleaved ... ok
+test decode::tests::decode_peak_factor_two_for_conversions ... ok
+test decode::tests::default_config_has_limits ... ok
+test decode::tests::descriptor_for_cmyk ... ok
+test decode::tests::descriptor_for_gray8 ... ok
+test decode::tests::descriptor_for_multiband_2ch ... ok
+test decode::tests::descriptor_for_palette ... ok
+test decode::tests::descriptor_for_rgb16 ... ok
+test decode::tests::descriptor_for_rgba_float ... ok
+test decode::tests::none_config_has_no_limits ... ok
+test decode::tests::unpack_1bit ... ok
+test decode::tests::unpack_2bit ... ok
+test decode::tests::unpack_4bit ... ok
+test decode::tests::unpack_palette_indices_short_buffer_errors_instead_of_panicking ... ok
+test decode::tests::unpack_subbyte_short_buffer_errors_instead_of_panicking ... ok
+test decode::tests::validate_rejects_conversion_overshoot_passed_by_direct ... ok
+test encode::internal_params::tests::big_tiff_field_applies ... ok
+test encode::internal_params::tests::compression_field_applies ... ok
+test encode::internal_params::tests::default_internal_params_is_noop ... ok
+test encode::internal_params::tests::full_permutation_round_trip ... ok
+test encode::internal_params::tests::predictor_field_applies ... ok
+test codec::tests::probe_via_trait ... ok
+test codec::tests::roundtrip_gray8 ... ok
+test encode::internal_params::tests::unset_fields_leave_values_alone ... ok
+test encode::tests::builder_chain ... ok
+test encode::tests::default_config ... ok
+test error::category_tests::category_is_preserved_through_at ... ok
+test error::category_tests::codec_name_is_zentiff ... ok
+test error::category_tests::error_category_mapping ... ok
+test error::category_tests::io_category_carries_error_kind ... ok
+test error::category_tests::limit_delegates_and_preserves_kind ... ok
+test error::category_tests::stopped_maps_both_cancelled_and_timed_out ... ok
+test error::category_tests::tiff_int_size_error_becomes_overflow_variant ... ok
+test error::category_tests::tiff_io_error_other_kind_stays_io ... ok
+test error::category_tests::tiff_io_error_unexpected_eof_becomes_truncated ... ok
+test error::category_tests::unsupported_operation_delegates ... ok
+test sweep::tests::cell_ids_roundtrip_to_their_variants ... ok
+test sweep::tests::compute_tier_orders_method_cost ... ok
+test sweep::tests::malformed_ids_error ... ok
+test sweep::tests::plan_constrained_drops_expensive_and_matches_plan ... ok
+test sweep::tests::scalar_dense_spans_the_method_ladder ... ok
+test codec::tests::source_encoding_is_lossless ... ok
+
+test result: ok. 64 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/corpus_decode.rs (target/debug/deps/corpus_decode-419c8e88895bfd83)
+
+running 1 test
+test corpus_decode_all ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.69s
+
+     Running tests/fuzz_regression.rs (target/debug/deps/fuzz_regression-02839330be1bded4)
+
+running 1 test
+test fuzz_regression ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.04s
+
+     Running tests/metadata.rs (target/debug/deps/metadata-1677c76e792f8792)
+
+running 15 tests
+test compression_and_photometric_extraction ... ok
+test exif_sub_ifd_extraction ... ok
+test icc_profile_extraction ... ok
+test decode_extracts_all_metadata ... ok
+test iptc_extraction ... ok
+test no_metadata_returns_none ... ok
+test orientation_extraction ... ok
+test page_count_single ... ok
+test page_name_extraction ... ok
+test page_count_multi ... ok
+test resolution_300dpi ... ok
+test resolution_72dpi_default_unit ... ok
+test resolution_centimeters_converted_to_dpi ... ok
+test resolution_unit_none_returns_no_dpi ... ok
+test xmp_extraction ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/orientation.rs (target/debug/deps/orientation-0c6e66109d5d094b)
+
+running 9 tests
+test orientation_correct_reports_display_dims_and_identity ... ok
+test orientation_correct_decode_bakes_upright_pixels ... ok
+test orientation_correct_on_upright_image_is_noop_but_reports_identity ... ok
+test orientation_correct_and_transform_composes ... ok
+test orientation_exact_transform_ignores_exif ... ok
+test orientation_exact_transpose_swaps_axes_and_bakes ... ok
+test orientation_preserve_decode_keeps_stored_pixels ... ok
+test orientation_preserve_default_reports_stored_dims_and_tag ... ok
+test output_info_reports_resolved_orientation ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/panic_isolation.rs (target/debug/deps/panic_isolation-126a75d418b2e660)
+
+running 6 tests
+test corrupt_ifd_offset_returns_err ... ok
+test truncated_tiff_returns_err ... ok
+test truncated_valid_tiff_returns_err ... ok
+test valid_tiff_still_decodes_through_widened_guard ... ok
+test memory_cap_does_not_break_small_image_through_limits ... ok
+test fuzz_crash_metadata_input_returns_err_not_panic ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+     Running tests/roundtrip.rs (target/debug/deps/roundtrip-3c608ea8a3f9c97f)
+
+running 12 tests
+test graya8_encodes_smaller_than_rgba_widening ... ok
+test encode_1x1_pixel ... ok
+test roundtrip_gray8_uncompressed ... ok
+test bigtiff_roundtrip ... ok
+test roundtrip_graya16_stays_two_channel ... ok
+test roundtrip_grayaf32_stays_two_channel ... ok
+test roundtrip_rgb16_packbits ... ok
+test roundtrip_graya8_stays_two_channel ... ok
+test probe_returns_metadata ... ok
+test limits_reject_oversized ... ok
+test roundtrip_rgba8_deflate ... ok
+test roundtrip_rgb8_lzw ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/sweep_validate.rs (target/debug/deps/sweep_validate-26ff74b02def7230)
+
+running 1 test
+test sweep_cells_decode_exactly_and_steps_are_live ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.82s
+
+     Running tests/zencodec_integration.rs (target/debug/deps/zencodec_integration-56b903ca3b46173b)
+
+running 20 tests
+test cicp_only_source_synthesizes_icc_on_encode ... ok
+test decode_rejects_exceeding_max_height ... ok
+test decode_accepts_within_dimension_limits ... ok
+test encode_accepts_within_memory_limits ... ok
+test decode_rejects_exceeding_max_input_bytes ... ok
+test encode_rejects_exceeding_max_width ... ok
+test decode_rejects_exceeding_max_width ... ok
+test encode_rejects_exceeding_max_memory ... ok
+test foreign_exif_blob_decomposes_into_correct_native_ifds ... ok
+test metadata_default_no_metadata_is_byte_identical ... ok
+test metadata_web_policy_roundtrip_keeps_icc_orientation_strips_gps ... ok
+test roundtrip_gray8_via_traits ... ok
+test roundtrip_graya8_via_traits_stays_two_channel ... ok
+test roundtrip_rgb8_via_traits ... ok
+test roundtrip_graya8_with_metadata_stays_two_channel ... ok
+test roundtrip_rgba8_via_traits ... ok
+test srgb_cicp_only_source_embeds_no_icc ... ok
+test truncation_series_categorizes_as_incomplete_input ... ok
+test fallible_alloc_decode_matches_default ... ok
+test corpus_decode_via_trait ... ok
+
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.10s
+
+   Doc-tests zenjp2
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests zenpdf
+
+running 3 tests
+test zenpdf/src/../README.md - (line 83) ... ignored
+test zenpdf/src/../README.md - (line 18) - compile ... ok
+test zenpdf/src/../README.md - (line 46) - compile ... ok
+
+test result: ok. 2 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+all doctests ran in 0.38s; merged doctests compilation took 0.16s
+   Doc-tests zensvg
+
+running 5 tests
+test zensvg/src/../README.md - (line 49) ... ignored
+test zensvg/src/../README.md - (line 71) ... ignored
+test zensvg/src/../README.md - (line 93) ... ignored
+test zensvg/src/optimize.rs - optimize (line 18) ... ok
+test zensvg/src/../README.md - (line 27) ... ok
+
+test result: ok. 2 passed; 0 failed; 3 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+all doctests ran in 0.60s; merged doctests compilation took 0.19s
+   Doc-tests zentiff
+
+running 2 tests
+test zentiff/src/encode.rs - encode::internal_params::InternalParams (line 204) ... ignored
+test zentiff/src/lib.rs - (line 8) - compile ... ok
+
+test result: ok. 1 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+all doctests ran in 0.34s; merged doctests compilation took 0.12s

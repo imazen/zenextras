@@ -1,0 +1,165 @@
+warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
+package:   /Users/lilith/work/zen/zenextras/zentiff/Cargo.toml
+workspace: /Users/lilith/work/zen/zenextras/Cargo.toml
+   Compiling syn v2.0.119
+   Compiling crc32fast v1.5.1
+   Compiling simd-adler32 v0.3.10
+   Compiling zenpixels v0.2.14
+   Compiling miniz_oxide v0.9.1
+   Compiling zerocopy-derive v0.8.56
+   Compiling zencodec v0.1.26
+   Compiling zerocopy v0.8.56
+   Compiling flate2 v1.1.10
+   Compiling zencodec-testkit v0.1.0
+   Compiling half v2.7.1
+   Compiling tiff v0.11.3 (https://github.com/lilith/image-tiff?rev=ad468f42bb5a9a6d8ad3eff062c227e83212e1bc#ad468f42)
+   Compiling zentiff v0.1.2 (/Users/lilith/work/zen/zenextras/zentiff)
+    Finished `bench` profile [optimized] target(s) in 4.35s
+     Running benches/channel_expand.rs (target/release/deps/channel_expand-0b545911e894fd21)
+[zenbench] calibration: int=0.27ns/iter mem_bw=117.8GiB/s mem_lat=7.3ns
+[zenbench] timer resolution: 41ns, loop overhead: 0.22ns/iter, TSC: 1.000 ticks/ns (invariant)
+[zenbench] results → /Users/lilith/tmp/zenbench/zenbench-1788736060-2dd6.txt
+
+═══════════════════════════════════════════════════════════════
+  zenbench  1788736060-2dd6
+  git: e17bd6ca021b09cfeb24c3c470f1d6c3b4002e11
+═══════════════════════════════════════════════════════════════
+
+  cmyk8/64/alpha  50 rounds × 113 calls
+             mean ±mad µs  95% CI vs base     iB/s
+  ├─ slice   21.4 ±1.7µs  [20.5–22.4]µs      729M
+  ╰─ push    31.1 ±3.3µs  [+44.1%–+50.2%]    503M
+
+  slice  █████████████████████████████████████████████████████████████ 729 MiB/s
+  push   ██████████████████████████████████████████ 503 MiB/s
+
+  cmyk16/64/alpha  60 rounds × 113 calls
+             mean ±mad µs  95% CI vs base      iB/s
+  ├─ slice   21.9 ±1.7µs  [21.1–22.7]µs      1.39G
+  ╰─ push    30.6 ±2.5µs  [+39.6%–+44.1%]    1022M
+
+  slice  ████████████████████████████████████████████████████████████ 1.39 GiB/s
+  push   ███████████████████████████████████████████ 1022 MiB/s
+
+  cmykf32/64/alpha  30 rounds × 149 calls
+             mean ±mad µs  95% CI vs base        iB/s
+  ├─ slice    7.9 ±0.9µs  [7.3–8.7]µs          7.68G [1]
+  ╰─ push    22.3 ±3.6µs  [+173.5%–+194.8%]    2.74G [2]
+
+  slice  ████████████████████████████████████████████████████████████ 7.68 GiB/s
+  push   █████████████████████ 2.74 GiB/s
+  [1] CV=25%
+  [2] CV=21%
+
+  palette/64  30 rounds × 230 calls
+             mean ±mad µs  95% CI vs base      iB/s
+  ├─ slice    8.8 ±1.0µs  [8.0–9.4]µs        1.31G [1]
+  ╰─ push    15.5 ±1.9µs  [+72.0%–+83.2%]     754M [2]
+
+  slice  ████████████████████████████████████████████████████████████ 1.31 GiB/s
+  push   ██████████████████████████████████ 754 MiB/s
+  [1] CV=23%
+  [2] CV=22%
+
+  cmyk8/256/alpha  200 rounds × 35 calls
+               mean ±mad µs  95% CI vs base       iB/s
+  ├─ slice   240.2 ±34.9µs  [234.7–245.7]µs     1.02G
+  ╰─ push    278.9 ±30.7µs  [+10.8%–+15.8%]      896M
+
+  slice  ████████████████████████████████████████████████████████████ 1.02 GiB/s
+  push   ████████████████████████████████████████████████████ 896 MiB/s
+
+  cmyk16/256/alpha  200 rounds × 35 calls
+               mean ±mad µs  95% CI vs base       iB/s
+  ├─ slice   247.6 ±31.6µs  [243.2–251.8]µs     1.97G
+  ╰─ push    278.2 ±35.6µs  [+9.9%–+14.8%]      1.76G
+
+  slice  ████████████████████████████████████████████████████████████ 1.97 GiB/s
+  push   █████████████████████████████████████████████████████ 1.76 GiB/s
+
+  cmykf32/256/alpha  30 rounds × 27 calls
+               mean ±mad µs  95% CI vs base        iB/s
+  ├─ slice   102.1 ±17.4µs  [95.3–108.7]µs       9.57G
+  ╰─ push    311.9 ±18.6µs  [+196.4%–+212.2%]    3.13G
+
+  slice  ████████████████████████████████████████████████████████████ 9.57 GiB/s
+  push   ████████████████████ 3.13 GiB/s
+
+  palette/256  40 rounds × 28 calls
+               mean ±mad µs  95% CI vs base       iB/s
+  ├─ slice   128.6 ±16.3µs  [119.5–136.8]µs     1.42G [1]
+  ╰─ push    228.1 ±24.5µs  [+70.2%–+84.8%]      822M
+
+  slice  ████████████████████████████████████████████████████████████ 1.42 GiB/s
+  push   ██████████████████████████████████ 822 MiB/s
+  [1] CV=22%
+
+  cmyk8/1024/alpha  200 rounds × 2 calls
+            mean ±mad ms  95% CI vs base     iB/s
+  ├─ slice   4.0 ±0.5ms  [4.0–4.1]ms        992M
+  ╰─ push    4.6 ±0.5ms  [+12.2%–+16.8%]    866M
+
+  slice  █████████████████████████████████████████████████████████████ 992 MiB/s
+  push   █████████████████████████████████████████████████████ 866 MiB/s
+
+  cmyk16/1024/alpha  200 rounds × 2 calls
+            mean ±mad ms  95% CI vs base      iB/s
+  ├─ slice   4.1 ±0.5ms  [4.0–4.2]ms        1.91G
+  ╰─ push    4.6 ±0.5ms  [+10.3%–+15.0%]    1.70G
+
+  slice  ████████████████████████████████████████████████████████████ 1.91 GiB/s
+  push   █████████████████████████████████████████████████████ 1.70 GiB/s
+
+  cmykf32/1024/alpha  30 rounds × 2 calls
+            mean ±mad ms  95% CI vs base        iB/s
+  ├─ slice   1.7 ±0.2ms  [1.5–1.9]ms          9.11G [1]
+  ╰─ push    4.8 ±0.4ms  [+165.3%–+196.4%]    3.24G
+
+  slice  ████████████████████████████████████████████████████████████ 9.11 GiB/s
+  push   █████████████████████ 3.24 GiB/s
+  [1] CV=34%
+
+  palette/1024  60 rounds × 3 calls
+            mean ±mad ms  95% CI vs base        iB/s
+  ├─ slice   1.6 ±0.2ms  [1.5–1.8]ms          1.80G [1]
+  ╰─ push    3.4 ±0.3ms  [+107.3%–+125.4%]     879M
+
+  slice  ████████████████████████████████████████████████████████████ 1.80 GiB/s
+  push   █████████████████████████████ 879 MiB/s
+  [1] CV=39%
+
+  cmyk8/4096/alpha  130 rounds × 1 calls
+            mean ±mad ms  95% CI vs base      iB/s
+  ├─ slice   31.5 ±1.1ms  [31.2–31.9]ms      1.98G
+  ╰─ push    37.5 ±2.2ms  [+17.0%–+20.8%]    1.67G
+
+  slice  ████████████████████████████████████████████████████████████ 1.98 GiB/s
+  push   ██████████████████████████████████████████████████ 1.67 GiB/s
+
+  cmyk16/4096/alpha  143 rounds × 1 calls
+            mean ±mad ms  95% CI vs base      iB/s
+  ├─ slice   32.3 ±1.0ms  [32.0–32.7]ms      3.87G
+  ╰─ push    37.7 ±1.9ms  [+14.9%–+18.3%]    3.32G
+
+  slice  ████████████████████████████████████████████████████████████ 3.87 GiB/s
+  push   ███████████████████████████████████████████████████ 3.32 GiB/s
+
+  cmykf32/4096/alpha  30 rounds × 1 calls
+            mean ±mad ms  95% CI vs base        iB/s
+  ├─ slice   10.8 ±0.7ms  [10.4–11.3]ms        23.1G
+  ╰─ push    34.5 ±0.8ms  [+211.0%–+226.5%]    7.24G
+
+  slice  ████████████████████████████████████████████████████████████ 23.1 GiB/s
+  push   ███████████████████ 7.24 GiB/s
+
+  palette/4096  30 rounds × 1 calls
+            mean ±mad ms  95% CI vs base        iB/s
+  ├─ slice   10.1 ±0.9ms  [9.7–10.5]ms         4.64G
+  ╰─ push    24.4 ±1.3ms  [+133.9%–+148.6%]    1.92G
+
+  slice  ████████████████████████████████████████████████████████████ 4.64 GiB/s
+  push   █████████████████████████ 1.92 GiB/s
+
+  total: 202.5s  (35 noisy rounds)
+═══════════════════════════════════════════════════════════════
+  filter: cargo bench -- --group=NAME  format: --format=llm|csv|md|json

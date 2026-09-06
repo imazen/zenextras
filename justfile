@@ -66,3 +66,23 @@ fuzz crate target seconds="60":
     @./scripts/fuzz-corpus.sh pull {{crate}} {{target}}
     cd {{crate}} && cargo +nightly fuzz run {{target}} -- -max_total_time={{seconds}}
     @./scripts/fuzz-corpus.sh push {{crate}} {{target}}
+
+# Absolute decode/render costs for TIFF, JP2, PDF and SVG; JP2 paths are explicit.
+arm-decode-audit:
+    CARGO_BUILD_JOBS=4 RAYON_NUM_THREADS=4 OMP_NUM_THREADS=4 TMPDIR="$HOME/tmp" nice -n 19 cargo bench --workspace --all-features --bench arm_decode
+
+# Exact paired TIFF channel-expansion loops across four sizes.
+arm-channel-audit:
+    CARGO_BUILD_JOBS=4 RAYON_NUM_THREADS=4 OMP_NUM_THREADS=4 TMPDIR="$HOME/tmp" nice -n 19 cargo bench -p zentiff --bench channel_expand
+
+# Generate lossless JP2 size controls from a caller-supplied photograph.
+# Sizes larger than the source are upsampled controls, not native-resolution photos.
+arm-jp2-fixtures source destination:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mkdir -p "{{destination}}"
+    for side in 64 256 1024 4096; do
+        MAGICK_THREAD_LIMIT=4 nice -n 19 magick "{{source}}" -filter Mitchell -resize "${side}x${side}!" -depth 8 "{{destination}}/cid22-${side}.png"
+        MAGICK_THREAD_LIMIT=4 nice -n 19 magick "{{destination}}/cid22-${side}.png" -alpha off -depth 8 "rgb:{{destination}}/cid22-${side}.rgb"
+        nice -n 19 opj_compress -i "{{destination}}/cid22-${side}.png" -o "{{destination}}/cid22-${side}.jp2" -r 1 -threads 4
+    done

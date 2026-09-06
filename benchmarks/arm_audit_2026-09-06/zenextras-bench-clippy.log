@@ -1,0 +1,5 @@
+warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
+package:   /Users/lilith/work/zen/zenextras/zentiff/Cargo.toml
+workspace: /Users/lilith/work/zen/zenextras/Cargo.toml
+    Checking zenpdf v0.2.0 (/Users/lilith/work/zen/zenextras/zenpdf)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.10s

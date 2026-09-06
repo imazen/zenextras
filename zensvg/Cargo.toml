@@ -39,6 +39,11 @@ text = []
 optimize = ["dep:flate2", "dep:quick-xml"]
 
 [dev-dependencies]
+zenbench = "0.1.9"
 # zencodec conformance harness. Provides check_decode_truncation_series
 # (EOF/truncation).
 zencodec-testkit = ">=0.1.0, <0.3.0"
+
+[[bench]]
+name = "arm_decode"
+harness = false
