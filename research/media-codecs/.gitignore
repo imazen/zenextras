@@ -6,3 +6,5 @@
 *.log
 /harness/target/
 /harness/Cargo.lock
+/audio-harness/target/
+/audio-harness/Cargo.lock

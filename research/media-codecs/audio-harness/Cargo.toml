@@ -1,0 +1,28 @@
+[package]
+name = "audio-harness"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# Standalone workspace: this is qualification tooling, not a zenextras member.
+[workspace]
+
+[features]
+default = ["ruopus", "opus-rs", "rusopus", "oxideav-aac", "flacenc", "libopus"]
+ruopus = ["dep:ruopus"]
+opus-rs = ["dep:opus-rs"]
+rusopus = ["dep:opus-decoder"]
+oxideav-aac = ["dep:oxideav-aac", "dep:oxideav-core"]
+flacenc = ["dep:flacenc"]
+libopus = []
+
+[dependencies]
+ruopus = { path = "../../../../candidates/ruopus", optional = true, default-features = false, features = ["std"] }
+opus-rs = { path = "../../../../candidates/opus-rs", optional = true }
+opus-decoder = { path = "../../../../candidates/rusopus/crates/opus-decoder", optional = true }
+oxideav-aac = { path = "../../../../candidates/oxideav-aac", optional = true }
+oxideav-core = { version = "0.1.37", optional = true }
+flacenc = { path = "../../../../candidates/flacenc-rs", optional = true, default-features = false }
+
+[profile.release]
+debug = true
