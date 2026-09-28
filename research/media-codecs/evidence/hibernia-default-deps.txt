@@ -1,0 +1,32 @@
+bitstream-io v2.6.0
+bytemuck v1.25.2
+dyn-clone v1.0.20
+hibernia v0.2.0 (/tmp/zenmedia-resume-20260928/candidates/hibernia/crates/hibernia)
+itoa v1.0.18
+log v0.4.34
+memchr v2.8.3
+num-derive v0.4.2 (proc-macro)
+num-traits v0.2.19
+proc-macro2 v1.0.107
+proc-macro2 v1.0.107 [33m[2m(*)[39m[22m
+quote v1.0.47
+quote v1.0.47 [33m[2m(*)[39m[22m
+ref-cast-impl v1.0.27 (proc-macro)
+ref-cast v1.0.27
+safe_arch v1.2.0
+schemars_derive v1.2.2 (proc-macro)
+schemars v1.2.2
+serde_core v1.0.229
+serde_derive_internals v0.30.0
+serde_derive v1.0.229 (proc-macro)
+serde_json v1.0.151
+serde_json v1.0.151 [33m[2m(*)[39m[22m
+serde v1.0.229
+serde v1.0.229 [33m[2m(*)[39m[22m
+smallvec v1.16.2
+syn v2.0.119
+syn v3.0.6
+syn v3.0.6 [33m[2m(*)[39m[22m
+unicode-ident v1.0.26
+wide v1.7.1
+zmij v1.0.23

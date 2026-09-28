@@ -1,0 +1,1 @@
+rust_h264 v0.4.0 (/tmp/zenmedia-resume-20260928/candidates/rust_h264)
