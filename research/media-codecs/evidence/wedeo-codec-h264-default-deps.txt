@@ -1,0 +1,24 @@
+aligned-vec v0.6.4
+av-bitstream v0.2.1
+bitflags v2.11.0
+equator-macro v0.4.2 (proc-macro)
+equator v0.4.2
+inventory v0.3.22
+num-traits v0.2.19
+once_cell v1.21.4
+pin-project-lite v0.2.17
+proc-macro2 v1.0.106
+proc-macro2 v1.0.106 [33m[2m(*)[39m[22m
+quote v1.0.45
+quote v1.0.45 [33m[2m(*)[39m[22m
+syn v2.0.117
+syn v2.0.117 [33m[2m(*)[39m[22m
+tracing-attributes v0.1.31 (proc-macro)
+tracing-core v0.1.36
+tracing v0.1.44
+tracing v0.1.44 [33m[2m(*)[39m[22m
+unicode-ident v1.0.24
+wedeo-codec-h264 v0.2.0 (/tmp/zenmedia-resume-20260928/candidates/wedeo/codecs/wedeo-codec-h264)
+wedeo-codec v0.2.0 (/tmp/zenmedia-resume-20260928/candidates/wedeo/crates/wedeo-codec)
+wedeo-core v0.2.0 (/tmp/zenmedia-resume-20260928/candidates/wedeo/crates/wedeo-core)
+wedeo-core v0.2.0 (/tmp/zenmedia-resume-20260928/candidates/wedeo/crates/wedeo-core) [33m[2m(*)[39m[22m

@@ -1,0 +1,17 @@
+bytemuck v1.25.2
+itoa v1.0.18
+memchr v2.8.3
+oxideav-core v0.1.37
+oxideav-h264 v0.1.8 (/tmp/zenmedia-resume-20260928/candidates/oxideav-h264)
+proc-macro2 v1.0.107
+proc-macro2 v1.0.107 [33m[2m(*)[39m[22m
+quote v1.0.47
+quote v1.0.47 [33m[2m(*)[39m[22m
+serde_core v1.0.229
+serde_json v1.0.151
+syn v3.0.6
+thiserror-impl v2.0.21 (proc-macro)
+thiserror v2.0.21
+thiserror v2.0.21 [33m[2m(*)[39m[22m
+unicode-ident v1.0.26
+zmij v1.0.23
