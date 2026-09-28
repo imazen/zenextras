@@ -1,0 +1,386 @@
+{
+  "repository": "jmg049/ruopus",
+  "commit": "23166c3c961519349c6c0fc93664c2ed1fc8cc30",
+  "files": [
+    {
+      "path": "Cargo.toml",
+      "git_blob_sha": "1258616ea28d96d5c157dd90a7b6b1f6bae1c684",
+      "size": 3977
+    },
+    {
+      "path": "LICENSE",
+      "git_blob_sha": "a52cc5519ab352d2b32e78746e8403dcebe878e3",
+      "size": 1057
+    },
+    {
+      "path": "src/celt/bands.rs",
+      "git_blob_sha": "accc27bcf38de02a39672f4fe0b46453584b5233",
+      "size": 58211
+    },
+    {
+      "path": "src/celt/cwrs.rs",
+      "git_blob_sha": "0d0f9a22fa121420881df1a787301e484acebb87",
+      "size": 11233
+    },
+    {
+      "path": "src/celt/decoder.rs",
+      "git_blob_sha": "25dcf905d4414b0f7ed1c94f724802d01fdab507",
+      "size": 38309
+    },
+    {
+      "path": "src/celt/encoder.rs",
+      "git_blob_sha": "f9cb57d849af175bf33b5c211405dffd95d3a8b0",
+      "size": 65599
+    },
+    {
+      "path": "src/celt/energy.rs",
+      "git_blob_sha": "a8a66c0aea1fb7371b5480277c4d1e9bd5b9095d",
+      "size": 11562
+    },
+    {
+      "path": "src/celt/laplace.rs",
+      "git_blob_sha": "58a72076d5756b709d8e5c900792f9e1d047bb27",
+      "size": 6092
+    },
+    {
+      "path": "src/celt/mdct.rs",
+      "git_blob_sha": "7b6cea27f77aec8d0d195ebf9e982c696e6f3e92",
+      "size": 22368
+    },
+    {
+      "path": "src/celt/mod.rs",
+      "git_blob_sha": "0acf9935d7428fa673ea98e7c20f8b8e73f27ff5",
+      "size": 1936
+    },
+    {
+      "path": "src/celt/modes.rs",
+      "git_blob_sha": "147d5ea85d538ea605a80a626763fc20ae9be773",
+      "size": 4994
+    },
+    {
+      "path": "src/celt/pitch.rs",
+      "git_blob_sha": "73751e9ef2194faaaa59466019edc0013f9a7c75",
+      "size": 13697
+    },
+    {
+      "path": "src/celt/plc.rs",
+      "git_blob_sha": "ee33d1c92a860af08315ab2cff9d8b2eab3e0163",
+      "size": 9582
+    },
+    {
+      "path": "src/celt/rate.rs",
+      "git_blob_sha": "87ce20104394610dc5ab48a2e831a39fd03054cb",
+      "size": 25560
+    },
+    {
+      "path": "src/celt/tables.rs",
+      "git_blob_sha": "646f53b8e06ff8c1094329322597db4fb5cf5f69",
+      "size": 7800
+    },
+    {
+      "path": "src/celt/vq.rs",
+      "git_blob_sha": "7a5b21330db561dd80751a6d6de33ff2b435d418",
+      "size": 15759
+    },
+    {
+      "path": "src/celt/vq_simd.rs",
+      "git_blob_sha": "caa7b80dece9a2d980eea491a3b51f033796d437",
+      "size": 18777
+    },
+    {
+      "path": "src/decoder.rs",
+      "git_blob_sha": "532c7ca54bb8407b184b7016d06fb846f490cfd8",
+      "size": 24921
+    },
+    {
+      "path": "src/encoder.rs",
+      "git_blob_sha": "5c973d0ee8cb588e9b778957d01360ef9a527f59",
+      "size": 138116
+    },
+    {
+      "path": "src/encoder_analysis.rs",
+      "git_blob_sha": "c0d8a137004a7a72cd4527ca9178f5ed5616d640",
+      "size": 9429
+    },
+    {
+      "path": "src/float.rs",
+      "git_blob_sha": "90e457b5b38cf6bae550d68532cbed471786a7fe",
+      "size": 4261
+    },
+    {
+      "path": "src/lib.rs",
+      "git_blob_sha": "013e39687b8986ff5b828e1878d3d2b99335c57f",
+      "size": 2960
+    },
+    {
+      "path": "src/multistream.rs",
+      "git_blob_sha": "4ca6fc6dcfbb0dc95af00f79f332f56f5a3fc6ee",
+      "size": 3700
+    },
+    {
+      "path": "src/ogg/crc.rs",
+      "git_blob_sha": "7f6d110c6b5f713301ec7659cba8d7b51cca1be3",
+      "size": 1988
+    },
+    {
+      "path": "src/ogg/mod.rs",
+      "git_blob_sha": "00f2ef660b85678a173dfd4a1711c23150e17152",
+      "size": 1198
+    },
+    {
+      "path": "src/ogg/opus.rs",
+      "git_blob_sha": "8919f1759b0c29665822a2027efca869ab64b767",
+      "size": 20020
+    },
+    {
+      "path": "src/ogg/page.rs",
+      "git_blob_sha": "6682ccdb8fd0bf82f8dfbe0e2abb9ffee59aeade",
+      "size": 16049
+    },
+    {
+      "path": "src/packet.rs",
+      "git_blob_sha": "bc3b89ed337433652aa0e91f430c4b1d405eb971",
+      "size": 19335
+    },
+    {
+      "path": "src/python/decoder.rs",
+      "git_blob_sha": "6bc34d41a654bf6d9193f52012ea155fd6e74697",
+      "size": 6721
+    },
+    {
+      "path": "src/python/encoder.rs",
+      "git_blob_sha": "b463aba5f0737e7e2184060eccb1093e3053e41a",
+      "size": 15836
+    },
+    {
+      "path": "src/python/enums.rs",
+      "git_blob_sha": "c0d870e6449d062ac31844bc9831a1edd414a9b6",
+      "size": 8143
+    },
+    {
+      "path": "src/python/errors.rs",
+      "git_blob_sha": "e698fb6645bfc46d43d9eeaa5a241c0388712972",
+      "size": 2173
+    },
+    {
+      "path": "src/python/lowlevel/celt.rs",
+      "git_blob_sha": "190c4bfe0f3586467548f3e87666b424c71b1d8e",
+      "size": 7344
+    },
+    {
+      "path": "src/python/lowlevel/lpc.rs",
+      "git_blob_sha": "6ac08cafa1519526cd4098cfa7068b2d729e343d",
+      "size": 12631
+    },
+    {
+      "path": "src/python/lowlevel/mod.rs",
+      "git_blob_sha": "67c7eb5b62e0093dfa69369fccca2b90d572281e",
+      "size": 272
+    },
+    {
+      "path": "src/python/lowlevel/silk.rs",
+      "git_blob_sha": "64180334417ae013ce1e2f6db099db9941f971eb",
+      "size": 14121
+    },
+    {
+      "path": "src/python/mod.rs",
+      "git_blob_sha": "93a5d3d8bbf1cbb6a291326c956bd0435fd33762",
+      "size": 2986
+    },
+    {
+      "path": "src/python/multistream.rs",
+      "git_blob_sha": "8d67ec945185a241d1be4efd2ff5ea1f5d797415",
+      "size": 3814
+    },
+    {
+      "path": "src/python/numpy_io.rs",
+      "git_blob_sha": "857491e2dbe056f74fdecb1452ed0dbc159bb1c8",
+      "size": 3758
+    },
+    {
+      "path": "src/python/ogg.rs",
+      "git_blob_sha": "1ed7051bf70bf21db821385a0803fbb5fe771029",
+      "size": 5487
+    },
+    {
+      "path": "src/python/packet.rs",
+      "git_blob_sha": "947ce572fdf50ecf3e8d524a03927d4680d6d6e0",
+      "size": 6092
+    },
+    {
+      "path": "src/range/decoder.rs",
+      "git_blob_sha": "c878b12bb59070bc95a0d831c4d558a25804246b",
+      "size": 11442
+    },
+    {
+      "path": "src/range/encoder.rs",
+      "git_blob_sha": "48d15dc13d2b11db344fa4bd3e6bc18152ae54c0",
+      "size": 13768
+    },
+    {
+      "path": "src/range/mod.rs",
+      "git_blob_sha": "180b79a982db3e86a7340e07b16ae233509ab878",
+      "size": 3498
+    },
+    {
+      "path": "src/silk/api.rs",
+      "git_blob_sha": "0bc19fd1eb7243c8166df88bb43b0333e4b52857",
+      "size": 18270
+    },
+    {
+      "path": "src/silk/decoder.rs",
+      "git_blob_sha": "140bf4f70ed11e866a6e3130b7b366907ae24d7f",
+      "size": 20087
+    },
+    {
+      "path": "src/silk/encode/api.rs",
+      "git_blob_sha": "10f9d579a04da06065ebe0cb19be39ce779153a3",
+      "size": 38958
+    },
+    {
+      "path": "src/silk/encode/control.rs",
+      "git_blob_sha": "a0d4c08bb0f2ffba2c70f92c5c76909b744ec651",
+      "size": 4631
+    },
+    {
+      "path": "src/silk/encode/dsp.rs",
+      "git_blob_sha": "5adaadb3714235f9888786202d1cc8c4abe44d47",
+      "size": 5228
+    },
+    {
+      "path": "src/silk/encode/frame.rs",
+      "git_blob_sha": "0d0980b5a220cf0d2ad53a0eac4299a8eaee3c6d",
+      "size": 41188
+    },
+    {
+      "path": "src/silk/encode/gains.rs",
+      "git_blob_sha": "2f38cce9dc9440b9368f4125fbf69c5752524b5b",
+      "size": 5893
+    },
+    {
+      "path": "src/silk/encode/lpc.rs",
+      "git_blob_sha": "c4c62f37c06bbfcd6dca73795ee6f0c8763e714a",
+      "size": 7892
+    },
+    {
+      "path": "src/silk/encode/ltp.rs",
+      "git_blob_sha": "451014d31723a5fca8e90f7f29e6c44ddb40285c",
+      "size": 16098
+    },
+    {
+      "path": "src/silk/encode/mod.rs",
+      "git_blob_sha": "7642091e1c06aac2cf5ebaf563050f0dffbc5e85",
+      "size": 1002
+    },
+    {
+      "path": "src/silk/encode/nlsf.rs",
+      "git_blob_sha": "3915117698ee4ef0b60bc03e1c5ff0c52ab04bd2",
+      "size": 22782
+    },
+    {
+      "path": "src/silk/encode/noise_shape.rs",
+      "git_blob_sha": "ca892b187b34a7af964821fc908999719a8e2713",
+      "size": 14529
+    },
+    {
+      "path": "src/silk/encode/nsq.rs",
+      "git_blob_sha": "46fd789869020687f3474d0c84e61ecb5b962331",
+      "size": 23369
+    },
+    {
+      "path": "src/silk/encode/pitch_analysis.rs",
+      "git_blob_sha": "e0ad9493626fef7fca1751c878529571e513ea25",
+      "size": 26008
+    },
+    {
+      "path": "src/silk/encode/resample.rs",
+      "git_blob_sha": "74fc73b628976bf2193da29f1a351e72b5bb725c",
+      "size": 6461
+    },
+    {
+      "path": "src/silk/encode/resample_in.rs",
+      "git_blob_sha": "9134d8d2b20cd50cd8aac0cfd2d930e9dd14e15c",
+      "size": 8949
+    },
+    {
+      "path": "src/silk/encode/stereo.rs",
+      "git_blob_sha": "b2f093a4ab2ed9d6894a02b178456c4279ec7c66",
+      "size": 16737
+    },
+    {
+      "path": "src/silk/encode/vad.rs",
+      "git_blob_sha": "8e7085b76c93ea84b1b5fb84d5f969f122ba8de0",
+      "size": 12571
+    },
+    {
+      "path": "src/silk/gains.rs",
+      "git_blob_sha": "e41aab01e449d7b3aa73c402caf2a958e7d7ecd2",
+      "size": 6792
+    },
+    {
+      "path": "src/silk/indices.rs",
+      "git_blob_sha": "ec70f8bea0dba3af77e2775a0d3f836e3c281fd0",
+      "size": 19010
+    },
+    {
+      "path": "src/silk/lpc.rs",
+      "git_blob_sha": "6d69f0d8fdaed327fd1b76fa19942fe526976414",
+      "size": 7006
+    },
+    {
+      "path": "src/silk/math.rs",
+      "git_blob_sha": "13bdba6b4621123577cf928b30efc2e60c994a8d",
+      "size": 8890
+    },
+    {
+      "path": "src/silk/mod.rs",
+      "git_blob_sha": "740b7fa17c30ab1c174b82901f5763c93847b02b",
+      "size": 1622
+    },
+    {
+      "path": "src/silk/nlsf.rs",
+      "git_blob_sha": "658736d1e5d4c847401873a4e46d4f0ce6c02277",
+      "size": 10032
+    },
+    {
+      "path": "src/silk/params.rs",
+      "git_blob_sha": "b8fd3bd8161352346ddb3bc1a009cab2127e5cc3",
+      "size": 7744
+    },
+    {
+      "path": "src/silk/pitch.rs",
+      "git_blob_sha": "bbfc6a2e1313217b89ba36595b13ad39fe8e0d0b",
+      "size": 2254
+    },
+    {
+      "path": "src/silk/plc.rs",
+      "git_blob_sha": "b2304c537d4afc37e3ce4b6e02cc904434581513",
+      "size": 21189
+    },
+    {
+      "path": "src/silk/pulses.rs",
+      "git_blob_sha": "0a3035224dfee8c0ec4d69f37c815e9d8c93d264",
+      "size": 18411
+    },
+    {
+      "path": "src/silk/resampler.rs",
+      "git_blob_sha": "21071c08513feb129586363cc72cc4f8a4c6ea0f",
+      "size": 26762
+    },
+    {
+      "path": "src/silk/stereo.rs",
+      "git_blob_sha": "ad3832c7ef3fcca9feef6161571444aea75f2763",
+      "size": 6110
+    },
+    {
+      "path": "src/silk/tables.rs",
+      "git_blob_sha": "7ec247950403b9bbf464891a81df427bffd6169b",
+      "size": 31186
+    },
+    {
+      "path": "src/simd.rs",
+      "git_blob_sha": "d5599386fad70a510c26fc5b02832c1b5b178682",
+      "size": 23234
+    }
+  ]
+}

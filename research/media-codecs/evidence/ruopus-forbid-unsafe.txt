@@ -1,0 +1,573 @@
+error[E0453]: allow(unsafe_code) incompatible with previous forbid
+   --> /tmp/zenmedia-resume-20260928/zenextras/research/media-codecs/ruopus/src/celt/mdct.rs:186:9
+    |
+186 | #[allow(unsafe_code)]
+    |         ^^^^^^^^^^^ overruled by previous forbid
+    |
+    = note: `forbid` lint level was set on command line (`-F unsafe_code`)
+
+error: usage of an `unsafe` block
+   --> /tmp/zenmedia-resume-20260928/zenextras/research/media-codecs/ruopus/src/celt/mdct.rs:199:5
+    |
+199 | /     unsafe {
+200 | |         let mut i = 0;
+201 | |         while i + 4 <= n4 {
+202 | |             let lo = _mm_loadu_ps(fp.add(2 * i));
+...   |
+222 | |     }
+    | |_____^
+    |
+    = note: requested on the command line with `-F unsafe-code`
+
+error[E0453]: allow(unsafe_code) incompatible with previous forbid
+  --> /tmp/zenmedia-resume-20260928/zenextras/research/media-codecs/ruopus/src/celt/vq_simd.rs:15:9
+   |
+15 | #[allow(unsafe_code)]
+   |         ^^^^^^^^^^^ overruled by previous forbid
+   |
+   = note: `forbid` lint level was set on command line (`-F unsafe_code`)
+
+error: usage of an `unsafe` block
+  --> /tmp/zenmedia-resume-20260928/zenextras/research/media-codecs/ruopus/src/celt/vq_simd.rs:24:9
+   |
+24 |         unsafe { op_pvq_search_avx2(x, iy, k) }
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: usage of an `unsafe` block
+  --> /tmp/zenmedia-resume-20260928/zenextras/research/media-codecs/ruopus/src/celt/vq_simd.rs:27:9
+   |
+27 |         unsafe { op_pvq_search_sse2(x, iy, k) }
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error[E0453]: allow(unsafe_code) incompatible with previous forbid
+  --> /tmp/zenmedia-resume-20260928/zenextras/research/media-codecs/ruopus/src/celt/vq_simd.rs:49:9
+   |
+49 | #[allow(unsafe_code)]
+   |         ^^^^^^^^^^^ overruled by previous forbid
+   |
+   = note: `forbid` lint level was set on command line (`-F unsafe_code`)
+
+error: declaration of an `unsafe` function
+   --> /tmp/zenmedia-resume-20260928/zenextras/research/media-codecs/ruopus/src/celt/vq_simd.rs:51:1
+    |
+ 51 | / unsafe fn op_pvq_search_avx2(input: &[f32], iy_out: &mut [i32], k: usize) -> f32 {
+ 52 | |     use core::arch::x86_64::*;
+ 53 | |
+ 54 | |     let n = input.len();
+...   |
+226 | | }
+    | |_^
+
+error[E0453]: allow(unsafe_code) incompatible with previous forbid
+  --> /tmp/zenmedia-resume-20260928/zenextras/research/media-codecs/ruopus/src/celt/vq_simd.rs:68:13
+   |
+68 |     #[allow(unsafe_code)]
+   |             ^^^^^^^^^^^ overruled by previous forbid
+   |
+   = note: `forbid` lint level was set on command line (`-F unsafe_code`)
+
+error: declaration of an `unsafe` function
+  --> /tmp/zenmedia-resume-20260928/zenextras/research/media-codecs/ruopus/src/celt/vq_simd.rs:70:5
+   |
+70 | /     unsafe fn hmax(v: core::arch::x86_64::__m256) -> core::arch::x86_64::__m256 {
+71 | |         use core::arch::x86_64::*;
+72 | |         let v = _mm256_max_ps(v, _mm256_permute2f128_ps::<0x01>(v, v));
+73 | |         let v = _mm256_max_ps(v, _mm256_shuffle_ps::<0x4E>(v, v));
+74 | |         _mm256_max_ps(v, _mm256_shuffle_ps::<0xB1>(v, v))
+75 | |     }
+   | |_____^
+
+error[E0453]: allow(unsafe_code) incompatible with previous forbid
+  --> /tmp/zenmedia-resume-20260928/zenextras/research/media-codecs/ruopus/src/celt/vq_simd.rs:77:13
+   |
+77 |     #[allow(unsafe_code)]
+   |             ^^^^^^^^^^^ overruled by previous forbid
+   |
+   = note: `forbid` lint level was set on command line (`-F unsafe_code`)
+
+error: declaration of an `unsafe` function
+  --> /tmp/zenmedia-resume-20260928/zenextras/research/media-codecs/ruopus/src/celt/vq_simd.rs:79:5
+   |
+79 | /     unsafe fn hmax_i32(p: core::arch::x86_64::__m256i) -> i32 {
+80 | |         use core::arch::x86_64::*;
+81 | |         let m = _mm_max_epi32(_mm256_castsi256_si128(p), _mm256_extracti128_si256::<1>(p));
+82 | |         let m = _mm_max_epi32(m, _mm_shuffle_epi32::<0x4E>(m));
+83 | |         let m = _mm_max_epi32(m, _mm_shuffle_epi32::<0xB1>(m));
+84 | |         _mm_cvtsi128_si32(m)
+85 | |     }
+   | |_____^
+
+error: usage of an `unsafe` block
+   --> /tmp/zenmedia-resume-20260928/zenextras/research/media-codecs/ruopus/src/celt/vq_simd.rs:89:5
+    |
+ 89 | /     unsafe {
+ 90 | |         let signmask = _mm256_set1_ps(-0.0);
+ 91 | |         let eights = _mm256_set1_epi32(8);
+ 92 | |         let xp = xs.as_mut_ptr();
+...   |
+224 | |         yy
+225 | |     }
+    | |_____^
+
+error[E0453]: allow(unsafe_code) incompatible with previous forbid
+   --> /tmp/zenmedia-resume-20260928/zenextras/research/media-codecs/ruopus/src/celt/vq_simd.rs:229:9
+    |
+229 | #[allow(unsafe_code)]
+    |         ^^^^^^^^^^^ overruled by previous forbid
+    |
+    = note: `forbid` lint level was set on command line (`-F unsafe_code`)
+
+error: declaration of an `unsafe` function
+   --> /tmp/zenmedia-resume-20260928/zenextras/research/media-codecs/ruopus/src/celt/vq_simd.rs:230:1
+    |
+230 | / unsafe fn op_pvq_search_sse2(input: &[f32], iy_out: &mut [i32], k: usize) -> f32 {
+231 | |     use core::arch::x86_64::*;
+232 | |
+233 | |     let n = input.len();
+...   |
+378 | | }
+    | |_^
+
+error: usage of an `unsafe` block
+   --> /tmp/zenmedia-resume-20260928/zenextras/research/media-codecs/ruopus/src/celt/vq_simd.rs:248:5
+    |
+248 | /     unsafe {
+249 | |         let signmask = _mm_set1_ps(-0.0);
+250 | |         let fours = _mm_set1_epi32(4);
+251 | |         let xp = xs.as_mut_ptr();
+...   |
+376 | |         yy
+377 | |     }
+    | |_____^
+
+error[E0453]: allow(unsafe_code) incompatible with previous forbid
+  --> /tmp/zenmedia-resume-20260928/zenextras/research/media-codecs/ruopus/src/simd.rs:15:42
+   |
+15 | #[cfg_attr(target_arch = "x86_64", allow(unsafe_code))]
+   |                                          ^^^^^^^^^^^ overruled by previous forbid
+   |
+   = note: `forbid` lint level was set on command line (`-F unsafe_code`)
+
+error: usage of an `unsafe` block
+  --> /tmp/zenmedia-resume-20260928/zenextras/research/media-codecs/ruopus/src/simd.rs:24:9
+   |
+24 |         unsafe { if has_avx2() { dot_avx2(x, y) } else { dot_sse2(x, y) } }
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error[E0453]: allow(unsafe_code) incompatible with previous forbid
+  --> /tmp/zenmedia-resume-20260928/zenextras/research/media-codecs/ruopus/src/simd.rs:35:42
+   |
+35 | #[cfg_attr(target_arch = "x86_64", allow(unsafe_code))]
+   |                                          ^^^^^^^^^^^ overruled by previous forbid
+   |
+   = note: `forbid` lint level was set on command line (`-F unsafe_code`)
+
+error: usage of an `unsafe` block
+  --> /tmp/zenmedia-resume-20260928/zenextras/research/media-codecs/ruopus/src/simd.rs:41:9
+   |
+41 | /         unsafe {
+42 | |             if has_avx2() {
+43 | |                 dual_dot_avx2(x, y1, y2)
+44 | |             } else {
+...  |
+47 | |         }
+   | |_________^
+
+error[E0453]: allow(unsafe_code) incompatible with previous forbid
+  --> /tmp/zenmedia-resume-20260928/zenextras/research/media-codecs/ruopus/src/simd.rs:59:42
+   |
+59 | #[cfg_attr(target_arch = "x86_64", allow(unsafe_code))]
+   |                                          ^^^^^^^^^^^ overruled by previous forbid
+   |
+   = note: `forbid` lint level was set on command line (`-F unsafe_code`)
+
+error: usage of an `unsafe` block
+  --> /tmp/zenmedia-resume-20260928/zenextras/research/media-codecs/ruopus/src/simd.rs:67:13
+   |
+67 |             unsafe { pitch_xcorr_avx2(x, y, out, len) };
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error[E0453]: allow(unsafe_code) incompatible with previous forbid
+  --> /tmp/zenmedia-resume-20260928/zenextras/research/media-codecs/ruopus/src/simd.rs:77:9
+   |
+77 | #[allow(unsafe_code)]
+   |         ^^^^^^^^^^^ overruled by previous forbid
+   |
+   = note: `forbid` lint level was set on command line (`-F unsafe_code`)
+
+error: declaration of an `unsafe` function
+   --> /tmp/zenmedia-resume-20260928/zenextras/research/media-codecs/ruopus/src/simd.rs:79:1
+    |
+ 79 | / unsafe fn pitch_xcorr_avx2(x: &[f32], y: &[f32], out: &mut [f32], len: usize) {
+ 80 | |     use core::arch::x86_64::*;
+ 81 | |     let max_pitch = out.len();
+ 82 | |     let (xp, yp) = (x.as_ptr(), y.as_ptr());
+...   |
+123 | | }
+    | |_^
+
+error: usage of an `unsafe` block
+   --> /tmp/zenmedia-resume-20260928/zenextras/research/media-codecs/ruopus/src/simd.rs:85:5
+    |
+ 85 | /     unsafe {
+ 86 | |         let mut i = 0;
+ 87 | |         while i + 4 <= max_pitch {
+ 88 | |             let (mut s0, mut s1, mut s2, mut s3) = (
+...   |
+122 | |     }
+    | |_____^
+
+error[E0453]: allow(unsafe_code) incompatible with previous forbid
+   --> /tmp/zenmedia-resume-20260928/zenextras/research/media-codecs/ruopus/src/simd.rs:129:42
+    |
+129 | #[cfg_attr(target_arch = "x86_64", allow(unsafe_code))]
+    |                                          ^^^^^^^^^^^ overruled by previous forbid
+    |
+    = note: `forbid` lint level was set on command line (`-F unsafe_code`)
+
+error: usage of an `unsafe` block
+   --> /tmp/zenmedia-resume-20260928/zenextras/research/media-codecs/ruopus/src/simd.rs:139:13
+    |
+139 |             unsafe { fir6_avx2(out, inp, c) };
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error[E0453]: allow(unsafe_code) incompatible with previous forbid
+   --> /tmp/zenmedia-resume-20260928/zenextras/research/media-codecs/ruopus/src/simd.rs:154:9
+    |
+154 | #[allow(unsafe_code)]
+    |         ^^^^^^^^^^^ overruled by previous forbid
+    |
+    = note: `forbid` lint level was set on command line (`-F unsafe_code`)
+
+error: declaration of an `unsafe` function
+   --> /tmp/zenmedia-resume-20260928/zenextras/research/media-codecs/ruopus/src/simd.rs:156:1
+    |
+156 | / unsafe fn fir6_avx2(out: &mut [f32], inp: &[f32], c: [f32; 6]) {
+157 | |     use core::arch::x86_64::*;
+158 | |     let n = out.len();
+159 | |     let (ip, op) = (inp.as_ptr(), out.as_mut_ptr());
+...   |
+190 | | }
+    | |_^
+
+error: usage of an `unsafe` block
+   --> /tmp/zenmedia-resume-20260928/zenextras/research/media-codecs/ruopus/src/simd.rs:162:5
+    |
+162 | /     unsafe {
+163 | |         let c0 = _mm256_set1_ps(c[0]);
+164 | |         let c1 = _mm256_set1_ps(c[1]);
+165 | |         let c2 = _mm256_set1_ps(c[2]);
+...   |
+189 | |     }
+    | |_____^
+
+error[E0453]: allow(unsafe_code) incompatible with previous forbid
+   --> /tmp/zenmedia-resume-20260928/zenextras/research/media-codecs/ruopus/src/simd.rs:196:42
+    |
+196 | #[cfg_attr(target_arch = "x86_64", allow(unsafe_code))]
+    |                                          ^^^^^^^^^^^ overruled by previous forbid
+    |
+    = note: `forbid` lint level was set on command line (`-F unsafe_code`)
+
+error: usage of an `unsafe` block
+   --> /tmp/zenmedia-resume-20260928/zenextras/research/media-codecs/ruopus/src/simd.rs:205:13
+    |
+205 |             unsafe { scale_round_to_i16_avx2(out, x, scale) };
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error[E0453]: allow(unsafe_code) incompatible with previous forbid
+   --> /tmp/zenmedia-resume-20260928/zenextras/research/media-codecs/ruopus/src/simd.rs:215:9
+    |
+215 | #[allow(unsafe_code)]
+    |         ^^^^^^^^^^^ overruled by previous forbid
+    |
+    = note: `forbid` lint level was set on command line (`-F unsafe_code`)
+
+error: declaration of an `unsafe` function
+   --> /tmp/zenmedia-resume-20260928/zenextras/research/media-codecs/ruopus/src/simd.rs:217:1
+    |
+217 | / unsafe fn scale_round_to_i16_avx2(out: &mut [i16], x: &[f32], scale: f32) {
+218 | |     use core::arch::x86_64::*;
+219 | |     let n = x.len();
+220 | |     let (xp, op) = (x.as_ptr(), out.as_mut_ptr());
+...   |
+247 | | }
+    | |_^
+
+error: usage of an `unsafe` block
+   --> /tmp/zenmedia-resume-20260928/zenextras/research/media-codecs/ruopus/src/simd.rs:223:5
+    |
+223 | /     unsafe {
+224 | |         let vscale = _mm256_set1_ps(scale);
+225 | |         let half = _mm256_set1_ps(0.5);
+226 | |         let signmask = _mm256_set1_ps(-0.0);
+...   |
+246 | |     }
+    | |_____^
+
+error[E0453]: allow(unsafe_code) incompatible with previous forbid
+   --> /tmp/zenmedia-resume-20260928/zenextras/research/media-codecs/ruopus/src/simd.rs:265:42
+    |
+265 | #[cfg_attr(target_arch = "x86_64", allow(unsafe_code))]
+    |                                          ^^^^^^^^^^^ overruled by previous forbid
+    |
+    = note: `forbid` lint level was set on command line (`-F unsafe_code`)
+
+error: usage of an `unsafe` block
+   --> /tmp/zenmedia-resume-20260928/zenextras/research/media-codecs/ruopus/src/simd.rs:272:9
+    |
+272 | /         unsafe {
+273 | |             if has_avx2() {
+274 | |                 dot_f64_avx2(x, y)
+275 | |             } else {
+...   |
+278 | |         }
+    | |_________^
+
+error[E0453]: allow(unsafe_code) incompatible with previous forbid
+   --> /tmp/zenmedia-resume-20260928/zenextras/research/media-codecs/ruopus/src/simd.rs:315:9
+    |
+315 | #[allow(unsafe_code)]
+    |         ^^^^^^^^^^^ overruled by previous forbid
+    |
+    = note: `forbid` lint level was set on command line (`-F unsafe_code`)
+
+error: declaration of an `unsafe` function
+   --> /tmp/zenmedia-resume-20260928/zenextras/research/media-codecs/ruopus/src/simd.rs:317:1
+    |
+317 | / unsafe fn dot_avx2(x: &[f32], y: &[f32]) -> f32 {
+318 | |     use core::arch::x86_64::*;
+319 | |     let n = x.len();
+320 | |     let (xp, yp) = (x.as_ptr(), y.as_ptr());
+...   |
+349 | | }
+    | |_^
+
+error: usage of an `unsafe` block
+   --> /tmp/zenmedia-resume-20260928/zenextras/research/media-codecs/ruopus/src/simd.rs:324:5
+    |
+324 | /     unsafe {
+325 | |         let mut a0 = _mm256_setzero_ps();
+326 | |         let mut a1 = _mm256_setzero_ps();
+327 | |         let mut a2 = _mm256_setzero_ps();
+...   |
+347 | |         s
+348 | |     }
+    | |_____^
+
+error[E0453]: allow(unsafe_code) incompatible with previous forbid
+   --> /tmp/zenmedia-resume-20260928/zenextras/research/media-codecs/ruopus/src/simd.rs:352:9
+    |
+352 | #[allow(unsafe_code)]
+    |         ^^^^^^^^^^^ overruled by previous forbid
+    |
+    = note: `forbid` lint level was set on command line (`-F unsafe_code`)
+
+error: declaration of an `unsafe` function
+   --> /tmp/zenmedia-resume-20260928/zenextras/research/media-codecs/ruopus/src/simd.rs:354:1
+    |
+354 | / unsafe fn dual_dot_avx2(x: &[f32], y1: &[f32], y2: &[f32]) -> (f32, f32) {
+355 | |     use core::arch::x86_64::*;
+356 | |     let n = x.len();
+357 | |     let (xp, y1p, y2p) = (x.as_ptr(), y1.as_ptr(), y2.as_ptr());
+...   |
+378 | | }
+    | |_^
+
+error: usage of an `unsafe` block
+   --> /tmp/zenmedia-resume-20260928/zenextras/research/media-codecs/ruopus/src/simd.rs:359:5
+    |
+359 | /     unsafe {
+360 | |         let mut a1 = _mm256_setzero_ps();
+361 | |         let mut a2 = _mm256_setzero_ps();
+362 | |         let mut i = 0;
+...   |
+376 | |         (s1, s2)
+377 | |     }
+    | |_____^
+
+error[E0453]: allow(unsafe_code) incompatible with previous forbid
+   --> /tmp/zenmedia-resume-20260928/zenextras/research/media-codecs/ruopus/src/simd.rs:381:9
+    |
+381 | #[allow(unsafe_code)]
+    |         ^^^^^^^^^^^ overruled by previous forbid
+    |
+    = note: `forbid` lint level was set on command line (`-F unsafe_code`)
+
+error: declaration of an `unsafe` function
+   --> /tmp/zenmedia-resume-20260928/zenextras/research/media-codecs/ruopus/src/simd.rs:382:1
+    |
+382 | / unsafe fn dot_sse2(x: &[f32], y: &[f32]) -> f32 {
+383 | |     use core::arch::x86_64::*;
+384 | |     let n = x.len();
+385 | |     let (xp, yp) = (x.as_ptr(), y.as_ptr());
+...   |
+407 | | }
+    | |_^
+
+error: usage of an `unsafe` block
+   --> /tmp/zenmedia-resume-20260928/zenextras/research/media-codecs/ruopus/src/simd.rs:387:5
+    |
+387 | /     unsafe {
+388 | |         let mut a0 = _mm_setzero_ps();
+389 | |         let mut a1 = _mm_setzero_ps();
+390 | |         let mut i = 0;
+...   |
+405 | |         s
+406 | |     }
+    | |_____^
+
+error[E0453]: allow(unsafe_code) incompatible with previous forbid
+   --> /tmp/zenmedia-resume-20260928/zenextras/research/media-codecs/ruopus/src/simd.rs:410:9
+    |
+410 | #[allow(unsafe_code)]
+    |         ^^^^^^^^^^^ overruled by previous forbid
+    |
+    = note: `forbid` lint level was set on command line (`-F unsafe_code`)
+
+error: declaration of an `unsafe` function
+   --> /tmp/zenmedia-resume-20260928/zenextras/research/media-codecs/ruopus/src/simd.rs:411:1
+    |
+411 | / unsafe fn dual_dot_sse2(x: &[f32], y1: &[f32], y2: &[f32]) -> (f32, f32) {
+412 | |     use core::arch::x86_64::*;
+413 | |     let n = x.len();
+414 | |     let (xp, y1p, y2p) = (x.as_ptr(), y1.as_ptr(), y2.as_ptr());
+...   |
+435 | | }
+    | |_^
+
+error: usage of an `unsafe` block
+   --> /tmp/zenmedia-resume-20260928/zenextras/research/media-codecs/ruopus/src/simd.rs:416:5
+    |
+416 | /     unsafe {
+417 | |         let mut a1 = _mm_setzero_ps();
+418 | |         let mut a2 = _mm_setzero_ps();
+419 | |         let mut i = 0;
+...   |
+433 | |         (s1, s2)
+434 | |     }
+    | |_____^
+
+error[E0453]: allow(unsafe_code) incompatible with previous forbid
+   --> /tmp/zenmedia-resume-20260928/zenextras/research/media-codecs/ruopus/src/simd.rs:438:9
+    |
+438 | #[allow(unsafe_code)]
+    |         ^^^^^^^^^^^ overruled by previous forbid
+    |
+    = note: `forbid` lint level was set on command line (`-F unsafe_code`)
+
+error: declaration of an `unsafe` function
+   --> /tmp/zenmedia-resume-20260928/zenextras/research/media-codecs/ruopus/src/simd.rs:440:1
+    |
+440 | / unsafe fn hsum128(v: core::arch::x86_64::__m128) -> f32 {
+441 | |     use core::arch::x86_64::*;
+442 | |     // SAFETY: pure register shuffles/adds, no memory access.
+443 | |     unsafe {
+...   |
+448 | | }
+    | |_^
+
+error: usage of an `unsafe` block
+   --> /tmp/zenmedia-resume-20260928/zenextras/research/media-codecs/ruopus/src/simd.rs:443:5
+    |
+443 | /     unsafe {
+444 | |         let shuf = _mm_add_ps(v, _mm_shuffle_ps::<0x4E>(v, v));
+445 | |         let sums = _mm_add_ss(shuf, _mm_shuffle_ps::<0xB1>(shuf, shuf));
+446 | |         _mm_cvtss_f32(sums)
+447 | |     }
+    | |_____^
+
+error[E0453]: allow(unsafe_code) incompatible with previous forbid
+   --> /tmp/zenmedia-resume-20260928/zenextras/research/media-codecs/ruopus/src/simd.rs:451:9
+    |
+451 | #[allow(unsafe_code)]
+    |         ^^^^^^^^^^^ overruled by previous forbid
+    |
+    = note: `forbid` lint level was set on command line (`-F unsafe_code`)
+
+error: declaration of an `unsafe` function
+   --> /tmp/zenmedia-resume-20260928/zenextras/research/media-codecs/ruopus/src/simd.rs:453:1
+    |
+453 | / unsafe fn hsum256(v: core::arch::x86_64::__m256) -> f32 {
+454 | |     use core::arch::x86_64::*;
+455 | |     // SAFETY: pure register ops; extracts the two 128-bit halves and folds.
+456 | |     unsafe {
+...   |
+461 | | }
+    | |_^
+
+error: usage of an `unsafe` block
+   --> /tmp/zenmedia-resume-20260928/zenextras/research/media-codecs/ruopus/src/simd.rs:456:5
+    |
+456 | /     unsafe {
+457 | |         let lo = _mm256_castps256_ps128(v);
+458 | |         let hi = _mm256_extractf128_ps::<1>(v);
+459 | |         hsum128(_mm_add_ps(lo, hi))
+460 | |     }
+    | |_____^
+
+error[E0453]: allow(unsafe_code) incompatible with previous forbid
+   --> /tmp/zenmedia-resume-20260928/zenextras/research/media-codecs/ruopus/src/simd.rs:464:9
+    |
+464 | #[allow(unsafe_code)]
+    |         ^^^^^^^^^^^ overruled by previous forbid
+    |
+    = note: `forbid` lint level was set on command line (`-F unsafe_code`)
+
+error: declaration of an `unsafe` function
+   --> /tmp/zenmedia-resume-20260928/zenextras/research/media-codecs/ruopus/src/simd.rs:466:1
+    |
+466 | / unsafe fn dot_f64_avx2(x: &[f32], y: &[f32]) -> f64 {
+467 | |     use core::arch::x86_64::*;
+468 | |     let n = x.len();
+469 | |     let (xp, yp) = (x.as_ptr(), y.as_ptr());
+...   |
+508 | | }
+    | |_^
+
+error: usage of an `unsafe` block
+   --> /tmp/zenmedia-resume-20260928/zenextras/research/media-codecs/ruopus/src/simd.rs:473:5
+    |
+473 | /     unsafe {
+474 | |         let mut a0 = _mm256_setzero_pd();
+475 | |         let mut a1 = _mm256_setzero_pd();
+476 | |         let mut a2 = _mm256_setzero_pd();
+...   |
+506 | |         s
+507 | |     }
+    | |_____^
+
+error[E0453]: allow(unsafe_code) incompatible with previous forbid
+   --> /tmp/zenmedia-resume-20260928/zenextras/research/media-codecs/ruopus/src/simd.rs:511:9
+    |
+511 | #[allow(unsafe_code)]
+    |         ^^^^^^^^^^^ overruled by previous forbid
+    |
+    = note: `forbid` lint level was set on command line (`-F unsafe_code`)
+
+error: declaration of an `unsafe` function
+   --> /tmp/zenmedia-resume-20260928/zenextras/research/media-codecs/ruopus/src/simd.rs:512:1
+    |
+512 | / unsafe fn dot_f64_sse2(x: &[f32], y: &[f32]) -> f64 {
+513 | |     use core::arch::x86_64::*;
+514 | |     let n = x.len();
+515 | |     let (xp, yp) = (x.as_ptr(), y.as_ptr());
+...   |
+535 | | }
+    | |_^
+
+error: usage of an `unsafe` block
+   --> /tmp/zenmedia-resume-20260928/zenextras/research/media-codecs/ruopus/src/simd.rs:518:5
+    |
+518 | /     unsafe {
+519 | |         let mut acc = _mm_setzero_pd();
+520 | |         let mut i = 0;
+521 | |         while i + 2 <= n {
+...   |
+533 | |         s
+534 | |     }
+    | |_____^
+
+error: aborting due to 60 previous errors
+
+For more information about this error, try `rustc --explain E0453`.

@@ -1,0 +1,317 @@
+{
+  "repository": "jmg049/ruopus",
+  "commit": "23166c3c961519349c6c0fc93664c2ed1fc8cc30",
+  "build": [
+    "/home/lilith/.cargo/bin/rustc",
+    "--edition=2024",
+    "--cfg",
+    "feature=\"std\"",
+    "-C",
+    "opt-level=3",
+    "--crate-name",
+    "ruopus",
+    "--crate-type",
+    "rlib",
+    "/tmp/zenmedia-resume-20260928/zenextras/research/media-codecs/ruopus/src/lib.rs",
+    "-o",
+    "/tmp/zenmedia-resume-20260928/zenextras/research/media-codecs/audio-results/libruopus.rlib"
+  ],
+  "forbid_unsafe_exit_code": 1,
+  "features": "std only; spectrograms disabled; upstream SIMD enabled",
+  "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)\nbinary: rustc\ncommit-hash: 48a229ceaefd4985c50990b14116b6d856af0985\ncommit-date: 2026-09-01\nhost: x86_64-unknown-linux-gnu\nrelease: 1.98.1\nLLVM version: 22.1.8\n",
+  "ffmpeg": "ffmpeg version 8.0.1-3ubuntu2 Copyright (c) 2000-2025 the FFmpeg developers\nbuilt with gcc 15 (Ubuntu 15.2.0-13ubuntu3)\nconfiguration: --prefix=/usr --extra-version=3ubuntu2 --toolchain=hardened --libdir=/usr/lib/x86_64-linux-gnu --incdir=/usr/include/x86_64-linux-gnu --arch=amd64 --enable-gpl --disable-stripping --disable-pocketsphinx --disable-libcaca --disable-libmfx --disable-omx --enable-gnutls --enable-libaom --enable-libass --enable-libbs2b --enable-libcdio --enable-libcodec2 --enable-libdav1d --enable-libflite --enable-libfontconfig --enable-libfreetype --enable-libfribidi --enable-libglslang --enable-libgme --enable-libgsm --enable-libharfbuzz --enable-libmp3lame --enable-libmysofa --enable-libopenjpeg --enable-libopenmpt --enable-libopus --enable-librubberband --enable-libshine --enable-libsnappy --enable-libsoxr --enable-libspeex --enable-libtheora --enable-libtwolame --enable-libvidstab --enable-libvorbis --enable-libvpx --enable-libwebp --enable-libx265 --enable-libxml2 --enable-libxvid --enable-libzimg --enable-openal --enable-opencl --enable-opengl --disable-sndio --enable-libvpl --enable-libdc1394 --enable-libdrm --enable-libiec61883 --enable-chromaprint --enable-frei0r --enable-ladspa --enable-libbluray --enable-libdvdnav --enable-libdvdread --enable-libjack --enable-libjxl --enable-libpulse --enable-librabbitmq --enable-librist --enable-libsrt --enable-libssh --enable-libsvtav1 --enable-libx264 --enable-libzmq --enable-libzvbi --enable-lv2 --enable-sdl2 --enable-libplacebo --enable-librav1e --enable-librsvg --enable-shared\nlibavutil      60.  8.100 / 60.  8.100\nlibavcodec     62. 11.100 / 62. 11.100\nlibavformat    62.  3.100 / 62.  3.100\nlibavdevice    62.  1.100 / 62.  1.100\nlibavfilter    11.  4.100 / 11.  4.100\nlibswscale      9.  1.100 /  9.  1.100\nlibswresample   6.  1.100 /  6.  1.100\n\nExiting with exit code 0\n",
+  "binary_sha256": "add0095a961775759204da450e9656c5e9d6f2234bbde94332895753659489c7",
+  "scope": "presentation sample counts; not signal quality or full Opus conformance",
+  "cases": [
+    {
+      "input_samples_per_channel": 1,
+      "channels": 1,
+      "bitrate": 24000,
+      "decoded_samples_per_channel": 891,
+      "decoder_exit_code": 0,
+      "stderr": "",
+      "file_sha256": "9b49a52362568bd9fd7c490676c8be0dce5ca4ce14b634ec08e2f54179b7e302",
+      "status": "duration_mismatch"
+    },
+    {
+      "input_samples_per_channel": 120,
+      "channels": 1,
+      "bitrate": 24000,
+      "decoded_samples_per_channel": 891,
+      "decoder_exit_code": 0,
+      "stderr": "",
+      "file_sha256": "f8514471eb5c1a2cfcd5bb4af376ba821da6f4b37aae440ea6ddbf2170424e07",
+      "status": "duration_mismatch"
+    },
+    {
+      "input_samples_per_channel": 959,
+      "channels": 1,
+      "bitrate": 24000,
+      "decoded_samples_per_channel": 891,
+      "decoder_exit_code": 0,
+      "stderr": "",
+      "file_sha256": "539397921a2c5cec168e76b54c520b0ea773491c3c691ea1693e91f08530e463",
+      "status": "duration_mismatch"
+    },
+    {
+      "input_samples_per_channel": 960,
+      "channels": 1,
+      "bitrate": 24000,
+      "decoded_samples_per_channel": 891,
+      "decoder_exit_code": 0,
+      "stderr": "",
+      "file_sha256": "539397921a2c5cec168e76b54c520b0ea773491c3c691ea1693e91f08530e463",
+      "status": "duration_mismatch"
+    },
+    {
+      "input_samples_per_channel": 961,
+      "channels": 1,
+      "bitrate": 24000,
+      "decoded_samples_per_channel": 1851,
+      "decoder_exit_code": 0,
+      "stderr": "",
+      "file_sha256": "ee981563cd8b44501cc0242ed12b3ad40e4ef69b775fe7f14be9877c7373fa3a",
+      "status": "duration_mismatch"
+    },
+    {
+      "input_samples_per_channel": 1920,
+      "channels": 1,
+      "bitrate": 24000,
+      "decoded_samples_per_channel": 1851,
+      "decoder_exit_code": 0,
+      "stderr": "",
+      "file_sha256": "e6a0b72262afb952b46f4b4442f4a146184dcf515aaf57152451b1bea081209e",
+      "status": "duration_mismatch"
+    },
+    {
+      "input_samples_per_channel": 1921,
+      "channels": 1,
+      "bitrate": 24000,
+      "decoded_samples_per_channel": 2811,
+      "decoder_exit_code": 0,
+      "stderr": "",
+      "file_sha256": "e9461a8e4dc16bd3d245e7086a7e9d06b33b44223a5c2b21fbc5ce766ccc8c86",
+      "status": "duration_mismatch"
+    },
+    {
+      "input_samples_per_channel": 1,
+      "channels": 1,
+      "bitrate": 64000,
+      "decoded_samples_per_channel": 840,
+      "decoder_exit_code": 0,
+      "stderr": "",
+      "file_sha256": "6e3d2889f60b096afa05f04a5ac50d05e8cd694d13f685ac09c2bd9098340a3d",
+      "status": "duration_mismatch"
+    },
+    {
+      "input_samples_per_channel": 120,
+      "channels": 1,
+      "bitrate": 64000,
+      "decoded_samples_per_channel": 840,
+      "decoder_exit_code": 0,
+      "stderr": "",
+      "file_sha256": "0fe11376773890f3784eeaa682e8e6edb1305b205c73413a7d2e422542b16f4d",
+      "status": "duration_mismatch"
+    },
+    {
+      "input_samples_per_channel": 959,
+      "channels": 1,
+      "bitrate": 64000,
+      "decoded_samples_per_channel": 840,
+      "decoder_exit_code": 0,
+      "stderr": "",
+      "file_sha256": "5bcdee2abea4f3521d48a9510970912989fcc9eb0f3331f68ef38e15fd6f32a1",
+      "status": "duration_mismatch"
+    },
+    {
+      "input_samples_per_channel": 960,
+      "channels": 1,
+      "bitrate": 64000,
+      "decoded_samples_per_channel": 840,
+      "decoder_exit_code": 0,
+      "stderr": "",
+      "file_sha256": "18fd2f9f0b4658665cd9e54a9101cd5836bafeb366b1b31afbd4ba55a90e4bf1",
+      "status": "duration_mismatch"
+    },
+    {
+      "input_samples_per_channel": 961,
+      "channels": 1,
+      "bitrate": 64000,
+      "decoded_samples_per_channel": 1800,
+      "decoder_exit_code": 0,
+      "stderr": "",
+      "file_sha256": "b485a2adc7870d75f66885e24f45b7130f1049032bf6fd93aa9264ee4e493c4d",
+      "status": "duration_mismatch"
+    },
+    {
+      "input_samples_per_channel": 1920,
+      "channels": 1,
+      "bitrate": 64000,
+      "decoded_samples_per_channel": 1800,
+      "decoder_exit_code": 0,
+      "stderr": "",
+      "file_sha256": "7da8098740819874c4c4d2778290a655604185fcd780fa58746c95e7a98805d2",
+      "status": "duration_mismatch"
+    },
+    {
+      "input_samples_per_channel": 1921,
+      "channels": 1,
+      "bitrate": 64000,
+      "decoded_samples_per_channel": 2760,
+      "decoder_exit_code": 0,
+      "stderr": "",
+      "file_sha256": "17e6ceace1d524243db83f68c3b97a339cf8af022d8737797c77a6cf8e7a7777",
+      "status": "duration_mismatch"
+    },
+    {
+      "input_samples_per_channel": 1,
+      "channels": 2,
+      "bitrate": 24000,
+      "decoded_samples_per_channel": 891,
+      "decoder_exit_code": 0,
+      "stderr": "",
+      "file_sha256": "a6e912a2657b6bdebf71cd1ea85b5b82359d1571f5a577f2094a49d4c0bb651e",
+      "status": "duration_mismatch"
+    },
+    {
+      "input_samples_per_channel": 120,
+      "channels": 2,
+      "bitrate": 24000,
+      "decoded_samples_per_channel": 891,
+      "decoder_exit_code": 0,
+      "stderr": "",
+      "file_sha256": "67ed4cfb5506d74cf51e3405d8ca82880c61c174b92a0a14d53e62e74138cbdf",
+      "status": "duration_mismatch"
+    },
+    {
+      "input_samples_per_channel": 959,
+      "channels": 2,
+      "bitrate": 24000,
+      "decoded_samples_per_channel": 891,
+      "decoder_exit_code": 0,
+      "stderr": "",
+      "file_sha256": "a7a925e42520b678baaf6c6cbd1e1d1549979852784b477d1eb2228ff6208df5",
+      "status": "duration_mismatch"
+    },
+    {
+      "input_samples_per_channel": 960,
+      "channels": 2,
+      "bitrate": 24000,
+      "decoded_samples_per_channel": 891,
+      "decoder_exit_code": 0,
+      "stderr": "",
+      "file_sha256": "a7a925e42520b678baaf6c6cbd1e1d1549979852784b477d1eb2228ff6208df5",
+      "status": "duration_mismatch"
+    },
+    {
+      "input_samples_per_channel": 961,
+      "channels": 2,
+      "bitrate": 24000,
+      "decoded_samples_per_channel": 1851,
+      "decoder_exit_code": 0,
+      "stderr": "",
+      "file_sha256": "d9e0b455d90e321da846cdaf0be7d26094aa59afbdea47beeb73b61328106b7b",
+      "status": "duration_mismatch"
+    },
+    {
+      "input_samples_per_channel": 1920,
+      "channels": 2,
+      "bitrate": 24000,
+      "decoded_samples_per_channel": 1851,
+      "decoder_exit_code": 0,
+      "stderr": "",
+      "file_sha256": "2e74b3d12a32c636d77e538e18fd3b09322b0bd1dfe6617dee02e67f89c784e3",
+      "status": "duration_mismatch"
+    },
+    {
+      "input_samples_per_channel": 1921,
+      "channels": 2,
+      "bitrate": 24000,
+      "decoded_samples_per_channel": 2811,
+      "decoder_exit_code": 0,
+      "stderr": "",
+      "file_sha256": "81231706992b81c657d38af9dfa57ae49e8cb1cc9bf69f0e69656080e5ed1e2d",
+      "status": "duration_mismatch"
+    },
+    {
+      "input_samples_per_channel": 1,
+      "channels": 2,
+      "bitrate": 64000,
+      "decoded_samples_per_channel": 840,
+      "decoder_exit_code": 0,
+      "stderr": "",
+      "file_sha256": "1e9efbd6b600d177a50276136ee681bc00d870e21fc52723bbc6b59ce20da543",
+      "status": "duration_mismatch"
+    },
+    {
+      "input_samples_per_channel": 120,
+      "channels": 2,
+      "bitrate": 64000,
+      "decoded_samples_per_channel": 840,
+      "decoder_exit_code": 0,
+      "stderr": "",
+      "file_sha256": "aaaf359a8e53c3bd4d01f5b5586edaadd17ff30baf3d2bdea174bfe75a4a8c63",
+      "status": "duration_mismatch"
+    },
+    {
+      "input_samples_per_channel": 959,
+      "channels": 2,
+      "bitrate": 64000,
+      "decoded_samples_per_channel": 840,
+      "decoder_exit_code": 0,
+      "stderr": "",
+      "file_sha256": "f269c136a9854f68dfacb78ae3cf0dc12de7e1294daf5b4f82b4a8776a266d24",
+      "status": "duration_mismatch"
+    },
+    {
+      "input_samples_per_channel": 960,
+      "channels": 2,
+      "bitrate": 64000,
+      "decoded_samples_per_channel": 840,
+      "decoder_exit_code": 0,
+      "stderr": "",
+      "file_sha256": "8b988bd8a71effcf8cc68af7bd1a86b4c41af908b2a325fce26616b15afe781d",
+      "status": "duration_mismatch"
+    },
+    {
+      "input_samples_per_channel": 961,
+      "channels": 2,
+      "bitrate": 64000,
+      "decoded_samples_per_channel": 1800,
+      "decoder_exit_code": 0,
+      "stderr": "",
+      "file_sha256": "b074be6e5e61b1de72172e6bd9701a2975d4b2dbf668ec58ffea0df94fb3b5cb",
+      "status": "duration_mismatch"
+    },
+    {
+      "input_samples_per_channel": 1920,
+      "channels": 2,
+      "bitrate": 64000,
+      "decoded_samples_per_channel": 1800,
+      "decoder_exit_code": 0,
+      "stderr": "",
+      "file_sha256": "6534428154c55cf7251499018e8e3727bb87f26346e4911f8a0459c1fdf92dac",
+      "status": "duration_mismatch"
+    },
+    {
+      "input_samples_per_channel": 1921,
+      "channels": 2,
+      "bitrate": 64000,
+      "decoded_samples_per_channel": 2760,
+      "decoder_exit_code": 0,
+      "stderr": "",
+      "file_sha256": "d78e691ff992546dfd3f1a23691d302135aaa05cb058a534d56ede2c53d02d81",
+      "status": "duration_mismatch"
+    }
+  ],
+  "reference_controls": [
+    {
+      "input_samples": 960,
+      "presented_samples": 960
+    },
+    {
+      "input_samples": 961,
+      "presented_samples": 961
+    }
+  ]
+}
