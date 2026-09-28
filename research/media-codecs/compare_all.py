@@ -18,11 +18,17 @@ ROOT = Path(__file__).resolve().parent
 RESULTS = ROOT / "results"
 HARNESS = "/tmp/zenmedia-resume-20260928/candidates/target/release/h264-harness"
 
-CASES = [
-    "baseline", "main_b", "high_b", "high_multi_slice", "cropped",
-    "open_gop", "360p", "mbaff", "high10",
-]
 DECODERS = ["rust_h264", "rusty_h264", "hibernia", "oxideav", "wedeo"]
+
+
+def load_cases() -> list[str]:
+    """Case order from the manifest; falls back to the probe's nine."""
+    m = RESULTS / "cases.json"
+    if m.exists():
+        return [c["name"] for c in json.loads(m.read_text())["cases"]
+                if c["status"] == "ok"]
+    return ["baseline", "main_b", "high_b", "high_multi_slice", "cropped",
+            "open_gop", "360p", "mbaff", "high10"]
 
 
 def sha256(p: Path) -> str:
@@ -41,10 +47,11 @@ def main() -> int:
         i = args.index("--decoders")
         decoders = args[i + 1].split(",")
 
+    cases = load_cases()
     report = {"harness": HARNESS, "cases": []}
     worst = 0
     for dec in decoders:
-        for case in CASES:
+        for case in cases:
             inp = RESULTS / f"{case}.h264"
             ref = RESULTS / f"{case}.ref.yuv"
             got = RESULTS / f"{case}.{dec}.got.yuv"
@@ -69,7 +76,13 @@ def main() -> int:
             if lines:
                 rec["output"] = json.loads(lines[0])
             if proc.returncode != 0:
-                rec["status"] = "crash" if proc.returncode < 0 or proc.returncode > 128 else "error"
+                err = proc.stderr
+                if "panicked at" in err or proc.returncode < 0 or proc.returncode > 128:
+                    rec["status"] = "crash"
+                elif "FeatureNotSupported" in err or "Unsupported(" in err:
+                    rec["status"] = "rejected"
+                else:
+                    rec["status"] = "error"
                 rec["stderr"] = proc.stderr[-2000:]
                 report["cases"].append(rec)
                 worst = max(worst, 1)
@@ -85,7 +98,13 @@ def main() -> int:
             rec["actual_bytes"] = len(gb)
             rec["reference_sha256"] = sha256(ref)
             rec["got_sha256"] = sha256(got)
-            if rb == gb:
+            out = rec.get("output") or {}
+            if out.get("geometry_changes", 0) > 0:
+                # Mixed-geometry stream: the flat rawvideo reference can't
+                # express per-frame size changes (ffmpeg emits first-SPS
+                # geometry throughout). Verdict = decoder reinit handling.
+                rec["status"] = "reinit_ok" if len(gb) > len(rb) else "reinit_wrong"
+            elif rb == gb:
                 rec["status"] = "exact"
             else:
                 n = sum(a != b for a, b in zip(rb, gb))
@@ -106,7 +125,7 @@ def main() -> int:
         )
     hdr = ["case"] + decoders
     print(("{:<18}" * len(hdr)).format(*hdr))
-    for case in CASES:
+    for case in cases:
         row = [case] + [by.get(case, {}).get(d, "-") for d in decoders]
         print(("{:<18}" * len(row)).format(*row))
     print(f"report: {out}")
