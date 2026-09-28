@@ -76,6 +76,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut count = 0usize;
         let mut first_ns = None;
         let mut geometry: Option<(usize, usize)> = None;
+        let mut geometry_changes = 0usize;
         let mut format_tag: &'static str = "unknown";
         let mut bit_depth = 0u8;
 
@@ -86,7 +87,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             let wh = (f.width, f.height);
             if geometry.is_some_and(|g| g != wh) {
-                return Err("geometry changed mid-stream".into());
+                // Mid-stream resolution switches are legal; record them.
+                geometry_changes += 1;
             }
             geometry = Some(wh);
             format_tag = f.format;
@@ -125,7 +127,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             fs::write(&args[3], &raw)?;
         }
         println!(
-            "{{\"decoder\":{decoder:?},\"iteration\":{iteration},\"frames\":{count},\"width\":{width},\"height\":{height},\"bit_depth\":{bit_depth},\"format\":{format_tag:?},\"ns\":{ns},\"first_ns\":{}}}",
+            "{{\"decoder\":{decoder:?},\"iteration\":{iteration},\"frames\":{count},\"width\":{width},\"height\":{height},\"geometry_changes\":{geometry_changes},\"bit_depth\":{bit_depth},\"format\":{format_tag:?},\"ns\":{ns},\"first_ns\":{}}}",
             first_ns.unwrap()
         );
     }
