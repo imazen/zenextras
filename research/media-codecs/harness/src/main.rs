@@ -54,8 +54,37 @@ fn decode(decoder: &str, bytes: &[u8], sink: &mut Sink) -> Result<(), String> {
         "oxideav" => oxideav_adapter::decode(bytes, sink),
         #[cfg(feature = "wedeo")]
         "wedeo" => wedeo_adapter::decode(bytes, sink),
+        #[cfg(feature = "vp9_rusty")]
+        "rusty_vp9" => vp9_rusty_adapter::decode(bytes, sink),
+        #[cfg(feature = "vp9_wedeo")]
+        "wedeo_vp9" => vp9_wedeo_adapter::decode(bytes, sink),
         other => Err(format!("decoder {other:?} not compiled in (feature-gated off or unknown)")),
     }
+}
+
+/// Minimal IVF demux: 32-byte DKIF header then <u32 size><u64 ts><payload>.
+/// VP9 has no Annex-B-style raw stream; IVF is the canonical packet boundary.
+fn ivf_packets(bytes: &[u8]) -> Result<Vec<&[u8]>, String> {
+    if bytes.len() < 32 || &bytes[0..4] != b"DKIF" {
+        return Err("not an IVF file".into());
+    }
+    let fourcc = &bytes[8..12];
+    if fourcc != b"VP90" && fourcc != b"VP80" {
+        return Err(format!("IVF fourcc {:?} is not VP90/VP80",
+            String::from_utf8_lossy(fourcc)));
+    }
+    let mut pos = 32usize;
+    let mut out = Vec::new();
+    while pos + 12 <= bytes.len() {
+        let size = u32::from_le_bytes(bytes[pos..pos + 4].try_into().unwrap()) as usize;
+        pos += 12;
+        if pos + size > bytes.len() {
+            return Err(format!("truncated IVF frame (need {size} bytes at {pos})"));
+        }
+        out.push(&bytes[pos..pos + size]);
+        pos += size;
+    }
+    Ok(out)
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -382,9 +411,9 @@ mod oxideav_adapter {
 
 #[cfg(feature = "wedeo")]
 mod wedeo_adapter {
-    use super::{FrameView, PlaneRef, Sink};
+    use super::Sink;
     use wedeo_codec::decoder::{CodecParameters, Decoder};
-    use wedeo_core::{frame::FrameData, CodecId, Error, MediaType, Packet};
+    use wedeo_core::{CodecId, Error, MediaType, Packet};
 
     pub fn decode(bytes: &[u8], sink: &mut Sink) -> Result<(), String> {
         let mut dec = wedeo_codec_h264::decoder::H264Decoder::new(CodecParameters::new(
@@ -414,53 +443,185 @@ mod wedeo_adapter {
     }
 
     fn emit(f: &wedeo_core::Frame, sink: &mut Sink) -> Result<(), String> {
-        let FrameData::Video(v) = &f.data else {
-            return Ok(());
-        };
-        let bps = match v.format {
-            wedeo_core::PixelFormat::Yuv420p10le
-            | wedeo_core::PixelFormat::Yuv420p16le
-            | wedeo_core::PixelFormat::Yuv420p16be
-            | wedeo_core::PixelFormat::Yuv420p10be
-            | wedeo_core::PixelFormat::Gray16le
-            | wedeo_core::PixelFormat::Gray16be => 2usize,
-            _ => 1usize,
-        };
-        let vw = v.width as usize;
-        let vh = v.height as usize;
-        let (cl, ct, cr, cb) = (
-            v.crop_left as usize,
-            v.crop_top as usize,
-            v.crop_right as usize,
-            v.crop_bottom as usize,
-        );
-        let planes: Vec<PlaneRef> = v
+        super::emit_wedeo(f, sink)
+    }
+}
+
+/// Shared wedeo `Frame` → `FrameView` conversion (used by both wedeo adapters).
+#[cfg(any(feature = "wedeo", feature = "vp9_wedeo"))]
+fn emit_wedeo(f: &wedeo_core::Frame, sink: &mut Sink) -> Result<(), String> {
+    use wedeo_core::frame::FrameData;
+    let FrameData::Video(v) = &f.data else {
+        return Ok(());
+    };
+    let bps = match v.format {
+        wedeo_core::PixelFormat::Yuv420p10le
+        | wedeo_core::PixelFormat::Yuv420p16le
+        | wedeo_core::PixelFormat::Yuv420p16be
+        | wedeo_core::PixelFormat::Yuv420p10be
+        | wedeo_core::PixelFormat::Gray16le
+        | wedeo_core::PixelFormat::Gray16be => 2usize,
+        _ => 1usize,
+    };
+    let vw = v.width as usize;
+    let vh = v.height as usize;
+    let (cl, ct, cr, cb) = (
+        v.crop_left as usize,
+        v.crop_top as usize,
+        v.crop_right as usize,
+        v.crop_bottom as usize,
+    );
+    // Chroma shift relative to luma: 4:2:0 = half both axes, 4:2:2 = half
+    // width only, 4:4:4 = full. wedeo doesn't expose subsampling directly on
+    // the frame; infer from chroma linesize vs luma.
+    let cx_half = v.planes.len() > 1
+        && (v.planes[1].linesize as usize) < vw * bps;
+    let cy_half = match v.format {
+        wedeo_core::PixelFormat::Yuv422p
+        | wedeo_core::PixelFormat::Yuv444p
+        | wedeo_core::PixelFormat::Yuvj422p
+        | wedeo_core::PixelFormat::Yuvj444p
+        | wedeo_core::PixelFormat::Gray8 => false,
+        _ => true,
+    };
+    let planes: Vec<PlaneRef> = v
+        .planes
+        .iter()
+        .enumerate()
+        .map(|(i, p)| {
+            // Apply FFmpeg AVFrame crop convention on the luma plane; chroma
+            // planes share the same relative crop for 4:2:0.
+            let is_luma = i == 0;
+            let (sx, sy, sw, sh) = if is_luma {
+                (cl * bps, ct, vw - cl - cr, vh - ct - cb)
+            } else {
+                let dx = if cx_half { 2 } else { 1 };
+                let dy = if cy_half { 2 } else { 1 };
+                (
+                    cl / dx * bps,
+                    ct / dy,
+                    (vw - cl - cr) / dx,
+                    (vh - ct - cb) / dy,
+                )
+            };
+            PlaneRef {
+                offset: p.offset + sy * p.linesize as usize + sx,
+                row_bytes: sw * bps,
+                stride: p.linesize as usize,
+                rows: sh,
+                data: p.buffer.data(),
+            }
+        })
+        .collect();
+    sink(&FrameView {
+        width: vw - cl - cr,
+        height: vh - ct - cb,
+        format: "unknown",
+        bit_depth: if bps == 2 { 10 } else { 8 },
+        planes,
+    })
+}
+
+#[cfg(feature = "vp9_rusty")]
+mod vp9_rusty_adapter {
+    use super::{FrameView, PlaneRef, Sink, ivf_packets};
+    use rusty_vp9::{Error, Vp9Decoder};
+
+    pub fn decode(bytes: &[u8], sink: &mut Sink) -> Result<(), String> {
+        let packets = ivf_packets(bytes)?;
+        let mut dec = Vp9Decoder::new();
+        for (i, pkt) in packets.iter().enumerate() {
+            dec.push(pkt, Some(i as i64)).map_err(|e| format!("push: {e:?}"))?;
+            drain(&mut dec, sink)?;
+        }
+        dec.flush();
+        loop {
+            match dec.next_frame() {
+                Ok(f) => emit(&f, sink)?,
+                Err(Error::Eof) | Err(Error::Again) => break,
+                Err(e) => return Err(format!("drain: {e:?}")),
+            }
+        }
+        Ok(())
+    }
+
+    fn drain(dec: &mut Vp9Decoder, sink: &mut Sink) -> Result<(), String> {
+        loop {
+            match dec.next_frame() {
+                Ok(f) => emit(&f, sink)?,
+                Err(Error::Again) | Err(Error::Eof) => return Ok(()),
+                Err(e) => return Err(format!("decode: {e:?}")),
+            }
+        }
+    }
+
+    fn emit(f: &rusty_vp9::DecodedFrame, sink: &mut Sink) -> Result<(), String> {
+        let planes: Vec<PlaneRef> = f
             .planes
             .iter()
-            .map(|p| {
-                // Apply FFmpeg AVFrame crop convention on the luma plane; chroma
-                // planes share the same relative crop for 4:2:0.
-                let is_luma = p.linesize as usize >= vw * bps;
-                let (sx, sy, sw, sh) = if is_luma {
-                    (cl * bps, ct, vw - cl - cr, vh - ct - cb)
-                } else {
-                    (cl / 2 * bps, ct / 2, (vw - cl - cr) / 2, (vh - ct - cb) / 2)
-                };
-                PlaneRef {
-                    offset: p.offset + sy * p.linesize as usize + sx,
-                    row_bytes: sw * bps,
-                    stride: p.linesize as usize,
-                    rows: sh,
-                    data: p.buffer.data(),
-                }
+            .enumerate()
+            .map(|(i, p)| {
+                let stride = f.strides[i];
+                let rows = if stride > 0 { p.len() / stride } else { 0 };
+                PlaneRef { offset: 0, row_bytes: stride, stride, rows, data: p }
             })
             .collect();
+        let format: &'static str = match (f.subsampling_x, f.subsampling_y, f.bit_depth) {
+            (1, 1, 8) => "yuv420p",
+            (1, 1, 10) => "yuv420p10le",
+            (1, 1, 12) => "yuv420p12le",
+            (1, 0, 8) => "yuv422p",
+            (1, 0, 10) => "yuv422p10le",
+            (1, 0, 12) => "yuv422p12le",
+            (0, 0, 8) => "yuv444p",
+            (0, 0, 10) => "yuv444p10le",
+            (0, 0, 12) => "yuv444p12le",
+            _ => "unknown",
+        };
         sink(&FrameView {
-            width: vw - cl - cr,
-            height: vh - ct - cb,
-            format: "unknown",
-            bit_depth: if bps == 2 { 10 } else { 8 },
+            width: f.width as usize,
+            height: f.height as usize,
+            format,
+            bit_depth: f.bit_depth as u8,
             planes,
         })
+    }
+}
+
+#[cfg(feature = "vp9_wedeo")]
+mod vp9_wedeo_adapter {
+    use super::{Sink, ivf_packets};
+    use wedeo_codec::decoder::{CodecParameters, Decoder};
+    use wedeo_core::{CodecId, Error, MediaType, Packet};
+
+    pub fn decode(bytes: &[u8], sink: &mut Sink) -> Result<(), String> {
+        let packets = ivf_packets(bytes)?;
+        let mut dec = wedeo_codec_vp9::decoder::Vp9Decoder::new(CodecParameters::new(
+            CodecId::Vp9,
+            MediaType::Video,
+        ))
+        .map_err(|e| format!("create: {e:?}"))?;
+
+        for (i, pkt) in packets.iter().enumerate() {
+            let mut p = Packet::from_slice(pkt);
+            p.pts = i as i64;
+            dec.send_packet(Some(&p)).map_err(|e| format!("send: {e:?}"))?;
+            loop {
+                match dec.receive_frame() {
+                    Ok(f) => super::emit_wedeo(&f, sink)?,
+                    Err(Error::Again) => break,
+                    Err(e) => return Err(format!("receive: {e:?}")),
+                }
+            }
+        }
+        dec.send_packet(None).map_err(|e| format!("drain send: {e:?}"))?;
+        loop {
+            match dec.receive_frame() {
+                Ok(f) => super::emit_wedeo(&f, sink)?,
+                Err(Error::Eof) => break,
+                Err(e) => return Err(format!("drain receive: {e:?}")),
+            }
+        }
+        Ok(())
     }
 }
