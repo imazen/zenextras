@@ -1,0 +1,28 @@
+[package]
+name = "transcode-route"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[dependencies]
+zencodec-media = { path = "../../../../zencodec/media", features = ["av1-encode"] }
+oxideav-h264 = { path = "../../../../candidates/oxideav-h264", default-features = false }
+oxideav-aac = { path = "../../../../candidates/oxideav-aac" }
+oxideav-core = "0.1.37"
+ruopus = { path = "../../../../candidates/ruopus", default-features = false, features = ["std"] }
+zenrav1e = { version = "0.2.0", default-features = false, features = ["stop"] }
+num-traits = "0.2"
+zenpixels = { version = ">=0.2.16, <0.4.0", default-features = false }
+
+# zencodec-media's public surface and its encoder backend are pinned to the
+# coordinated revisions (its own [patch] table does not propagate to
+# dependents, so the same pins live here).
+[patch.crates-io]
+zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "f28f6b891b1dbf95d31feb5805078a582707c561" }
+zenrav1e = { git = "https://github.com/imazen/zenrav1e", rev = "9057c4bacf1d8a23974e32de09fd4446a1cc525a" }
+zentone = { git = "https://github.com/imazen/zentone", rev = "9f0dab49bffa194b4a52b5eb28ba15b2d958356d" }
+
+[profile.release]
+debug = true
