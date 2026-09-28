@@ -85,6 +85,39 @@ first-SPS geometry throughout, so the reference is inapplicable there).
   (silently emits 8-bit), 4:2:2, 4:4:4. No clean-reject path observed —
   unsupported inputs produce wrong pixels silently.
 
+## Timing — median fps, 8 iterations, exact cases only
+
+Same-input decode speed (testsrc2-derived corpus, release opt-level=3,
+single process, includes decoder construction; `first_ns` = latency to
+first output frame). A fast failing profile is not a speed datum —
+missing cells are cases the decoder did not pass.
+
+| case      | rust_h264 | rusty_h264 | hibernia | oxideav | wedeo |
+|-----------|-----------|------------|----------|---------|-------|
+| baseline  | 6490      | **11582**  | 9856     | 2072    | 3591  |
+| high_b    | 5153      | **8702**   | 6421     | 2117    | 3367  |
+| 360p      | -         | **1321**   | 871      | 187     | 482   |
+| 720p      | -         | **312**    | 199      | 44      | 145   |
+| 1080p     | -         | **144**    | 90       | 19      | 68    |
+| 4k        | -         | **34**     | 21       | 5       | 17    |
+| high10    | -         | -          | crash    | 2041    | -     |
+| mbaff     | -         | -          | -        | 1662    | -     |
+
+rusty_h264 safe-core is ~1.5–2.7× the field on shared cases; oxideav is
+the slowest (its default config is the stable chunked-array path — the
+`nightly` portable-SIMD feature was not enabled). These are smoke-input
+numbers, not a selection benchmark.
+
+## `forbid(unsafe_code)` compile check (`cargo rustc -p <crate> -- -F unsafe-code`)
+
+| candidate (config)              | x86_64 | aarch64 | wasm32 |
+|---------------------------------|--------|---------|--------|
+| rust_h264                       | clean  | FAIL(6 NEON unsafe sites) | clean |
+| rusty_h264-decoder safe-core    | clean  | clean   | clean  |
+| hibernia                        | FAIL (9 errors: allocator `NonNull`, frame) | — | — |
+| oxideav-h264 (default, no nightly) | clean | clean | clean |
+| wedeo-codec-h264                | FAIL (38 errors: asm FFI + internals) | — | — |
+
 ## Damage-handling semantics (trunc60, corrupt1)
 
 - ffmpeg reference emits 26 frames on trunc60 (last one partial).

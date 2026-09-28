@@ -75,6 +75,8 @@ def main() -> int:
             lines = [l for l in proc.stdout.splitlines() if l.strip().startswith("{")]
             if lines:
                 rec["output"] = json.loads(lines[0])
+                if len(lines) > 1:
+                    rec["measurements"] = [json.loads(l) for l in lines[1:]]
             if proc.returncode != 0:
                 err = proc.stderr
                 if "panicked at" in err or proc.returncode < 0 or proc.returncode > 128:
@@ -106,6 +108,14 @@ def main() -> int:
                 rec["status"] = "reinit_ok" if len(gb) > len(rb) else "reinit_wrong"
             elif rb == gb:
                 rec["status"] = "exact"
+                # Timing is meaningful only on exact output.
+                ms = rec.get("measurements")
+                if ms:
+                    import statistics
+                    rec["median_fps"] = statistics.median(
+                        m["frames"] * 1e9 / m["ns"] for m in ms)
+                    rec["median_first_frame_ms"] = statistics.median(
+                        m["first_ns"] / 1e6 for m in ms)
             else:
                 n = sum(a != b for a, b in zip(rb, gb))
                 n += abs(len(rb) - len(gb))
