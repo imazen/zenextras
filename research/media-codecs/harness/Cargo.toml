@@ -1,0 +1,30 @@
+[package]
+name = "h264-harness"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# Standalone workspace: this is qualification tooling, not a zenextras member.
+[workspace]
+
+[features]
+default = ["rust_h264", "rusty", "hibernia", "oxideav", "wedeo"]
+rust_h264 = ["dep:rust_h264"]
+rusty = ["dep:rusty_h264-decoder"]
+hibernia = ["dep:hibernia"]
+oxideav = ["dep:oxideav-h264", "dep:oxideav-core"]
+wedeo = ["dep:wedeo-codec-h264", "dep:wedeo-codec", "dep:wedeo-core"]
+
+[dependencies]
+rust_h264 = { path = "../../../../candidates/rust_h264", optional = true }
+# Safe-core configuration only: no global-alloc, no asm/accel.
+rusty_h264-decoder = { path = "../../../../candidates/rusty_h264/crates/rusty_h264-decoder", optional = true, default-features = false, features = ["std"] }
+hibernia = { path = "../../../../candidates/hibernia/crates/hibernia", optional = true }
+oxideav-h264 = { path = "../../../../candidates/oxideav-h264", optional = true, default-features = false }
+oxideav-core = { version = "0.1.37", optional = true }
+wedeo-codec-h264 = { path = "../../../../candidates/wedeo/codecs/wedeo-codec-h264", optional = true }
+wedeo-codec = { path = "../../../../candidates/wedeo/crates/wedeo-codec", optional = true }
+wedeo-core = { path = "../../../../candidates/wedeo/crates/wedeo-core", optional = true }
+
+[profile.release]
+debug = true
