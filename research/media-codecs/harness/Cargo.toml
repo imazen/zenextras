@@ -8,12 +8,14 @@ publish = false
 [workspace]
 
 [features]
-default = ["rust_h264", "rusty", "hibernia", "oxideav", "wedeo"]
+default = ["rust_h264", "rusty", "hibernia", "oxideav", "wedeo", "vp9_rusty", "vp9_wedeo"]
 rust_h264 = ["dep:rust_h264"]
 rusty = ["dep:rusty_h264-decoder"]
 hibernia = ["dep:hibernia"]
 oxideav = ["dep:oxideav-h264", "dep:oxideav-core"]
 wedeo = ["dep:wedeo-codec-h264", "dep:wedeo-codec", "dep:wedeo-core"]
+vp9_rusty = ["dep:rusty_vp9"]
+vp9_wedeo = ["dep:wedeo-codec-vp9", "dep:wedeo-codec", "dep:wedeo-core"]
 
 [dependencies]
 rust_h264 = { path = "../../../../candidates/rust_h264", optional = true }
@@ -23,8 +25,12 @@ hibernia = { path = "../../../../candidates/hibernia/crates/hibernia", optional 
 oxideav-h264 = { path = "../../../../candidates/oxideav-h264", optional = true, default-features = false }
 oxideav-core = { version = "0.1.37", optional = true }
 wedeo-codec-h264 = { path = "../../../../candidates/wedeo/codecs/wedeo-codec-h264", optional = true }
+wedeo-codec-vp9 = { path = "../../../../candidates/wedeo/codecs/wedeo-codec-vp9", optional = true }
 wedeo-codec = { path = "../../../../candidates/wedeo/crates/wedeo-codec", optional = true }
 wedeo-core = { path = "../../../../candidates/wedeo/crates/wedeo-core", optional = true }
+# crates.io rusty_vp9 0.1.1, vendored for offline builds; tarball sha256 is
+# recorded in ../evidence/vp9-scoping-2026-09-28.md.
+rusty_vp9 = { path = "../../../../candidates/rusty_vp9", optional = true }
 
 [profile.release]
 debug = true
