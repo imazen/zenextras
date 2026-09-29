@@ -153,6 +153,17 @@ Keep a dual provenance map: files `vp8v2-`-seeded vs `libvpx`-ported. Both are
 license-compatible destinations (owner-controlled + BSD); clarity is for
 review, not law.
 
+## Encode: out of scope, decision on record
+
+VP8 video *encode* is deferred — no route in the plan produces VP8 output
+(AV1/Opus is the target format), and animated WebP (the live imazen VP8
+encode need) is keyframe-per-frame, already covered by
+`zenwebp/src/encoder/vp8/`. A VP8 video encoder would be a second project of
+2–3× the decoder's size (libvpx `vp8/encoder/` = ME/RDO/rate-control subtree).
+If ever required: seed from `zenwebp`'s encoder (intra machinery exists),
+port only libvpx's inter-side encode + MV emission tables, same dual-provenance
+discipline.
+
 ## Rules of the house
 
 - Worktree discipline: `.workongoing` marker before touching a repo,
