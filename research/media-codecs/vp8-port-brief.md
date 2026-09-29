@@ -8,13 +8,20 @@ of scope for round 1.
 
 ## Mission
 
-Port libvpx's VP8 **decoder** to pure Rust, scalar-correctness-first, behind
+Build a pure-Rust VP8 **video decoder**, scalar-correctness-first, behind
 a push/pull API compatible with `zencodec-media`'s `VideoDecoder` session
 contract. Byte-exact YUV420 output vs libvpx is the acceptance bar; ffmpeg's
 native `vp8` decoder is the independent oracle for triangulation (the same
 role wedeo played for VP9).
 
-## Source of truth
+**Structure: seed from zenwebp's `vp8v2`, port the inter half from libvpx.**
+See "zenwebp reuse" below — the previous assessment underestimated it: vp8v2
+already implements ~60–70% of a video decoder (full intra pipeline, loop
+filter incl. per-MB-row filtering, token partitions, segmentation, sharpness)
+as bit-exact-tested safe no_std Rust. The port from libvpx covers only what
+vp8v2 does not have.
+
+## Sources of truth
 
 - **libvpx** https://github.com/webmproject/libvpx — BSD-3-Clause. Pin tag
   v1.16.0 (matches installed libvpx12 runtime). Porting BSD code is
@@ -22,22 +29,26 @@ role wedeo played for VP9).
   `PORTED-FROM.md` provenance record (source URL, tag, commit, file map).
   Do NOT port FFmpeg's native vp8 decoder instead — an FFmpeg derivative is
   LGPL (see wedeo audit) and cannot ship in this stack.
-- **RFC 6386** is the normative spec; use it to sanity-check libvpx behavior,
+- **zenwebp `decoder/vp8v2/`** — imazen-owned (AGPL/commercial dual-license is
+  the owner's; reuse by copying is an owner decision — confirmed 2026-09-28
+  that imazen owns all imazen/ projects outright, so relicensing extracted
+  modules is available; still record it in the provenance map).
+- **RFC 6386** is the normative spec; use it to sanity-check both sources,
   not as the port source.
 
-## What to port (libvpx file map, decoder only)
+## What to port from libvpx (inter half only — intra is seeded from vp8v2)
 
 | libvpx path | role |
 |---|---|
-| `vp8/common/treecoder.*`, `dboolhuff.*` | boolean arithmetic decoder |
-| `vp8/decoder/decodeframe.c` | frame header, mb feature data, token partitions |
-| `vp8/decoder/detokenize.c` + `vp8/common/entropy.c` | coef/token tree decode + prob tables |
-| `vp8/common/reconintra.c` | B_PRED (10× 4x4), 16x16 DC/V/H/TM, UV modes |
-| `vp8/common/reconinter.c`, `vpx_dsp/vpx_convolve*` | inter pred, 1/4-pel 6-tap + bilinear |
-| `vp8/common/idct_blk.c`, `dequantize.c` | IDCT + WHT (I4x4 second-order DC) + dequant |
-| `vp8/common/loopfilter*.c` | normal filter (edge/sharpness variants) + simple filter |
-| `vp8/common/alloccommon.c`, `modecont.c`, `findnearmv` paths | ref frames (last/golden/altref), mode contexts, MV trees |
+| `vp8/decoder/decodeframe.c` (inter portions) | non-keyframe frame tag/header, refresh flags, quant/LF deltas |
+| `vp8/decoder/detokenize.c` (MV section) + `vp8/common/mv.h`, `findnearmv` | MV trees, clamping, near/nearest/zero/new, splitmv sub-block modes |
+| `vp8/common/reconinter.c` + `vpx_dsp/vpx_convolve*` | 1/4-pel 6-tap + bilinear subpixel MC, edge extension |
+| `vp8/common/alloccommon.c` (ref-frame mgmt) | last/golden/altref buffers, refresh semantics |
+| `vp8/common/entropy.c` (prob-update paths) | entropy persistence / `refresh_entropy` handling |
 | `vpx_mem`, `vpx_ports` | endian loads/alignment → Rust equivalents |
+
+Already covered by the vp8v2 seed (do NOT re-port): bool decoder, token/
+coefficient decode, partitions, segmentation, intra prediction, loop filter.
 
 Skip: `vp8/encoder/`, `vp9/**`, `vpx_scale/`, all SIMD (x86/arm — scalar C
 reference only), frame-parallel threading, postproc, `error_concealment.c`
@@ -101,23 +112,46 @@ workspace-member crate sibling to `transcode/` on
 a standalone `imazen/zenvpx` repo *after* qualification, matching how other
 candidates were evaluated before earning a real crate.
 
-## zenwebp reuse: read it, don't link it
+## zenwebp reuse: copy the intra core, port the inter half
 
-- **License**: zenwebp is AGPL-3.0/commercial. Copying `vp8v2`/`encoder/vp8`
-  code into the port makes the port AGPL-derived unless the owner relicenses
-  the extracted parts — that is the owner's call, not the agent's. A libvpx
-  port wants one upstream provenance anyway; do not mix streams.
-- **Surface**: extraction is not cheap — `vp8v2` drags in
-  bit_reader/loop_filter/dither/yuv/`#[arcane]`/zensim machinery (per the
-  scoping audit).
-- **Coverage**: the reusable overlap is only the intra third — bool decoder,
-  token decode, intra recon, loop filter. The inter half that makes this a
-  video decoder (MV trees, ref management, subpixel MC, partitions, entropy
-  refresh) doesn't exist in zenwebp at all, so reuse doesn't skip the hard
-  part.
-- **Right use**: keep `vp8v2` open as a *Rust-idiom reference* — how to shape
-  a bool decoder / IDCT / loop filter in safe Rust. Zero cost, zero license
-  exposure, same owner's code.
+Owner confirmed imazen owns zenwebp outright — relicensing extracted modules
+is available by owner decision, so license is **not** the blocker the earlier
+audit implied. The real question was engineering, and a fresh read shows vp8v2
+is far more complete than "stills keyframes":
+
+**vp8v2 already has** (`zenwebp/src/decoder/vp8v2/`, 6.8k lines, alloc-only
+no_std, `archmage` SIMD dispatch with scalar/SSE/NEON/wasm128 paths):
+
+- bool decoder + token/coefficient decode (`coefficients.rs`, `context.rs`,
+  `tables.rs` — spec tables are spec constants regardless of source)
+- **token partitions** — `header.rs` parses `num_partitions` (1/2/4/8) and
+  `init_partitions` wires multiple bool streams
+- **segmentation** — `segments_enabled` + `read_segment_updates`
+- **sharpness + loop filter** — `sharpness_level` parsed; `pipeline.rs` has
+  `filter_mb_row` with scalar + SSE2/NEON/wasm dispatch
+- intra recon (`predict_fused.rs` + `common/prediction.rs`)
+
+**What vp8v2 lacks — the actual port surface** (from libvpx `vp8/`):
+
+- inter frame header path (frame tag differs: no dims/sync on non-keyframes;
+  `header.rs:38` currently rejects them)
+- MB inter types: INTER + SPLITMV with sub-block MVs (new/nearest/near/zero
+  MV trees, `sign_bias_golden`/`sign_bias_alternate`, MV clamping) —
+  `decodeframe.c`/`detokenize.c` MV section + `mv.h`/`findnearmv`
+- subpixel MC: 1/4-pel 6-tap + bilinear convolve (`reconinter.c` +
+  `vpx_dsp/vpx_convolve*`) with edge extension
+- ref-frame state: last/golden/altref buffers + per-frame refresh flags,
+  entropy-prob persistence across frames (`refresh_entropy`), `show_frame=0`
+  invisible frames
+- streaming reshape: vp8v2 is one-shot stills API; the video decoder needs
+  push-packet/pull-frame + per-stream persistent state
+
+**Not reusable**: `yuv_exact.rs`/`dither` (fused RGB output for stills — a
+video decoder emits YUV planes), `alloc_util`/`api` coupling (light, re-shim).
+
+Keep a dual provenance map: files `vp8v2-`-seeded vs `libvpx`-ported. Both are
+license-compatible destinations (owner-controlled + BSD); clarity is for
+review, not law.
 
 ## Rules of the house
 
