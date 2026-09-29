@@ -391,6 +391,98 @@ impl H264Decoder {
 }
 
 // ---------------------------------------------------------------------------
+// VP8 raw frame payloads → decoded YUV420 (zenvp8)
+// ---------------------------------------------------------------------------
+
+fn vp8_err(e: zenvp8::DecodeError) -> MediaError {
+    MediaError::Format(Box::leak(format!("vp8: {e}").into_boxed_str()))
+}
+
+/// VP8 decoder adapter. IVF/WebM packets are already self-contained frame
+/// payloads — no codec-private exists or is needed. VP8 has no reordering:
+/// each `show_frame` packet produces exactly one frame, emitted in decode
+/// order, so the emitting packet's own pts is the frame pts. Invisible
+/// (altref) packets update decoder state without emitting.
+pub struct Vp8Decoder {
+    inner: zenvp8::Vp8Decoder,
+    tb: TimeBase,
+    ended: bool,
+    /// Frames decoded so far not yet pulled, paired with their packet pts.
+    ready: std::collections::VecDeque<(zenvp8::DecodedFrame, i64)>,
+}
+
+impl Vp8Decoder {
+    pub fn new(spec: &TrackSpec) -> Result<Self, MediaError> {
+        if spec.kind != TrackKind::Video || spec.codec != Codec::Vp8 {
+            return Err(MediaError::Contract("Vp8Decoder needs a VP8 video track"));
+        }
+        Ok(Self {
+            inner: zenvp8::Vp8Decoder::new(),
+            tb: spec.time_base,
+            ended: false,
+            ready: std::collections::VecDeque::new(),
+        })
+    }
+}
+
+impl VideoDecoder for Vp8Decoder {
+    fn push_packet(&mut self, packet: &MediaPacket) -> Result<(), MediaError> {
+        if self.ended {
+            return Err(MediaError::Contract("packet pushed after end_input"));
+        }
+        let pts = packet.pts.ticks();
+        self.inner.decode(&packet.data).map_err(vp8_err)?;
+        // ≤1 frame per packet; an invisible packet's pts is simply dropped.
+        if let Some(f) = self.inner.next_frame() {
+            self.ready.push_back((f, pts));
+        }
+        Ok(())
+    }
+
+    fn next_frame(&mut self) -> Result<Option<VideoFrame>, MediaError> {
+        let Some((f, pts)) = self.ready.pop_front() else {
+            return Ok(None);
+        };
+        let cw = f.width.div_ceil(2);
+        let ch = f.height.div_ceil(2);
+        let plane = |data: Vec<u8>, w: usize, h: usize| PlaneBuf {
+            data: PlaneData::U8(data),
+            width: w,
+            height: h,
+            stride_samples: w,
+        };
+        Ok(Some(VideoFrame {
+            y: plane(f.y, f.width, f.height),
+            chroma: Some([plane(f.u, cw, ch), plane(f.v, cw, ch)]),
+            subsampling: Subsampling::Yuv420,
+            // VP8 chroma is co-sited with the left luma column, vertically
+            // centered (MPEG-1/2 siting, like H.264's default).
+            location: ChromaLocation::Left,
+            // The bitstream carries no colour signalling; callers apply
+            // codec-level knowledge (BT.601) if they need it.
+            color: Cicp::new(2, 2, 2, false),
+            encoding: SampleEncoding::new(ChannelType::U8, 8, 0)
+                .map_err(|_| MediaError::Contract("u8 vp8 sample encoding invalid"))?,
+            pts: Timestamp::new(pts, self.tb),
+            duration_ticks: None,
+        }))
+    }
+
+    fn end_input(&mut self) -> Result<(), MediaError> {
+        // No internal reorder buffer: nothing extra to drain.
+        self.ended = true;
+        Ok(())
+    }
+
+    fn reset(&mut self) -> Result<(), MediaError> {
+        self.ended = false;
+        self.ready.clear();
+        self.inner.reset();
+        Ok(())
+    }
+}
+
+// ---------------------------------------------------------------------------
 // AAC MP4 → decoded PCM (oxideav-aac, ADTS-wrapped)
 // ---------------------------------------------------------------------------
 

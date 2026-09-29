@@ -8,7 +8,7 @@ publish = false
 [workspace]
 
 [features]
-default = ["rust_h264", "rusty", "hibernia", "oxideav", "wedeo", "vp9_rusty", "vp9_wedeo"]
+default = ["rust_h264", "rusty", "hibernia", "oxideav", "wedeo", "vp9_rusty", "vp9_wedeo", "vp8_zen"]
 rust_h264 = ["dep:rust_h264"]
 rusty = ["dep:rusty_h264-decoder"]
 hibernia = ["dep:hibernia"]
@@ -16,6 +16,7 @@ oxideav = ["dep:oxideav-h264", "dep:oxideav-core"]
 wedeo = ["dep:wedeo-codec-h264", "dep:wedeo-codec", "dep:wedeo-core"]
 vp9_rusty = ["dep:rusty_vp9"]
 vp9_wedeo = ["dep:wedeo-codec-vp9", "dep:wedeo-codec", "dep:wedeo-core"]
+vp8_zen = ["dep:zenvp8"]
 
 [dependencies]
 rust_h264 = { path = "../../../../candidates/rust_h264", optional = true }
@@ -31,6 +32,7 @@ wedeo-core = { path = "../../../../candidates/wedeo/crates/wedeo-core", optional
 # crates.io rusty_vp9 0.1.1, vendored for offline builds; tarball sha256 is
 # recorded in ../evidence/vp9-scoping-2026-09-28.md.
 rusty_vp9 = { path = "../../../../candidates/rusty_vp9", optional = true }
+zenvp8 = { path = "../zenvp8", optional = true }
 
 [profile.release]
 debug = true
