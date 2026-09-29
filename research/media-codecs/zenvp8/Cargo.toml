@@ -1,0 +1,17 @@
+[package]
+name = "zenvp8"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = "Pure-Rust VP8 video decoder (safe, forbid(unsafe_code)); intra core seeded from zenwebp vp8v2, inter half ported from libvpx"
+
+# Standalone workspace: qualification tooling under research/, not a
+# zenextras member crate.
+[workspace]
+
+[dependencies]
+
+[dev-dependencies]
+
+[profile.release]
+debug = true

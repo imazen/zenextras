@@ -58,6 +58,8 @@ fn decode(decoder: &str, bytes: &[u8], sink: &mut Sink) -> Result<(), String> {
         "rusty_vp9" => vp9_rusty_adapter::decode(bytes, sink),
         #[cfg(feature = "vp9_wedeo")]
         "wedeo_vp9" => vp9_wedeo_adapter::decode(bytes, sink),
+        #[cfg(feature = "vp8_zen")]
+        "zenvp8" => vp8_zen_adapter::decode(bytes, sink),
         other => Err(format!("decoder {other:?} not compiled in (feature-gated off or unknown)")),
     }
 }
@@ -623,5 +625,40 @@ mod vp9_wedeo_adapter {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(feature = "vp8_zen")]
+mod vp8_zen_adapter {
+    use super::{FrameView, PlaneRef, Sink, ivf_packets};
+    use zenvp8::Vp8Decoder;
+
+    pub fn decode(bytes: &[u8], sink: &mut Sink) -> Result<(), String> {
+        let packets = ivf_packets(bytes)?;
+        let mut dec = Vp8Decoder::new();
+        for pkt in packets {
+            dec.decode(pkt).map_err(|e| format!("push: {e:?}"))?;
+            // ≤1 frame per packet; invisible packets update refs only.
+            if let Some(f) = dec.next_frame() {
+                emit(&f, sink)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn emit(f: &zenvp8::DecodedFrame, sink: &mut Sink) -> Result<(), String> {
+        let (w, h) = (f.width, f.height);
+        let (cw, ch) = (w.div_ceil(2), h.div_ceil(2));
+        sink(&FrameView {
+            width: w,
+            height: h,
+            format: "yuv420p",
+            bit_depth: 8,
+            planes: vec![
+                PlaneRef::tight(w, h, &f.y),
+                PlaneRef::tight(cw, ch, &f.u),
+                PlaneRef::tight(cw, ch, &f.v),
+            ],
+        })
     }
 }
