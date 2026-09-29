@@ -89,6 +89,36 @@ for vectors; WebM demux already parses. Each `MediaPacket` is one raw VP8 frame
 - `forbid(unsafe_code)` audit on x86_64/aarch64/wasm32; zero-dep target like
   rusty_vp9 (num-traits-level deps acceptable, avoid image/C crates).
 
+## Placement: zenextras, not candidates/ or a new repo
+
+`~/work/zenmedia-resume-20260928/candidates/` is **unversioned scratch** (its
+members are standalone clones/tarballs, no enclosing repo) — a port there is
+not tracked. `imazen/zenvpx` does not exist (404 confirmed in the P3 audit);
+creating it now would publish an empty scaffold publicly and needs org repo
+rights. Correct home: **`zenextras/research/media-codecs/zenvp8/`** — a
+workspace-member crate sibling to `transcode/` on
+`research/media-codec-qualification` (versioned, pushed per phase). Promote to
+a standalone `imazen/zenvpx` repo *after* qualification, matching how other
+candidates were evaluated before earning a real crate.
+
+## zenwebp reuse: read it, don't link it
+
+- **License**: zenwebp is AGPL-3.0/commercial. Copying `vp8v2`/`encoder/vp8`
+  code into the port makes the port AGPL-derived unless the owner relicenses
+  the extracted parts — that is the owner's call, not the agent's. A libvpx
+  port wants one upstream provenance anyway; do not mix streams.
+- **Surface**: extraction is not cheap — `vp8v2` drags in
+  bit_reader/loop_filter/dither/yuv/`#[arcane]`/zensim machinery (per the
+  scoping audit).
+- **Coverage**: the reusable overlap is only the intra third — bool decoder,
+  token decode, intra recon, loop filter. The inter half that makes this a
+  video decoder (MV trees, ref management, subpixel MC, partitions, entropy
+  refresh) doesn't exist in zenwebp at all, so reuse doesn't skip the hard
+  part.
+- **Right use**: keep `vp8v2` open as a *Rust-idiom reference* — how to shape
+  a bool decoder / IDCT / loop filter in safe Rust. Zero cost, zero license
+  exposure, same owner's code.
+
 ## Rules of the house
 
 - Worktree discipline: `.workongoing` marker before touching a repo,
@@ -96,8 +126,8 @@ for vectors; WebM demux already parses. Each `MediaPacket` is one raw VP8 frame
   always scope cargo commands to the member crate).
 - Commits land on `research/media-codec-qualification` (zenextras, jj
   colocated — `jj git push --bookmark`); the new crate lives at
-  `candidates/zenvp8/` initially (provisional home, promote to `~/work/zen/`
-  when qualified). Per-commit provenance notes.
+  `research/media-codecs/zenvp8/` (versioned, not the unversioned
+  `candidates/` scratch). Per-commit provenance notes.
 - Do NOT reproduce FFmpeg code — only libvpx (BSD). Keep a file-level
   provenance map so review can diff C↔Rust.
 - Deviations from libvpx behavior (e.g. concealment) get documented in the
