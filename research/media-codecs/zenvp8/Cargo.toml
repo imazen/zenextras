@@ -3,11 +3,17 @@ name = "zenvp8"
 version = "0.0.0"
 edition = "2021"
 publish = false
-description = "Pure-Rust VP8 video decoder (safe, forbid(unsafe_code)); intra core seeded from zenwebp vp8v2, inter half ported from libvpx"
+description = "Pure-Rust VP8 video codec (safe, forbid(unsafe_code)); intra core seeded from zenwebp vp8v2, inter half + optional encoder ported from libvpx"
 
 # Standalone workspace: qualification tooling under research/, not a
 # zenextras member crate.
 [workspace]
+
+[features]
+# Experimental VP8 *encoder* (v1: I16 intra / ZEROMV..NEWMV inter vs LAST,
+# single token partition; adaptive entropy + loop-filter selection are
+# wired). Off by default — the decoder is the supported surface.
+encoder = []
 
 [dependencies]
 

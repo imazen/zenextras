@@ -506,6 +506,14 @@ impl Default for LoopFilterTables {
 // --- per-MB drivers ----------------------------------------------------------
 // `y`/`u`/`v` are plane slices with the MB's top-left pixel at `*_off`.
 
+/// Luma-only `vp8_loop_filter_mbv` (C passes NULL u/v in the
+/// `vp8_loop_filter_partial_frame` path used by `picklpf.c`).
+// Only called from the encoder's loop-filter pick (feature `encoder`).
+#[allow(dead_code)]
+pub(crate) fn filter_mbv_y(y: &mut [u8], y_off: usize, y_stride: usize, lfi: &LoopFilterInfo) {
+    mb_v_edge(y, y_off, y_stride, lfi.mblim, lfi.lim, lfi.hev_thr, 2);
+}
+
 /// `vp8_loop_filter_mbv` — MB left edge.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn filter_mbv(
@@ -522,6 +530,36 @@ pub(crate) fn filter_mbv(
     mb_v_edge(y, y_off, y_stride, lfi.mblim, lfi.lim, lfi.hev_thr, 2);
     mb_v_edge(u, u_off, uv_stride, lfi.mblim, lfi.lim, lfi.hev_thr, 1);
     mb_v_edge(v, v_off, uv_stride, lfi.mblim, lfi.lim, lfi.hev_thr, 1);
+}
+
+/// Luma-only `vp8_loop_filter_bv`.
+#[allow(dead_code)] // encoder-only caller (see filter_mbv_y)
+pub(crate) fn filter_bv_y(y: &mut [u8], y_off: usize, y_stride: usize, lfi: &LoopFilterInfo) {
+    for dx in [4usize, 8, 12] {
+        v_edge(y, y_off + dx, y_stride, lfi.blim, lfi.lim, lfi.hev_thr, 2);
+    }
+}
+
+/// Luma-only `vp8_loop_filter_mbh`.
+#[allow(dead_code)] // encoder-only caller (see filter_mbv_y)
+pub(crate) fn filter_mbh_y(y: &mut [u8], y_off: usize, y_stride: usize, lfi: &LoopFilterInfo) {
+    mb_h_edge(y, y_off, y_stride, lfi.mblim, lfi.lim, lfi.hev_thr, 2);
+}
+
+/// Luma-only `vp8_loop_filter_bh`.
+#[allow(dead_code)] // encoder-only caller (see filter_mbv_y)
+pub(crate) fn filter_bh_y(y: &mut [u8], y_off: usize, y_stride: usize, lfi: &LoopFilterInfo) {
+    for dy in [4usize, 8, 12] {
+        h_edge(
+            y,
+            y_off + dy * y_stride,
+            y_stride,
+            lfi.blim,
+            lfi.lim,
+            lfi.hev_thr,
+            2,
+        );
+    }
 }
 
 /// `vp8_loop_filter_bv` — inner vertical edges at x=4,8,12.

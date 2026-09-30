@@ -87,7 +87,7 @@ fn mv_bias(neigh_ref: RefFrame, cur_ref: RefFrame, mv: &mut Mv, sign_bias: &[boo
 }
 
 /// `above_block_mode` — kf-bmode "above" context.
-fn above_block_mode(mi: &[MbInfo], stride: usize, cur: usize, b: usize) -> i8 {
+pub(crate) fn above_block_mode(mi: &[MbInfo], stride: usize, cur: usize, b: usize) -> i8 {
     if b >> 2 == 0 {
         let above = &mi[cur - stride];
         match above.mode {
@@ -104,7 +104,7 @@ fn above_block_mode(mi: &[MbInfo], stride: usize, cur: usize, b: usize) -> i8 {
 }
 
 /// `left_block_mode`.
-fn left_block_mode(mi: &[MbInfo], cur: usize, b: usize) -> i8 {
+pub(crate) fn left_block_mode(mi: &[MbInfo], cur: usize, b: usize) -> i8 {
     if b & 3 == 0 {
         let left = &mi[cur - 1];
         match left.mode {
@@ -229,6 +229,69 @@ fn decode_split_mv(
     mi[cur].partitioning = s as u8;
 }
 
+/// `find_near_mvs` — gather candidate MVs + counts from the decoded above /
+/// left / above-left neighbors. Shared by decoder mode read and encoder
+/// mode select/emission. Returns `(near_mvs, cnt, nmv)` exactly as the C
+/// lays them out: `cnt[0]` intra/zero count, `cnt[1]` nearest, `cnt[2]`
+/// near, `cnt[3]` splitmv (computed later by the caller), `nmv` = index of
+/// the last distinct candidate slot written.
+pub(crate) fn find_near_mvs(
+    mi: &[MbInfo],
+    cur: usize,
+    stride: usize,
+    cur_ref: RefFrame,
+    sign_bias: &[bool; 4],
+) -> ([Mv; 4], [i32; 4], usize) {
+    const CNT_INTRA: usize = 0;
+    let above = cur - stride;
+    let left = cur - 1;
+    let aboveleft = above - 1;
+
+    let mut near_mvs = [Mv::ZERO; 4];
+    let mut cnt = [0i32; 4];
+    let mut nmv = 0usize;
+    let mut cntx = 0usize;
+
+    if mi[above].ref_frame != RefFrame::Intra {
+        if mi[above].mv.as_int() != 0 {
+            nmv += 1;
+            near_mvs[nmv] = mi[above].mv;
+            mv_bias(mi[above].ref_frame, cur_ref, &mut near_mvs[nmv], sign_bias);
+            cntx += 1;
+        }
+        cnt[cntx] += 2;
+    }
+    if mi[left].ref_frame != RefFrame::Intra {
+        if mi[left].mv.as_int() != 0 {
+            let mut this_mv = mi[left].mv;
+            mv_bias(mi[left].ref_frame, cur_ref, &mut this_mv, sign_bias);
+            if this_mv.as_int() != near_mvs[nmv].as_int() {
+                nmv += 1;
+                near_mvs[nmv] = this_mv;
+                cntx += 1;
+            }
+            cnt[cntx] += 2;
+        } else {
+            cnt[CNT_INTRA] += 2;
+        }
+    }
+    if mi[aboveleft].ref_frame != RefFrame::Intra {
+        if mi[aboveleft].mv.as_int() != 0 {
+            let mut this_mv = mi[aboveleft].mv;
+            mv_bias(mi[aboveleft].ref_frame, cur_ref, &mut this_mv, sign_bias);
+            if this_mv.as_int() != near_mvs[nmv].as_int() {
+                nmv += 1;
+                near_mvs[nmv] = this_mv;
+                cntx += 1;
+            }
+            cnt[cntx] += 1;
+        } else {
+            cnt[CNT_INTRA] += 1;
+        }
+    }
+    (near_mvs, cnt, nmv)
+}
+
 /// `read_mb_modes_mv` — non-keyframe MB.
 #[allow(clippy::too_many_arguments)]
 fn read_mb_modes_mv(
@@ -275,66 +338,7 @@ fn read_mb_modes_mv(
     }
 
     // ---- findnearmv ----
-    let mut near_mvs = [Mv::ZERO; 4];
-    let mut cnt = [0i32; 4];
-    let mut nmv = 0usize; // index into near_mvs (C's `nmv` pointer, starts at [0])
-    let mut cntx = 0usize; // index into cnt (C's `cntx` pointer)
-
-    // above
-    if mi[above].ref_frame != RefFrame::Intra {
-        if mi[above].mv.as_int() != 0 {
-            nmv += 1;
-            near_mvs[nmv] = mi[above].mv;
-            mv_bias(
-                mi[above].ref_frame,
-                mi[cur].ref_frame,
-                &mut near_mvs[nmv],
-                sign_bias,
-            );
-            cntx += 1;
-        }
-        cnt[cntx] += 2;
-    }
-    // left
-    if mi[left].ref_frame != RefFrame::Intra {
-        if mi[left].mv.as_int() != 0 {
-            let mut this_mv = mi[left].mv;
-            mv_bias(
-                mi[left].ref_frame,
-                mi[cur].ref_frame,
-                &mut this_mv,
-                sign_bias,
-            );
-            if this_mv.as_int() != near_mvs[nmv].as_int() {
-                nmv += 1;
-                near_mvs[nmv] = this_mv;
-                cntx += 1;
-            }
-            cnt[cntx] += 2;
-        } else {
-            cnt[CNT_INTRA] += 2;
-        }
-    }
-    // above-left
-    if mi[aboveleft].ref_frame != RefFrame::Intra {
-        if mi[aboveleft].mv.as_int() != 0 {
-            let mut this_mv = mi[aboveleft].mv;
-            mv_bias(
-                mi[aboveleft].ref_frame,
-                mi[cur].ref_frame,
-                &mut this_mv,
-                sign_bias,
-            );
-            if this_mv.as_int() != near_mvs[nmv].as_int() {
-                nmv += 1;
-                near_mvs[nmv] = this_mv;
-                cntx += 1;
-            }
-            cnt[cntx] += 1;
-        } else {
-            cnt[CNT_INTRA] += 1;
-        }
-    }
+    let (mut near_mvs, mut cnt, nmv) = find_near_mvs(mi, cur, stride, mi[cur].ref_frame, sign_bias);
 
     if bc.bool_read(MODE_CONTEXTS[cnt[CNT_INTRA] as usize][0]) != 0 {
         // nonzero MV mode

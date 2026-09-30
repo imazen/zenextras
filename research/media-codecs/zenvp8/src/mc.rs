@@ -177,6 +177,21 @@ fn subpel(
     }
 }
 
+/// Sixtap-filtered 16x16 fetch for the encoder's subpel-variance eval
+/// (`vfp->svf` — `vpx_sub_pixel_variance16x16`'s filter stage). `src_off`
+/// is the whole-pel anchor; the kernel reads two rows/cols before it.
+#[allow(dead_code)] // encoder-only caller (enc/metrics.rs)
+pub(crate) fn sixtap_16x16(
+    src: &[u8],
+    src_off: usize,
+    src_stride: usize,
+    xoff: usize,
+    yoff: usize,
+    dst: &mut [u8; 256],
+) {
+    sixtap_predict(src, src_off, src_stride, xoff, yoff, dst, 0, 16, 16, 16);
+}
+
 /// `vp8_copy_mem<N>x<M>` — integer-pel copy.
 #[allow(clippy::too_many_arguments)]
 fn copy_block(
@@ -317,12 +332,54 @@ pub(crate) fn build_inter16x16(
     dst_y_off: usize,
     dst_uv_off: usize,
 ) {
-    let mut mv16 = mbmi.mv;
-    if mbmi.need_to_clamp_mvs {
+    fetch_inter16x16(
+        mbmi.mv,
+        mbmi.need_to_clamp_mvs,
+        edges,
+        fullpixel_mask,
+        kind,
+        rf,
+        dst_y_off,
+        dst_uv_off,
+        dst_y,
+        dst_u,
+        dst_v,
+        dst_ystride,
+        dst_uvstride,
+        dst_y_off,
+        dst_uv_off,
+    );
+}
+
+/// Shared luma+chroma fetch behind `build_inter16x16`. `src_y_anchor`/
+/// `src_uv_anchor` are the block's position index in `rf`'s planes — for
+/// decode these equal `dst_*_off` (reference and recon share layout); the
+/// encoder's prediction-eval buffers are flat, so it passes the MB's
+/// index into the reference with `dst_*_off = 0`.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn fetch_inter16x16(
+    mv: Mv,
+    need_to_clamp_mvs: bool,
+    edges: (i32, i32, i32, i32),
+    fullpixel_mask: i32,
+    kind: SubpelKind,
+    rf: &RefView,
+    src_y_anchor: usize,
+    src_uv_anchor: usize,
+    dst_y: &mut [u8],
+    dst_u: &mut [u8],
+    dst_v: &mut [u8],
+    dst_ystride: usize,
+    dst_uvstride: usize,
+    dst_y_off: usize,
+    dst_uv_off: usize,
+) {
+    let mut mv16 = mv;
+    if need_to_clamp_mvs {
         clamp_mv_to_umv_border(&mut mv16, edges);
     }
 
-    let src_off = (dst_y_off as isize
+    let src_off = (src_y_anchor as isize
         + ((mv16.row as isize) >> 3) * rf.y_stride as isize
         + ((mv16.col as isize) >> 3)) as usize;
 
@@ -362,7 +419,7 @@ pub(crate) fn build_inter16x16(
 
     clamp_uvmv_to_umv_border(&mut uvmv, edges);
 
-    let uv_off = (dst_uv_off as isize
+    let uv_off = (src_uv_anchor as isize
         + ((uvmv.row as isize) >> 3) * rf.uv_stride as isize
         + ((uvmv.col as isize) >> 3)) as usize;
     if (uvmv.row | uvmv.col) & 7 != 0 {
