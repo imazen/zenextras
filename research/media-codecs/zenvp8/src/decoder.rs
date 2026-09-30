@@ -151,7 +151,7 @@ impl Vp8Decoder {
 
     /// Decoder with a custom macroblock-count ceiling. Each 16×16 MB needs
     /// ~1.5 KB of reference storage across the four-frame pool; the default
-    /// (see [`Self::DEFAULT_MAX_MBS`]) bounds allocation to ~100 MB.
+    /// (65536 MBs) bounds allocation to ~100 MB.
     pub fn with_max_macroblocks(max_mbs: usize) -> Self {
         let mut d = Self::new();
         d.max_mbs = max_mbs;

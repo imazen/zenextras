@@ -38,6 +38,43 @@ is LGPL) — ffmpeg appears only as a test oracle.
 | `src/decoder.rs` | new orchestration | `vp8/decoder/decodeframe.c` `decode_mb_rows` (per-row partition cycle `mb_row % num_part`, recon order, deferred row filter, `mb_skip_coeff = eobtotal==0` rewrite) + `vp8/decoder/onyxd_if.c` `swap_frame_buffers` (copy order: ARF copy → GF copy → refresh gf → refresh arf → refresh last; `frame_to_show` = new when `!refresh_last`, last otherwise; `show_frame=0` suppresses output) |
 | `src/error.rs`, `src/lib.rs` | new | API surface per `vp8-port-brief.md` (rusty_vp9-shaped push/pull) |
 
+## Encoder file-level map (feature `encoder`, 2026-09-30)
+
+The encoder shares the decoder's `tables.rs`/`predict.rs`/`idct.rs`/`mc.rs`/
+`framebuf.rs`/`inter.rs` (`find_near_mvs` was extracted there for shared
+use) so prediction, reconstruction, and context semantics cannot drift.
+
+| zenvp8 file | origin | primary C reference |
+|---|---|---|
+| `src/enc/boolw.rs` | libvpx port | `vp8/encoder/boolhuff.{c,h}` — `vp8_encode_bool`, `vp8_start_encode`, `vp8_stop_encode` carry/flush semantics. Round-trip-tested against `BoolReader`. |
+| `src/enc/dct.rs` | libvpx port | `vp8/encoder/dct.c` — `vp8_short_fdct4x4` (incl. the `if(a1!=0)` conditional), `vp8_short_walsh4x4` (in-place second stage). |
+| `src/enc/quant.rs` | libvpx port | `vp8/encoder/quantize.c` — `vp8_regular_quantize_b_c` (zrun zbin boost, `invert_quant` i16 wrap), `vp8cx_init_quantizer`. Dequant tables come from `src/tables.rs` (`DC_QUANT`/`AC_QUANT`/`VP8_AC_TABLE2`) — the same verified tables the decoder uses, NOT a re-derived set. |
+| `src/enc/tokens.rs` | libvpx port | `vp8/encoder/tokenize.c` — `vp8_tokenize_mb` into `TokRec`s then `vp8_pack_tokens` (EOB/`skip_eob_node` grammar identical to `detokenize.c`'s reader); `vp8/common/blockd.h` `BLOCK2ABOVE`/`BLOCK2LEFT` (pure raster order). |
+| `src/enc/mv.rs` | libvpx port | `vp8/encoder/encodemv.{c,h}` — `vp8_encode_motion_vector`, `encode_component` (small/large trees, conditional bit-3), eighth-pel coded units. |
+| `src/enc/adapt.rs` | libvpx port | `vp8/encoder/bitstream.c` — `vp8_update_coef_probs`, `update_mode`, `vp8_write_mvprobs`, `vp8_convert_rfct_to_prob`, `vp8_prob_from_total`, `vp8_tree_probs_from_distribution`/`prob_update_savings` (emit updates only when the savings test passes); per-frame symbol counts (`x->ymode_count`/`uv_mode_count`/`count_mb_ref_frame_usage`/`MVcount`). |
+| `src/enc/lf.rs` | libvpx port | `vp8/encoder/picklpf.c` — `vp8cx_pick_filter_level_fast` (mid-frame strip probe) + `vp8_loop_filter_frame` driver on the reconstruction before it becomes LAST; luma-only `filter_*_y` helpers live in `src/loopfilter.rs`. |
+| `src/enc/metrics.rs` | libvpx port (staged) | `vpx_dsp/variance.c` — `variance`/`MSE`/`VAR` family + `sixtap_16x16` fetch; staged for the planned RD mode-decision port, not on the live path. |
+| `src/enc/costs.rs` | libvpx port (staged) | `boolhuff.c`/`treewriter.c`/`modecosts.c`/`rdopt.c`/`encodemv.c`/`mcomp.c`/`onyx_if.c` — rate-cost and Speed-5 thresh-map machinery for the planned mode-decision port, not on the live path. |
+| `src/enc/encoder.rs` | new orchestration | Field order mirrors `decodeframe.c`'s parse order (it is the canonical emission order): tag/keyframe preamble, segmentation, LF params + LF deltas (dedup'd vs `last_*_lf_deltas`, reset to realtime defaults each keyframe like `setup_features`), `multi_token_partition`, quantizer deltas, refresh/copy/sign-bias flags, `refresh_entropy`, coef-prob updates, `mb_no_coeff_skip` + `prob_skip_false`, intra/inter prob literals, ymode/uv/MV prob updates, then per-MB modes; recon closes the loop through the same functions the decoder uses. |
+
+### Encoder-specific deviations (v1 scope)
+
+- One token partition (`multi_token_partition = 0`); the decoder handles
+  all 1/2/4/8 counts but the encoder never emits them.
+- No `SPLITMV`, no inter `B_PRED`, no GOLDEN/ALTREF prediction sources or
+  refresh, no segmentation, no `update_mb_segmentation`. All are
+  decodable features the encoder simply never chooses.
+- Mode selection is a small SAD scan (4 intra modes + ZEROMV/NEARESTMV/
+  NEARMV/NEWMV with a short diamond MV search) — not libvpx's RD pipeline.
+  The ported Speed-5 cost/thresh machinery in `costs.rs`/`metrics.rs` is
+  staged for a future faithful mode-decision port.
+- NEWMV deltas are snapped to even (VP8 codes MV deltas `>>1`), so the
+  searched vector round-trips exactly; edge-clamped odd candidates would
+  otherwise desync.
+- `keyframe_interval` forced keyframes and one-packet-per-frame pacing are
+  conveniences layered on top; libvpx exposes them via encoder config.
+- `qindex` is clamped to 0..=127 (the VP8 base-quantizer range).
+
 ## Behavioral notes / deliberate deviations
 
 - **No error concealment.** libvpx's `error_concealment.c` is not ported

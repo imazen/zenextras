@@ -59,6 +59,13 @@ fn idct4x4_add(input: &[i16; 16], dst: &mut [u8], stride: usize) {
     }
 }
 
+/// Raw `vp8_short_idct4x4llm_c` add — dequantized input, no dequant step.
+/// Used by the encoder's recon path (it already holds `dqcoeff`).
+#[allow(dead_code)]
+pub(crate) fn idct_add_block(input: &[i16; 16], dst: &mut [u8], stride: usize) {
+    idct4x4_add(input, dst, stride);
+}
+
 /// `vp8_dequant_idct_add_c` — dequantize then IDCT-add into dst; clears q.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn dequant_idct_add(q: &mut [i16; 16], dq: &[i16; 16], dst: &mut [u8], stride: usize) {
