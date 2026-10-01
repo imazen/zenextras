@@ -17,7 +17,7 @@ flacenc = ["dep:flacenc"]
 libopus = []
 
 [dependencies]
-ruopus = { path = "../../../../candidates/ruopus", optional = true, default-features = false, features = ["std"] }
+ruopus = { path = "../../../../candidates/ruopus", optional = true }
 opus-rs = { path = "../../../../candidates/opus-rs", optional = true }
 opus-decoder = { path = "../../../../candidates/rusopus/crates/opus-decoder", optional = true }
 oxideav-aac = { path = "../../../../candidates/oxideav-aac", optional = true }
