@@ -44,11 +44,18 @@ Findings:
   rate ~1.5–2× libopus wall time. **Qualified** as the Opus decode candidate.
 - **ruopus** — 12/12 vectors, sample-exact, SNR identical to libopus on every
   vector (tracks libopus's own quirks on the hard FEC/PLC vectors 05/06/12).
-  Packet codec is conformant. BUT 30–150× slower than libopus (scalar Rust,
-  no SIMD dispatch in the measured path) and fails `forbid(unsafe_code)`
-  (60 sites in `simd.rs`/`vq_simd.rs`/`mdct.rs`, all `#[allow]`-gated so it
-  builds under `deny` but not `forbid`). Decoded correctly, very slow —
-  usable as a correctness baseline, not a production decoder.
+  Packet codec is conformant.
+  **ERRATUM (2026-10-01):** the "30–150× slower than libopus" figure below was
+  measured with `default-features = false, features = ["std"]`, which selects
+  ruopus's O(n²) fallback MDCT (the `spectrograms` feature — on by default —
+  provides the ~10× faster FFT path). Corrected matched-mode measurements with
+  default features show ~decode parity and encode faster than libopus at its
+  default complexity 10; see `audio-harness/src/bin/opus_speed.rs` and
+  `evidence/opus-speed-2026-10-01.md`. The `forbid(unsafe_code)` finding stands
+  (60 `#[allow]`-gated SIMD sites; builds under `deny` but not `forbid`) —
+  that is an audit-surface issue, not a consumer compile failure.
+  Original (misconfigured) claim retained for provenance: 30–150× slower than
+  libopus (measured path was scalar + O(n²) MDCT, no `spectrograms`).
 - **opus-rs decoder** — rejects 50–100% of packets on every real-world vector:
   it hard-errors on packets whose coded channel count differs from the
   decoder's configured channels, where libopus/ruopus/rusopus upmix. Streams
