@@ -100,6 +100,18 @@ for vectors; WebM demux already parses. Each `MediaPacket` is one raw VP8 frame
 - `forbid(unsafe_code)` audit on x86_64/aarch64/wasm32; zero-dep target like
   rusty_vp9 (num-traits-level deps acceptable, avoid image/C crates).
 
+## Naming convention (owner-stated, 2026-09-29)
+
+When existing crates are insufficient: **`zen[name]`** for code we own
+long-term, **`zenforks-[name]`** for forks where we intend/duty-bound to land
+changes upstream eventually. `zenvp8` is the `zen[name]` case — owned
+implementation (vp8v2 seed + BSD libvpx port), no upstream to merge into.
+Applied to the other gaps: a rusty_vp9 SIMD feature-split should go upstream
+as PRs (scoping doc: consume crates.io, do not vendor); a transitional fork
+would be `zenforks-rusty_vp9`. ruopus performance work is likewise
+upstream-first (`zenforks-ruopus` while divergent); only if it becomes
+permanently ours would it earn a `zen*` name (e.g. `zenopus`).
+
 ## Placement: zenextras, not candidates/ or a new repo
 
 `~/work/zenmedia-resume-20260928/candidates/` is **unversioned scratch** (its
