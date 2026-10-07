@@ -13,12 +13,12 @@ readme = "README.crates.md"
 include = ["/src/**", "/README.crates.md", "/CHANGELOG.md", "/LICENSE*"]
 
 [dependencies]
-hayro-jpeg2000 = { version = "0.3.4", default-features = false, features = ["std"] }
+hayro-jpeg2000 = { version = "0.3.5", default-features = false, features = ["std"] }
 zencodec = { optional = true, version = ">=0.1.26, <0.3.0" }
 zenpixels = { version = ">=0.2.10, <0.4.0", default-features = false }
 whereat = { version = "0.1.5", default-features = false }
-enough = { version = "0.4.3", default-features = false }
-thiserror = { version = "2.0.20", default-features = false }
+enough = { version = "0.4.4", default-features = false }
+thiserror = { version = "2.0.21", default-features = false }
 
 [features]
 default = ["std", "zencodec"]
@@ -26,8 +26,8 @@ std = []
 zencodec = ["dep:zencodec"]
 
 [dev-dependencies]
-zenbench = "0.1.9"
-codec-corpus = "1"
+zenbench = "0.1.10"
+codec-corpus = "1.1.0"
 # zencodec conformance harness. Provides check_decode_truncation_series /
 # check_decode_error_envelope (EOF/truncation + envelope-survives-erasure
 # conformance).
