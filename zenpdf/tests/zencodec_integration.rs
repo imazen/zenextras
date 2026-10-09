@@ -241,7 +241,7 @@ fn estimate_decode_resources_scales_with_output() {
     use zencodec::estimate::{ComputeEnvironment, ImageCharacteristics, ThreadingInformation};
     use zenpixels::PixelDescriptor;
     let img = ImageCharacteristics::new(595, 841, PixelDescriptor::RGBA8_SRGB);
-    let env = ComputeEnvironment::new().with_cores(8);
+    let env = ComputeEnvironment::conservative().with_cores(8);
     let est = PdfDecoderConfig::new().estimate_decode_resources(&img, &env);
     let output = 595u64 * 841 * 4;
     // Peak holds at least the output raster.
