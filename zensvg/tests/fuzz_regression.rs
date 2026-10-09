@@ -139,3 +139,35 @@ fn fuzz_parse_seeds_do_not_panic() {
     }
     assert!(failures.is_empty(), "seeds panicked: {failures:?}");
 }
+
+/// Replays every seed under `fuzz/regression/inventory/` (plus the render
+/// and parse seeds) through the inventory, as the `inventory` fuzz target
+/// does: no panic, and the inventory validates.
+#[test]
+fn inventory_seeds_validate_without_panicking() {
+    use zencodec::decode::{DecodeJob, DecoderConfig};
+    let mut all = seeds("inventory");
+    assert!(
+        !all.is_empty(),
+        "no seeds under fuzz/regression/inventory — the gate is empty"
+    );
+    all.extend(seeds("fuzz_render"));
+    all.extend(seeds("fuzz_parse"));
+    let mut failures = Vec::new();
+    for (name, data) in &all {
+        let r = std::panic::catch_unwind(|| {
+            let inv = zensvg::SvgDecoderConfig::new()
+                .job()
+                .inventory(data)
+                .expect("below the part cap")
+                .expect("zensvg implements inventory");
+            inv.validate().map_err(|e| e.to_string())
+        });
+        match r {
+            Err(_) => failures.push(format!("{name}: panicked")),
+            Ok(Err(e)) => failures.push(format!("{name}: {e}")),
+            Ok(Ok(())) => {}
+        }
+    }
+    assert!(failures.is_empty(), "seed failures: {failures:?}");
+}

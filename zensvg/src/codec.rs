@@ -41,7 +41,8 @@ static SVG_DECODE_CAPS: DecodeCapabilities = DecodeCapabilities::new()
     .with_stop(true) // checked before render
     .with_enforces_max_pixels(true)
     .with_enforces_max_memory(true)
-    .with_enforces_max_input_bytes(true);
+    .with_enforces_max_input_bytes(true)
+    .with_inventory(true);
 
 static SVG_DECODE_DESCRIPTORS: &[PixelDescriptor] = &[PixelDescriptor::RGBA8_SRGB];
 
@@ -281,6 +282,39 @@ impl<'a> zencodec::decode::DecodeJob<'a> for SvgDecodeJob {
             return Err(SvgError::ZeroOutputDimensions.into());
         }
         Ok(self.build_image_info(w, h))
+    }
+
+    /// Structural inventory: every element, attribute usvg ignores, comment,
+    /// processing instruction, DOCTYPE item and text run, or the gzip
+    /// framing of an SVGZ file, with what the render path does with it (see
+    /// `crate::inventory`). Honors `max_input_bytes` and the stop token.
+    fn inventory(
+        &self,
+        data: &[u8],
+    ) -> Result<Option<zencodec::inventory::Inventory>, At<CodecError>> {
+        self.check_input_size(data.len())?;
+        let stop: &dyn Stop = match &self.stop {
+            Some(s) => s,
+            None => &enough::Unstoppable,
+        };
+        match crate::inventory::svg_inventory(data, svg_format(), stop) {
+            Ok(inv) => Ok(Some(inv)),
+            Err(crate::inventory::InvError::Stopped(r)) => Err(SvgError::Stopped(r).into()),
+            Err(crate::inventory::InvError::Parts(e)) => {
+                // The part cap bounds the inventory's memory: report it as
+                // the memory limit it is (bytes of `Part`s, not file bytes).
+                let part = core::mem::size_of::<zencodec::inventory::Part>() as u64;
+                let max = match e {
+                    zencodec::inventory::InventoryError::TooManyParts { max } => u64::from(max),
+                    _ => u64::from(zencodec::inventory::DEFAULT_MAX_PARTS),
+                };
+                Err(SvgError::Limit(zencodec::LimitExceeded::Memory {
+                    actual: (max + 1).saturating_mul(part),
+                    max: max.saturating_mul(part),
+                })
+                .into())
+            }
+        }
     }
 
     fn output_info(&self, data: &[u8]) -> Result<OutputInfo, At<CodecError>> {
