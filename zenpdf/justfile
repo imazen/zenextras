@@ -31,3 +31,9 @@ build:
 
 # Run all CI checks locally
 ci: fmt-check clippy test feature-check
+
+# Cross-check the structural inventory against mutool and exiftool on a
+# directory of real PDFs (searched recursively). Writes the result table to
+# `report`.
+inventory-oracle dir report="inventory-oracle-pdf.tsv":
+    INVENTORY_ORACLE_MUTOOL="$(command -v mutool)" INVENTORY_ORACLE_EXIFTOOL="$(command -v exiftool)" INVENTORY_ORACLE_PDF_DIR="{{dir}}" INVENTORY_ORACLE_REPORT="{{report}}" cargo test --test inventory oracle_mutool_exiftool -- --nocapture

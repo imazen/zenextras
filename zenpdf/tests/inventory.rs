@@ -282,6 +282,31 @@ fn objstm_pdf() -> Vec<u8> {
     buf
 }
 
+/// Bytes hidden inside units the decoder reads: text after the version
+/// number, a duplicate key hayro overwrites, a comment inside the catalog,
+/// and data after the end of a zlib stream.
+fn hidden_bytes_pdf() -> Vec<u8> {
+    use std::io::Write as _;
+    let mut z = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+    z.write_all(b"0 0 1 rg 0 0 10 10 re f").unwrap();
+    let mut content = z.finish().unwrap();
+    content.extend_from_slice(b"HIDDEN-TAIL");
+    let mut b = PdfBuilder::new();
+    b.buf = b"%PDF-1.7 HIDDEN-AFTER-VERSION\n".to_vec();
+    b.obj(
+        1,
+        "<< /Type /Catalog /Pages 9 0 R /Pages 2 0 R % HIDDEN-COMMENT\n>>",
+    )
+    .obj(2, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>")
+    .obj(
+        3,
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 20 20] /Contents 4 0 R >>",
+    )
+    .stream(4, "/Filter /FlateDecode", &content);
+    b.end_revision("/Root 1 0 R");
+    b.finish()
+}
+
 // ── Helpers ─────────────────────────────────────────────────────────────
 
 fn inventory(data: &[u8]) -> Inventory {
@@ -357,6 +382,7 @@ fn testkit_check_inventory_on_every_fixture() {
         ("two_revision", two_revision_pdf()),
         ("everything", everything_pdf()),
         ("objstm", objstm_pdf()),
+        ("hidden_bytes", hidden_bytes_pdf()),
         ("fixtures/test.pdf", fixture),
     ] {
         zencodec_testkit::check_inventory(PdfDecoderConfig::new(), &bytes)
@@ -367,7 +393,12 @@ fn testkit_check_inventory_on_every_fixture() {
 #[test]
 fn fixtures_render() {
     // The fixtures are real PDFs: the decoder renders each one.
-    for bytes in [two_revision_pdf(), everything_pdf(), objstm_pdf()] {
+    for bytes in [
+        two_revision_pdf(),
+        everything_pdf(),
+        objstm_pdf(),
+        hidden_bytes_pdf(),
+    ] {
         zenpdf::render_page(&bytes, 0, &zenpdf::RenderBounds::Scale(1.0)).expect("fixture renders");
     }
 }
@@ -436,6 +467,7 @@ fn two_revision_inventory_is_pinned() {
 
 const PINNED_TWO_REVISION: &[&str] = &[
     "header 0..14 - structure \"%PDF-1.7\"",
+    "  chunk 9..14 % skipped \"âãÏÓ\"",
     "gap 14..15 - padding",
     "chunk 15..79 0x1 structure \"Catalog\"",
     "  attribute 26..40 Type skipped \"Type\"",
@@ -573,6 +605,37 @@ fn leak_carriers_are_labelled_and_unconsumed() {
             String::from_utf8_lossy(secret)
         );
     }
+}
+
+#[test]
+fn no_hidden_bytes_inside_consumed_parts() {
+    let data = hidden_bytes_pdf();
+    let inv = inventory(&data);
+    for (marker, want) in [
+        (&b"HIDDEN-AFTER-VERSION"[..], Disposition::Skipped),
+        (b"9 0 R", Disposition::Dropped),
+        (b"HIDDEN-COMMENT", Disposition::Skipped),
+        (b"HIDDEN-TAIL", Disposition::Unreferenced),
+    ] {
+        let p = leaf_at(&inv, find(&data, marker) as u64);
+        assert_eq!(
+            p.disposition,
+            want,
+            "{:?}: {p:?}\n{inv}",
+            String::from_utf8_lossy(marker)
+        );
+    }
+    let dup = leaf_at(&inv, find(&data, b"/Pages 9 0 R") as u64);
+    assert!(
+        detail(dup).contains("overwritten by a later /Pages"),
+        "{inv}"
+    );
+    // The content stream's data part ends at the zlib end; the tail follows.
+    let kids = inv.children(Some(id_of(&inv, 4)));
+    let parts: Vec<&Part> = kids.iter().map(|k| &inv.parts()[k.index()]).collect();
+    assert_eq!(parts.len(), 2, "{inv}");
+    assert_eq!(parts[0].disposition, Disposition::ImageData);
+    assert_eq!(parts[0].range.end, find(&data, b"HIDDEN-TAIL") as u64);
 }
 
 #[test]

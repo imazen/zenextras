@@ -23,6 +23,7 @@
 //! Every part's `detail` starts with its revision: `rev N` counts the
 //! `%%EOF` markers before it, so each incremental update is one revision.
 
+mod ends;
 mod graph;
 mod lex;
 
@@ -70,8 +71,23 @@ struct Assign {
     detail: String,
     /// Disposition of a stream object's data, as a child part.
     data: Option<Disposition>,
-    /// Dictionary entries the decoder does not read, inside a part it does.
-    entries: Vec<UnreadEntry>,
+    /// Where the stream's first filter stops reading (absolute), when
+    /// bytes follow, and what the tail is.
+    data_end: Option<(usize, String)>,
+    /// Bytes inside this part the decoder does not read: unread dictionary
+    /// entries, overwritten duplicate keys, comments.
+    children: Vec<Child>,
+}
+
+/// A child part inside a unit.
+#[derive(Clone, Debug)]
+struct Child {
+    range: Range<usize>,
+    kind: PartKind,
+    tag: PartTag,
+    label: Option<String>,
+    disposition: Disposition,
+    detail: String,
 }
 
 impl Assign {
@@ -81,7 +97,8 @@ impl Assign {
             label: None,
             detail: detail.into(),
             data: None,
-            entries: Vec::new(),
+            data_end: None,
+            children: Vec::new(),
         }
     }
 }
@@ -98,8 +115,8 @@ pub(crate) fn pdf_inventory(
     emit(data, format, &units, &assign)
 }
 
-fn rev_text(units: &[Unit], u: &Unit) -> String {
-    let last = units.iter().filter(|u| matches!(u.kind, Kind::Eof)).count() as u32;
+/// `rev N`; `last` is the number of `%%EOF` markers in the file.
+fn rev_text(last: u32, u: &Unit) -> String {
     if u.rev == last && last > 0 {
         format!("rev {} (after the last %%EOF)", u.rev)
     } else {
@@ -293,29 +310,54 @@ fn assign(data: &[u8], units: &[Unit], render_annotations: bool) -> Vec<Assign> 
     };
 
     let last_eof = units.iter().rposition(|u| matches!(u.kind, Kind::Eof));
+    let eofs = units.iter().filter(|u| matches!(u.kind, Kind::Eof)).count() as u32;
     let mut out = Vec::with_capacity(units.len());
     for (i, u) in units.iter().enumerate() {
-        let rev = rev_text(units, u);
+        let rev = rev_text(eofs, u);
         let a = match &u.kind {
             Kind::LeadingJunk => Assign::new(
                 Disposition::Unknown,
                 "bytes before the %PDF- header; hayro scans the first 2000 bytes for it",
             ),
             Kind::Header { binary_marker } => {
-                let mut a = Assign::new(
-                    Disposition::Structure,
-                    if *binary_marker {
-                        "version line and binary-marker comment"
-                    } else {
-                        "version line"
-                    },
-                );
+                // hayro's `find_version` reads `%PDF-` and the version
+                // number after it; the rest of the line and the
+                // binary-marker comment line are never read.
                 let line = &data[u.range.clone()];
                 let first = line
                     .iter()
                     .position(|&b| b == b'\n' || b == b'\r')
                     .unwrap_or(line.len());
-                a.label = Some(text(&line[..first], 32));
+                let mut v = 5usize;
+                while v < first && (line[v].is_ascii_digit() || line[v] == b'.') {
+                    v += 1;
+                }
+                let mut a = Assign::new(Disposition::Structure, "version line");
+                a.label = Some(text(&line[..v], 32));
+                if v < first {
+                    a.children.push(Child {
+                        range: u.range.start + v..u.range.start + first,
+                        kind: PartKind::Gap,
+                        tag: PartTag::None,
+                        label: Some(text(&line[v..first], 64)),
+                        disposition: Disposition::Skipped,
+                        detail: "rest of the version line; hayro reads only the version number"
+                            .into(),
+                    });
+                }
+                if *binary_marker {
+                    let second = (first..line.len())
+                        .find(|&j| line[j] == b'%')
+                        .unwrap_or(line.len());
+                    a.children.push(Child {
+                        range: u.range.start + second..u.range.end,
+                        kind: PartKind::Chunk,
+                        tag: PartTag::Name(Cow::Borrowed("%")),
+                        label: Some(text(&line[second + 1..], 64)),
+                        disposition: Disposition::Skipped,
+                        detail: "binary-marker comment; the parser skips comments".into(),
+                    });
+                }
                 a
             }
             Kind::Whitespace => Assign::new(Disposition::Padding, rev),
@@ -415,10 +457,13 @@ fn assign(data: &[u8], units: &[Unit], render_annotations: bool) -> Vec<Assign> 
                 } else if chain.units.contains(&i) {
                     let mut a = Assign::new(Disposition::Structure, what);
                     if let Some(r) = dict.clone() {
-                        a.entries = unread_entries(data, r, |k| {
+                        a.children = dict_children(data, r, |k| {
                             (!graph::trailer_key_read(k)).then(|| Cow::Owned(text(k, 64)))
                         });
                     }
+                    let mut comments =
+                        comment_children(data, std::slice::from_ref(&u.range), &a.children);
+                    a.children.append(&mut comments);
                     a
                 } else if !chain.ok
                     && dict_bytes(data, u)
@@ -469,6 +514,8 @@ struct Semantics {
     /// Liveness of objects stored in object streams.
     stm_live: BTreeMap<u32, Live>,
     render_annotations: bool,
+    /// The trailer names an encryption dictionary.
+    encrypted: bool,
 }
 
 fn semantics(
@@ -515,6 +562,11 @@ fn semantics(
         })
     };
     let trailer = trailer_unit.and_then(|t| dict_bytes(data, &units[t]));
+    let encrypted = trailer.is_some_and(|t| {
+        lex::dict_entries(t, 0..t.len())
+            .iter()
+            .any(|e| &*lex::unescape_name(&t[e.key.clone()]) == b"Encrypt")
+    });
     let walk = graph::walk(pdf, trailer, render_annotations);
 
     let mut objstm = BTreeMap::new();
@@ -550,38 +602,143 @@ fn semantics(
         owner,
         stm_live,
         render_annotations,
+        encrypted,
     }
 }
 
-#[derive(Clone, Debug)]
-struct UnreadEntry {
-    range: Range<usize>,
-    key: String,
-    /// What the entry is, when the key alone does not say (`XMP` for
-    /// `/Metadata`).
-    role: String,
-    value: String,
-}
-
-/// Entries of the dictionary at `dict` that `unread(key)` marks unread.
-fn unread_entries(
+/// Children for the dictionary at `dict`: entries an earlier duplicate key
+/// hides (hayro's dictionary map keeps the last value for a key), and
+/// entries `unread(key)` says the decoder does not read.
+fn dict_children(
     data: &[u8],
     dict: Range<usize>,
     unread: impl Fn(&[u8]) -> Option<Cow<'static, str>>,
-) -> Vec<UnreadEntry> {
-    lex::dict_entries(data, dict)
+) -> Vec<Child> {
+    let entries = lex::dict_entries(data, dict);
+    let keys: Vec<Cow<'_, [u8]>> = entries
+        .iter()
+        .map(|e| lex::unescape_name(&data[e.key.clone()]))
+        .collect();
+    let mut last: BTreeMap<&[u8], usize> = BTreeMap::new();
+    for (i, k) in keys.iter().enumerate() {
+        last.insert(k, i);
+    }
+    let mut out = Vec::new();
+    for (i, e) in entries.iter().enumerate() {
+        let key = text(&keys[i], 64);
+        let value = text(&data[e.value.clone()], 128);
+        let (disposition, detail) = if last.get(&*keys[i]) != Some(&i) {
+            (
+                Disposition::Dropped,
+                format!("overwritten by a later /{key} in the same dictionary: {value}"),
+            )
+        } else if let Some(role) = unread(&keys[i]) {
+            let role = if role == key.as_str() {
+                String::new()
+            } else {
+                format!("{role}; ")
+            };
+            (
+                Disposition::Skipped,
+                format!("{role}entry not read by the decoder: {value}"),
+            )
+        } else {
+            continue;
+        };
+        out.push(Child {
+            range: e.range.clone(),
+            kind: PartKind::Attribute,
+            tag: PartTag::Name(Cow::Owned(key.clone())),
+            label: Some(key),
+            disposition,
+            detail,
+        });
+    }
+    out
+}
+
+/// Comments inside a unit (outside its stream data), as skipped children.
+/// Comments inside an already-listed child are left to it.
+fn comment_children(data: &[u8], ranges: &[Range<usize>], listed: &[Child]) -> Vec<Child> {
+    let mut out = Vec::new();
+    for r in ranges {
+        for c in lex::comments_in(data, r.clone()) {
+            let i = listed.partition_point(|l| l.range.end <= c.start);
+            if listed.get(i).is_some_and(|l| l.range.start < c.end) {
+                continue;
+            }
+            out.push(Child {
+                label: Some(text(&data[c.start + 1..c.end], 64)),
+                range: c,
+                kind: PartKind::Chunk,
+                tag: PartTag::Name(Cow::Borrowed("%")),
+                disposition: Disposition::Skipped,
+                detail: "comment; the parser skips it".into(),
+            });
+        }
+    }
+    out
+}
+
+/// The first `/Filter` of a stream dictionary, without its slash.
+fn first_filter(dict: &[u8]) -> Option<Vec<u8>> {
+    let e = lex::dict_entries(dict, 0..dict.len())
         .into_iter()
-        .filter_map(|e| {
-            let key_bytes = &data[e.key.clone()];
-            let role = unread(key_bytes)?;
-            Some(UnreadEntry {
-                range: e.range,
-                key: text(key_bytes, 64),
-                role: role.into_owned(),
-                value: text(&data[e.value.clone()], 128),
-            })
-        })
-        .collect()
+        .rfind(|e| &*lex::unescape_name(&dict[e.key.clone()]) == b"Filter")?;
+    let v = &dict[e.value];
+    let first = match lex::value_kind(v) {
+        lex::ValueKind::Array => {
+            let items = lex::array_items(v);
+            &v[items.first()?.clone()]
+        }
+        _ => v,
+    };
+    let name = first.strip_prefix(b"/")?;
+    Some(lex::unescape_name(name).into_owned())
+}
+
+/// Geometry of an unfiltered image whose colour space gives its component
+/// count directly.
+fn image_geometry(dict: &[u8]) -> Option<ends::ImageGeometry> {
+    use hayro_syntax::object::{Dict, FromBytes, Name};
+    let d = Dict::from_bytes(dict)?;
+    if d.get::<Name<'_>>(b"Subtype").as_deref() != Some(b"Image") {
+        return None;
+    }
+    let width = u64::from(d.get::<u32>(b"Width")?);
+    let height = u64::from(d.get::<u32>(b"Height")?);
+    if d.get::<bool>(b"ImageMask") == Some(true) {
+        return Some(ends::ImageGeometry {
+            width,
+            height,
+            components: 1,
+            bpc: 1,
+        });
+    }
+    let bpc = u64::from(d.get::<u32>(b"BitsPerComponent")?);
+    let cs = lex::dict_entries(dict, 0..dict.len())
+        .into_iter()
+        .rfind(|e| &*lex::unescape_name(&dict[e.key.clone()]) == b"ColorSpace")?;
+    let v = &dict[cs.value];
+    let components = match v {
+        b"/DeviceGray" | b"/G" => 1,
+        b"/DeviceRGB" | b"/RGB" => 3,
+        b"/DeviceCMYK" | b"/CMYK" => 4,
+        _ if lex::value_kind(v) == lex::ValueKind::Array => {
+            let items = lex::array_items(v);
+            match items.first().map(|r| &v[r.clone()]) {
+                Some(b"/Indexed" | b"/I") => 1,
+                _ => return None,
+            }
+        }
+        _ => return None,
+    };
+    Some(ends::ImageGeometry {
+        width,
+        height,
+        components,
+        bpc,
+    })
 }
 
 fn reach_disposition(ctx: Ctx, is_stream: bool) -> Disposition {
@@ -632,7 +789,7 @@ fn object_assign(
             let mut a = Assign::new(Disposition::Structure, "cross-reference stream");
             a.label = Some("XRef".into());
             if let Some(r) = o.dict.clone() {
-                a.entries = unread_entries(data, r, |k| {
+                a.children = dict_children(data, r, |k| {
                     (!graph::trailer_key_read(k)).then(|| Cow::Owned(text(k, 64)))
                 });
             }
@@ -651,7 +808,7 @@ fn object_assign(
                     Ctx::Kid => Ctx::Page,
                     c => c,
                 };
-                a.entries = unread_entries(data, range, |k| {
+                a.children = dict_children(data, range, |k| {
                     graph::unread_entry(ctx, k, s.render_annotations, drawn)
                 });
             }
@@ -676,6 +833,44 @@ fn object_assign(
             }
         }
     };
+    if a.disposition.is_consumed() {
+        // Comments inside the object, outside its stream data.
+        let ranges = match &o.stream {
+            Some(sd) => alloc::vec![u.range.start..sd.data.start, sd.data.end..u.range.end],
+            None => alloc::vec![u.range.clone()],
+        };
+        let mut comments = comment_children(data, &ranges, &a.children);
+        a.children.append(&mut comments);
+        // Bytes after the internal end of the stream's encoded data.
+        if let (Some(sd), Some(d)) = (&o.stream, dict) {
+            if s.encrypted {
+                notes.push("encrypted document: bytes after the stream data's internal end are not distinguished".into());
+            } else {
+                let filter = first_filter(d);
+                let geometry = if filter.is_none() {
+                    image_geometry(d)
+                } else {
+                    None
+                };
+                match ends::filter_end(filter.as_deref(), &data[sd.data.clone()], geometry) {
+                    ends::End::At(e) if sd.data.start + e < sd.data.end => {
+                        let what = filter.as_deref().map_or_else(
+                            || "declared image size".to_string(),
+                            |f| format!("{} data", text(f, 32)),
+                        );
+                        a.data_end = Some((
+                            sd.data.start + e,
+                            format!("after the end of the {what}; the decoder stops reading there"),
+                        ));
+                    }
+                    ends::End::Unchecked(why) => notes.push(format!(
+                        "bytes after the stream data's internal end are not distinguished: {why}"
+                    )),
+                    _ => {}
+                }
+            }
+        }
+    }
     if a.label.is_none() {
         a.label = match a.disposition {
             Disposition::Unreferenced | Disposition::Malformed => historic
@@ -801,7 +996,8 @@ fn objstm_assign(nums: &Result<Vec<u32>, &'static str>, i: usize, s: &Semantics)
                 label: Some("ObjStm".into()),
                 detail: format!("object stream; {why}, so its objects are not listed"),
                 data: Some(Disposition::Structure),
-                entries: Vec::new(),
+                data_end: None,
+                children: Vec::new(),
             };
         }
     };
@@ -859,7 +1055,8 @@ fn objstm_assign(nums: &Result<Vec<u32>, &'static str>, i: usize, s: &Semantics)
         label: Some("ObjStm".into()),
         detail,
         data: Some(disposition),
-        entries: Vec::new(),
+        data_end: None,
+        children: Vec::new(),
     }
 }
 
@@ -936,38 +1133,47 @@ fn emit(
             part = part.with_detail(a.detail.clone());
         }
         let id = inv.push(None, part)?;
-        for e in &a.entries {
-            let role = if e.role == e.key {
-                String::new()
-            } else {
-                format!("{}; ", e.role)
-            };
-            inv.push(
-                Some(id),
-                Part::new(
-                    PartKind::Attribute,
-                    PartTag::Name(Cow::Owned(e.key.clone())),
-                    r64(&e.range),
-                    Disposition::Skipped,
-                )
-                .with_label(e.key.clone())
-                .with_detail(format!("{role}entry not read by the decoder: {}", e.value)),
-            )?;
+        for c in &a.children {
+            if c.range.start >= c.range.end {
+                continue;
+            }
+            let mut part = Part::new(c.kind, c.tag.clone(), r64(&c.range), c.disposition)
+                .with_detail(c.detail.clone());
+            if let Some(l) = &c.label {
+                part = part.with_label(l.clone());
+            }
+            inv.push(Some(id), part)?;
         }
         if let (Kind::Object(o), Some(d)) = (&u.kind, a.data)
             && let Some(sd) = &o.stream
             && sd.data.start < sd.data.end
         {
+            let (read_end, tail) = match &a.data_end {
+                Some((e, why)) if *e > sd.data.start && *e < sd.data.end => (*e, Some(why)),
+                _ => (sd.data.end, None),
+            };
             inv.push(
                 Some(id),
                 Part::new(
                     PartKind::Extent,
                     PartTag::Code(o.num as u32),
-                    r64(&sd.data),
+                    r64(&(sd.data.start..read_end)),
                     d,
                 )
                 .with_detail("stream data"),
             )?;
+            if let Some(why) = tail {
+                inv.push(
+                    Some(id),
+                    Part::new(
+                        PartKind::Gap,
+                        PartTag::None,
+                        r64(&(read_end..sd.data.end)),
+                        Disposition::Unreferenced,
+                    )
+                    .with_detail(why.clone()),
+                )?;
+            }
         }
         i += 1;
     }

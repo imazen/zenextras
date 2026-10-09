@@ -54,3 +54,35 @@ fn fuzz_render_seeds_finish_fast_without_panicking() {
     }
     assert!(failures.is_empty(), "seed failures: {failures:?}");
 }
+
+/// Replays every seed under `fuzz/regression/inventory/` and
+/// `fuzz/regression/fuzz_render/` through the inventory, as the `inventory`
+/// fuzz target does: no panic, and the inventory validates.
+#[cfg(feature = "zencodec")]
+#[test]
+fn inventory_seeds_validate_without_panicking() {
+    use zencodec::decode::{DecodeJob, DecoderConfig};
+    let mut all = seeds("inventory");
+    assert!(
+        !all.is_empty(),
+        "no seeds under fuzz/regression/inventory — the gate is empty"
+    );
+    all.extend(seeds("fuzz_render"));
+    let mut failures = Vec::new();
+    for (name, data) in &all {
+        let r = std::panic::catch_unwind(|| {
+            let inv = zenpdf::PdfDecoderConfig::new()
+                .job()
+                .inventory(data)
+                .expect("below the part cap")
+                .expect("zenpdf implements inventory");
+            inv.validate().map_err(|e| e.to_string())
+        });
+        match r {
+            Err(_) => failures.push(format!("{name}: panicked")),
+            Ok(Err(e)) => failures.push(format!("{name}: {e}")),
+            Ok(Ok(())) => {}
+        }
+    }
+    assert!(failures.is_empty(), "seed failures: {failures:?}");
+}

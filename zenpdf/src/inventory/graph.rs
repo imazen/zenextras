@@ -13,6 +13,7 @@ use hayro_syntax::object::{
     Dict, FromBytes, MaybeRef, Name, Object, ObjectIdentifier, Rect, Stream,
 };
 
+use super::lex::ValueKind;
 use super::text;
 
 pub(crate) type Id = (i32, i32);
@@ -493,6 +494,12 @@ pub(crate) struct Walk {
     pub truncated: bool,
 }
 
+/// The walk reads dictionaries and arrays from their raw bytes with the
+/// inventory's own tokenizer (`lex::dict_entries`, `lex::array_items`) and
+/// asks hayro only to resolve references (`XRef::get`, which returns
+/// `Option`). hayro's `Dict::entries` and `Array::raw_iter` unwrap values
+/// that their skipper accepted but their reader rejects (`[8-.]`), so the
+/// walk never calls them.
 struct Walker<'p> {
     pdf: &'p Pdf,
     render_annotations: bool,
@@ -504,6 +511,26 @@ struct Walker<'p> {
 }
 
 const MAX_DEPTH: u32 = 64;
+
+/// The raw bytes of a resolved object, as the walk needs them.
+enum Raw<'a> {
+    /// A dictionary or a stream's dictionary, `<<` … `>>`.
+    Dict(&'a [u8], bool),
+    /// An array's contents, between the brackets.
+    Array(&'a [u8]),
+}
+
+fn resolve<'a>(pdf: &'a Pdf, id: Id) -> Option<Raw<'a>> {
+    match pdf
+        .xref()
+        .get::<Object<'_>>(ObjectIdentifier::new(id.0, id.1))?
+    {
+        Object::Dict(d) => Some(Raw::Dict(d.data(), false)),
+        Object::Stream(s) => Some(Raw::Dict(s.dict().data(), true)),
+        Object::Array(a) => Some(Raw::Array(a.data())),
+        _ => None,
+    }
+}
 
 /// Walk the object graph from the trailer the way the decoder reads it.
 /// `trailer` is the trailer dictionary's bytes (hayro does not expose it).
@@ -525,16 +552,16 @@ pub(crate) fn walk(pdf: &Pdf, trailer: Option<&[u8]>, render_annotations: bool) 
         Ctx::Catalog,
         Cow::Borrowed("Catalog"),
     );
-    if let Some(t) = trailer.and_then(Dict::from_bytes) {
-        for (key, value) in t.entries() {
-            let k: &[u8] = &key;
-            let (ctx, label) = match k {
+    if let Some(t) = trailer {
+        for e in super::lex::dict_entries(t, 0..t.len()) {
+            let key = super::lex::unescape_name(&t[e.key.clone()]);
+            let (ctx, label) = match &*key {
                 b"Root" | b"Prev" | b"XRefStm" | b"Size" | b"ID" => continue,
                 b"Info" => (Ctx::Info, Cow::Borrowed("Info")),
                 b"Encrypt" => (Ctx::Encrypt, Cow::Borrowed("Encrypt")),
-                _ => (Ctx::Skip, Cow::Owned(text(k, 64))),
+                k => (Ctx::Skip, Cow::Owned(text(k, 64))),
             };
-            w.edge(value, ctx, label, 0);
+            w.edge(&t[e.value], ctx, label, 0);
         }
     }
     w.run();
@@ -585,51 +612,43 @@ impl<'p> Walker<'p> {
             if !self.spend() {
                 return;
             }
-            let Some(obj) = pdf
-                .xref()
-                .get::<Object<'_>>(ObjectIdentifier::new(id.0, id.1))
-            else {
-                continue;
-            };
-            self.visit(&obj, ctx, label, 0);
+            match resolve(pdf, id) {
+                Some(Raw::Dict(d, _)) => self.visit_dict(d, ctx, label, 0),
+                Some(Raw::Array(a)) => self.visit_array(a, ctx, label, 0),
+                None => {}
+            }
         }
     }
 
-    fn edge(
-        &mut self,
-        value: MaybeRef<Object<'_>>,
-        ctx: Ctx,
-        label: Cow<'static, str>,
-        depth: u32,
-    ) {
-        match value {
-            MaybeRef::Ref(r) => self.enqueue((r.obj_number, r.gen_number), ctx, label),
-            MaybeRef::NotRef(o) => self.visit(&o, ctx, label, depth),
+    /// A value's bytes: a reference is queued, a direct dictionary or array
+    /// is walked in place, anything else ends the path.
+    fn edge(&mut self, v: &[u8], ctx: Ctx, label: Cow<'static, str>, depth: u32) {
+        match super::lex::value_kind(v) {
+            ValueKind::Ref(n, g) => self.enqueue((n, g), ctx, label),
+            ValueKind::Dict => self.visit_dict(v, ctx, label, depth),
+            ValueKind::Array => self.visit_array(v, ctx, label, depth),
+            ValueKind::Other => {}
         }
     }
 
-    fn visit(&mut self, obj: &Object<'_>, ctx: Ctx, label: Cow<'static, str>, depth: u32) {
+    fn visit_array(&mut self, a: &[u8], ctx: Ctx, label: Cow<'static, str>, depth: u32) {
+        if depth > MAX_DEPTH {
+            return;
+        }
+        for item in super::lex::array_items(a) {
+            if !self.spend() {
+                return;
+            }
+            self.edge(&a[item], ctx, label.clone(), depth + 1);
+        }
+    }
+
+    fn visit_dict(&mut self, d: &[u8], ctx: Ctx, label: Cow<'static, str>, depth: u32) {
         if depth > MAX_DEPTH || !self.spend() {
             return;
         }
-        match obj {
-            Object::Dict(d) => self.visit_dict(d, ctx, label, depth),
-            Object::Stream(s) => self.visit_dict(s.dict(), ctx, label, depth),
-            Object::Array(a) => {
-                for item in a.raw_iter() {
-                    if !self.spend() {
-                        return;
-                    }
-                    self.edge(item, ctx, label.clone(), depth + 1);
-                }
-            }
-            _ => {}
-        }
-    }
-
-    fn visit_dict(&mut self, d: &Dict<'_>, ctx: Ctx, label: Cow<'static, str>, depth: u32) {
         let ctx = match ctx {
-            Ctx::Kid if d.get::<Name<'_>>(b"Type").as_deref() == Some(b"Pages") => Ctx::PageTree,
+            Ctx::Kid if super::lex::dict_type(d).as_deref() == Some(b"Pages") => Ctx::PageTree,
             Ctx::Kid => Ctx::Page,
             c => c,
         };
@@ -637,15 +656,16 @@ impl<'p> Walker<'p> {
             self.visit_annot(d, depth);
             return;
         }
-        for (key, value) in d.entries() {
+        for e in super::lex::dict_entries(d, 0..d.len()) {
             if !self.spend() {
                 return;
             }
+            let key = super::lex::unescape_name(&d[e.key.clone()]);
             match rule(ctx, &key, self.render_annotations) {
                 Rule::Ignore => {}
                 Rule::Follow(c, l) => {
                     let l = l.unwrap_or_else(|| label.clone());
-                    self.edge(value, c, l, depth + 1);
+                    self.edge(&d[e.value], c, l, depth + 1);
                 }
             }
         }
@@ -653,33 +673,46 @@ impl<'p> Walker<'p> {
 
     /// `interpret_page` draws an annotation's normal appearance unless the
     /// annotation is hidden (`/F` bit 2) or has no `/Rect`.
-    fn visit_annot(&mut self, d: &Dict<'_>, depth: u32) {
-        let hidden = d.get::<u32>(b"F").unwrap_or(0) & 2 != 0;
-        let drawn = !hidden && d.get::<Rect>(b"Rect").is_some();
-        let state: Option<Vec<u8>> = d.get::<Name<'_>>(b"AS").map(|n| n.to_vec());
-        for (key, value) in d.entries() {
+    fn visit_annot(&mut self, d: &[u8], depth: u32) {
+        let parsed = Dict::from_bytes(d);
+        let hidden = parsed
+            .as_ref()
+            .and_then(|p| p.get::<u32>(b"F"))
+            .unwrap_or(0)
+            & 2
+            != 0;
+        let drawn = !hidden
+            && parsed
+                .as_ref()
+                .is_some_and(|p| p.get::<Rect>(b"Rect").is_some());
+        let state: Option<Vec<u8>> = parsed
+            .as_ref()
+            .and_then(|p| p.get::<Name<'_>>(b"AS"))
+            .map(|n| n.to_vec());
+        for e in super::lex::dict_entries(d, 0..d.len()) {
             if !self.spend() {
                 return;
             }
-            let k: &[u8] = &key;
-            match k {
-                b"AP" if drawn => self.appearance(value, state.as_deref(), depth + 1),
+            let key = super::lex::unescape_name(&d[e.key.clone()]);
+            let v = &d[e.value];
+            match &*key {
+                b"AP" if drawn => self.appearance(v, state.as_deref(), depth + 1),
                 b"AP" if hidden => self.edge(
-                    value,
+                    v,
                     Ctx::Skip,
                     Cow::Borrowed("Appearance (hidden annotation)"),
                     depth + 1,
                 ),
                 b"AP" => self.edge(
-                    value,
+                    v,
                     Ctx::Skip,
                     Cow::Borrowed("Appearance (no /Rect)"),
                     depth + 1,
                 ),
                 b"Parent" | b"P" | b"Popup" | b"IRT" => {}
-                _ => {
+                k => {
                     if let Rule::Follow(c, Some(l)) = side_data(k).unwrap_or_else(|| skip_key(k)) {
-                        self.edge(value, c, l, depth + 1);
+                        self.edge(v, c, l, depth + 1);
                     }
                 }
             }
@@ -688,67 +721,82 @@ impl<'p> Walker<'p> {
 
     /// The `/AP` dictionary: only `/N` is drawn; when `/N` holds states, only
     /// the one `/AS` names (or `/Off`) is.
-    fn appearance(&mut self, value: MaybeRef<Object<'_>>, state: Option<&[u8]>, depth: u32) {
+    fn appearance(&mut self, v: &[u8], state: Option<&[u8]>, depth: u32) {
         let pdf = self.pdf;
-        let ap: Option<Dict<'_>> = match value {
-            MaybeRef::Ref(r) => {
-                self.enqueue((r.obj_number, r.gen_number), Ctx::Leaf, Cow::Borrowed("AP"));
-                pdf.xref().get::<Dict<'_>>(r.into())
+        let ap: &[u8] = match super::lex::value_kind(v) {
+            ValueKind::Dict => v,
+            ValueKind::Ref(n, g) => {
+                self.enqueue((n, g), Ctx::Leaf, Cow::Borrowed("AP"));
+                match resolve(pdf, (n, g)) {
+                    Some(Raw::Dict(d, _)) => d,
+                    _ => return,
+                }
             }
-            MaybeRef::NotRef(o) => o.into_dict(),
+            _ => return,
         };
-        let Some(ap) = ap else {
-            return;
-        };
-        for (key, v) in ap.entries() {
+        // Owned copy: `ap` may borrow the caller's bytes, which outlive this
+        // call but not `'p`.
+        let ap = ap.to_vec();
+        for e in super::lex::dict_entries(&ap, 0..ap.len()) {
             if !self.spend() {
                 return;
             }
+            let key = super::lex::unescape_name(&ap[e.key.clone()]);
+            let nv = &ap[e.value.clone()];
             if &*key != b"N" {
                 self.edge(
-                    v,
+                    nv,
                     Ctx::Skip,
                     Cow::Borrowed("Appearance (down/rollover)"),
                     depth + 1,
                 );
                 continue;
             }
-            let (nid, nobj) = match v {
-                MaybeRef::Ref(r) => (
-                    Some((r.obj_number, r.gen_number)),
-                    pdf.xref().get::<Object<'_>>(r.into()),
-                ),
-                MaybeRef::NotRef(o) => (None, Some(o)),
+            let states: Vec<u8> = match super::lex::value_kind(nv) {
+                ValueKind::Ref(n, g) => match resolve(pdf, (n, g)) {
+                    Some(Raw::Dict(_, true)) => {
+                        self.enqueue((n, g), Ctx::Render, Cow::Borrowed("AP/N"));
+                        continue;
+                    }
+                    Some(Raw::Dict(d, false)) => {
+                        self.enqueue((n, g), Ctx::Leaf, Cow::Borrowed("AP/N"));
+                        d.to_vec()
+                    }
+                    _ => continue,
+                },
+                ValueKind::Dict => nv.to_vec(),
+                _ => continue,
             };
-            match nobj {
-                Some(Object::Stream(_)) => {
-                    if let Some(id) = nid {
-                        self.enqueue(id, Ctx::Render, Cow::Borrowed("AP/N"));
+            let entries = super::lex::dict_entries(&states, 0..states.len());
+            // A state is drawable when it resolves to a stream (hayro's
+            // `states.get::<Stream>`).
+            let is_stream =
+                |r: &core::ops::Range<usize>| match super::lex::value_kind(&states[r.clone()]) {
+                    ValueKind::Ref(n, g) => {
+                        matches!(resolve(pdf, (n, g)), Some(Raw::Dict(_, true)))
                     }
+                    _ => false,
+                };
+            let find = |name: &[u8]| {
+                entries
+                    .iter()
+                    .find(|e| &*super::lex::unescape_name(&states[e.key.clone()]) == name)
+                    .filter(|e| is_stream(&e.value))
+                    .map(|e| e.key.clone())
+            };
+            let selected = state.and_then(find).or_else(|| find(b"Off"));
+            for e in &entries {
+                let sv = &states[e.value.clone()];
+                if Some(&e.key) == selected.as_ref() {
+                    self.edge(sv, Ctx::Render, Cow::Borrowed("AP/N"), depth + 1);
+                } else {
+                    self.edge(
+                        sv,
+                        Ctx::Skip,
+                        Cow::Borrowed("Appearance state (not drawn)"),
+                        depth + 1,
+                    );
                 }
-                Some(Object::Dict(states)) => {
-                    if let Some(id) = nid {
-                        self.enqueue(id, Ctx::Leaf, Cow::Borrowed("AP/N"));
-                    }
-                    let has = |s: &[u8]| states.get::<Stream<'_>>(s).is_some();
-                    let selected: Option<Vec<u8>> = state
-                        .filter(|s| has(s))
-                        .map(<[u8]>::to_vec)
-                        .or_else(|| has(b"Off").then(|| b"Off".to_vec()));
-                    for (sk, sv) in states.entries() {
-                        if selected.as_deref() == Some(&*sk) {
-                            self.edge(sv, Ctx::Render, Cow::Borrowed("AP/N"), depth + 1);
-                        } else {
-                            self.edge(
-                                sv,
-                                Ctx::Skip,
-                                Cow::Borrowed("Appearance state (not drawn)"),
-                                depth + 1,
-                            );
-                        }
-                    }
-                }
-                _ => {}
             }
         }
     }

@@ -852,6 +852,157 @@ pub(crate) fn dict_entries(d: &[u8], dict: Range<usize>) -> Vec<Entry> {
     out
 }
 
+/// Comments (`%` to end of line, outside strings) between `range.start`
+/// and `range.end`.
+pub(crate) fn comments_in(d: &[u8], range: Range<usize>) -> Vec<Range<usize>> {
+    let end = range.end.min(d.len());
+    let d = &d[..end];
+    let mut out = Vec::new();
+    let mut i = range.start;
+    while i < end {
+        if is_ws(d[i]) {
+            i += 1;
+        } else if d[i] == b'%' {
+            let s = i;
+            while i < end && d[i] != b'\n' && d[i] != b'\r' {
+                i += 1;
+            }
+            out.push(s..i);
+        } else {
+            match token(d, i) {
+                Some((_, e)) => i = e.max(i + 1),
+                None => break,
+            }
+        }
+    }
+    out
+}
+
+/// What a value's bytes hold, as far as the object graph is concerned.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ValueKind {
+    /// `N G R`.
+    Ref(i32, i32),
+    /// `<< … >>`.
+    Dict,
+    /// `[ … ]`.
+    Array,
+    /// A number, name, string, boolean or null.
+    Other,
+}
+
+/// Classify a value's bytes (as delimited by [`dict_entries`] or
+/// [`array_items`]).
+pub(crate) fn value_kind(v: &[u8]) -> ValueKind {
+    if v.starts_with(b"<<") {
+        return ValueKind::Dict;
+    }
+    if v.starts_with(b"[") {
+        return ValueKind::Array;
+    }
+    let mut parts = v.split(|&b| is_ws(b)).filter(|p| !p.is_empty());
+    let (Some(n), Some(g), Some(r), None) =
+        (parts.next(), parts.next(), parts.next(), parts.next())
+    else {
+        return ValueKind::Other;
+    };
+    let int = |b: &[u8]| {
+        core::str::from_utf8(b)
+            .ok()
+            .filter(|s| s.bytes().all(|c| c.is_ascii_digit()))
+            .and_then(|s| s.parse::<i32>().ok())
+    };
+    match (int(n), int(g), r) {
+        (Some(n), Some(g), b"R") => ValueKind::Ref(n, g),
+        _ => ValueKind::Other,
+    }
+}
+
+/// The values of an array, given the bytes between its brackets (or the
+/// whole `[ … ]`). References (`N G R`) are one item.
+pub(crate) fn array_items(a: &[u8]) -> Vec<Range<usize>> {
+    let mut out = Vec::new();
+    let (start, end) = if a.starts_with(b"[") && a.ends_with(b"]") && a.len() >= 2 {
+        (1, a.len() - 1)
+    } else {
+        (0, a.len())
+    };
+    let d = &a[..end];
+    let mut i = start;
+    loop {
+        i = skip_ws_comments_in(d, i, end);
+        if i >= end {
+            break;
+        }
+        let Some((tok, mut e)) = token(d, i) else {
+            break;
+        };
+        match tok {
+            Tok::DictOpen | Tok::ArrOpen => {
+                let mut depth = 1u32;
+                while depth > 0 {
+                    let j = skip_ws_comments_in(d, e, end);
+                    let Some((t, k)) = token(d, j) else {
+                        return out;
+                    };
+                    match t {
+                        Tok::DictOpen | Tok::ArrOpen => depth += 1,
+                        Tok::DictClose | Tok::ArrClose => depth -= 1,
+                        _ => {}
+                    }
+                    e = k;
+                    if j >= end {
+                        return out;
+                    }
+                }
+            }
+            Tok::Regular if d[i..e].iter().all(u8::is_ascii_digit) => {
+                let g = skip_ws_comments_in(d, e, end);
+                if let Some((Tok::Regular, g_end)) = token(d, g)
+                    && d[g..g_end].iter().all(u8::is_ascii_digit)
+                {
+                    let r = skip_ws_comments_in(d, g_end, end);
+                    if let Some((Tok::Regular, r_end)) = token(d, r)
+                        && &d[r..r_end] == b"R"
+                    {
+                        e = r_end;
+                    }
+                }
+            }
+            _ => {}
+        }
+        out.push(i..e);
+        i = e;
+    }
+    out
+}
+
+/// A name's bytes with `#xx` escapes decoded (ISO 32000-1, 7.3.5), as
+/// hayro compares keys.
+pub(crate) fn unescape_name(raw: &[u8]) -> alloc::borrow::Cow<'_, [u8]> {
+    if !raw.contains(&b'#') {
+        return alloc::borrow::Cow::Borrowed(raw);
+    }
+    let hex = |b: u8| (b as char).to_digit(16).map(|v| v as u8);
+    let mut out = Vec::with_capacity(raw.len());
+    let mut i = 0;
+    while i < raw.len() {
+        if raw[i] == b'#'
+            && let (Some(h), Some(l)) = (
+                raw.get(i + 1).copied().and_then(hex),
+                raw.get(i + 2).copied().and_then(hex),
+            )
+        {
+            out.push(h << 4 | l);
+            i += 3;
+        } else {
+            out.push(raw[i]);
+            i += 1;
+        }
+    }
+    alloc::borrow::Cow::Owned(out)
+}
+
 /// First occurrence of `needle` in `hay`.
 pub(crate) fn find(hay: &[u8], needle: &[u8]) -> Option<usize> {
     if needle.is_empty() || hay.len() < needle.len() {
@@ -965,6 +1116,42 @@ mod tests {
         assert_eq!(ks[0], (0..18, "obj"));
         assert_eq!(ks[1], (18..19, "ws"));
         assert_eq!(ks[2], (19..d.len(), "obj"));
+    }
+
+    #[test]
+    fn values_items_and_names() {
+        assert_eq!(value_kind(b"12 0 R"), ValueKind::Ref(12, 0));
+        assert_eq!(value_kind(b"<< /A 1 >>"), ValueKind::Dict);
+        assert_eq!(value_kind(b"[1 2]"), ValueKind::Array);
+        assert_eq!(value_kind(b"8-."), ValueKind::Other);
+        let a = b"[1 0 R /N << /K 2 0 R >> [3] 8-. (s)]";
+        let items: Vec<&[u8]> = array_items(a).into_iter().map(|r| &a[r]).collect();
+        assert_eq!(
+            items,
+            [
+                &b"1 0 R"[..],
+                b"/N",
+                b"<< /K 2 0 R >>",
+                b"[3]",
+                b"8-.",
+                b"(s)"
+            ]
+        );
+        assert_eq!(&*unescape_name(b"Cont#65nts"), b"Contents");
+        let d = b"<< /A 1 /B [2 0 R] /C << /D 3 0 R >> >>";
+        let keys: Vec<&[u8]> = dict_entries(d, 0..d.len())
+            .into_iter()
+            .map(|e| &d[e.key])
+            .collect();
+        assert_eq!(keys, [&b"A"[..], b"B", b"C"]);
+    }
+
+    #[test]
+    fn comments_outside_strings() {
+        let d = b"<< /A (100%) % note\n/B 1 >>";
+        let c = comments_in(d, 0..d.len());
+        assert_eq!(c.len(), 1);
+        assert_eq!(&d[c[0].clone()], b"% note");
     }
 
     #[test]
