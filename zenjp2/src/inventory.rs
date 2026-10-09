@@ -103,7 +103,7 @@ fn read_box(data: &[u8], pos: u64, limit: u64) -> Result<BoxHdr, &'static str> {
             if xl < 16 {
                 return Err("XLBox smaller than its own header");
             }
-            (16, pos.checked_add(xl).unwrap_or(u64::MAX), false)
+            (16, pos.saturating_add(xl), false)
         }
         2..=7 => return Err("box length smaller than its header"),
         n => (8, pos + u64::from(n), false),

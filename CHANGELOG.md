@@ -49,6 +49,15 @@ member entries here reference those files.
 
 #### Added
 
+- **`zenjp2`: structural inventory** (`DecodeJob::inventory`, `with_inventory(true)`;
+  zencodec `feat/inventory`, imazen/zencodec#133). Maps every byte of a JP2 file
+  or bare codestream: boxes (jp2h children, res, uinf, uuid, xml, asoc, free,
+  unknown) and codestream marker segments, tile-parts and EOC, with dispositions
+  taken from hayro-jpeg2000 0.3.5 behaviour (6fb2a8a6). `[patch.crates-io]`
+  points zencodec and zencodec-testkit at the branch; swap for the released
+  versions before merge. Cross-checked against `exiftool -v3` on 169 OpenJPEG and
+  serenity files (`just inventory-oracle`), libFuzzer target `zenjp2/fuzz` `inventory`.
+
 - **`zenexr`**: OpenEXR wrapper around the Rust `exr` crate, with zen pixel
   buffers, source metadata, limits and cancellation. See
   [crate history](zenexr/CHANGELOG.md) and

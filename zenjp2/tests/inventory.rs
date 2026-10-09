@@ -187,6 +187,14 @@ fn assert_part(
     );
 }
 
+type Row = (
+    PartKind,
+    PartTag,
+    core::ops::Range<u64>,
+    Disposition,
+    Option<&'static str>,
+);
+
 /// Pins the exact part list of the rich fixture.
 #[test]
 fn rich_jp2_exact_parts() {
@@ -197,13 +205,7 @@ fn rich_jp2_exact_parts() {
     let cc = |t: &[u8; 4]| PartTag::FourCc(*t);
     let m = PartTag::Marker;
     // (kind, tag, range, disposition, label)
-    let expected: Vec<(
-        PartKind,
-        PartTag,
-        core::ops::Range<u64>,
-        Disposition,
-        Option<&str>,
-    )> = vec![
+    let expected: Vec<Row> = vec![
         (Header, cc(b"jP  "), 0..12, Structure, Some("jP  ")),
         (Box, cc(b"ftyp"), 12..32, Structure, Some("jp2 ")),
         (Box, cc(b"jp2h"), 32..162, Structure, None),

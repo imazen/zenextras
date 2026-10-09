@@ -570,6 +570,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)] // ComputeEnvironment::new is deprecated on the zencodec feat/inventory branch
     fn estimate_decode_resources_scales_with_output() {
         use zencodec::estimate::{ComputeEnvironment, ImageCharacteristics, ThreadingInformation};
         let img = ImageCharacteristics::new(1000, 1000, PixelDescriptor::RGBA8_SRGB);
