@@ -25,6 +25,9 @@ pub mod error;
 #[cfg(feature = "zencodec")]
 pub mod codec;
 
+#[cfg(feature = "zencodec")]
+mod inventory;
+
 pub use error::{Jp2Error, Result};
 pub use hayro_jpeg2000::{ColorSpace, DecodeSettings, Image};
 
