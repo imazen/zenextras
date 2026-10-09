@@ -11,7 +11,11 @@
 #[cfg(feature = "zencodec")]
 mod alloc_util;
 
+extern crate alloc;
+
 mod error;
+#[cfg(feature = "zencodec")]
+mod inventory;
 mod render;
 #[cfg(feature = "zencodec")]
 mod zencodec_impl;

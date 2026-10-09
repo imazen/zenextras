@@ -80,7 +80,8 @@ static PDF_DECODE_CAPS: DecodeCapabilities = DecodeCapabilities::new()
     .with_cheap_probe(true)
     .with_native_alpha(true)
     .with_enforces_max_pixels(true)
-    .with_enforces_max_input_bytes(true);
+    .with_enforces_max_input_bytes(true)
+    .with_inventory(true);
 
 // ---------------------------------------------------------------------------
 // DecoderConfig
@@ -276,6 +277,19 @@ impl<'a> zencodec::decode::DecodeJob<'a> for PdfDecodeJob {
         Ok(info)
     }
 
+    /// Structural inventory: every indirect object, xref section, trailer,
+    /// comment and revision marker, with what the render path does with it
+    /// (see `crate::inventory`). Honors `max_input_bytes`.
+    fn inventory(
+        &self,
+        data: &[u8],
+    ) -> Result<Option<zencodec::inventory::Inventory>, At<CodecError>> {
+        self.check_input_size(data)?;
+        crate::inventory::pdf_inventory(data, pdf_image_format(), self.config.render_annotations)
+            .map(Some)
+            .map_err(|e| inventory_error(e).into())
+    }
+
     fn output_info(&self, data: &[u8]) -> Result<OutputInfo, At<CodecError>> {
         self.check_input_size(data)?;
         let count = render::page_count(data)?;
@@ -412,6 +426,21 @@ impl zencodec::decode::Decode for PdfDecoder {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/// The part cap bounds the inventory's memory: report it as the memory limit
+/// it is (bytes of `Part`s, not file bytes). Any other `InventoryError` would
+/// mean the walker built an invalid part, which it never pushes.
+fn inventory_error(e: zencodec::inventory::InventoryError) -> PdfError {
+    let part = core::mem::size_of::<zencodec::inventory::Part>() as u64;
+    let max = match e {
+        zencodec::inventory::InventoryError::TooManyParts { max } => u64::from(max),
+        _ => zencodec::inventory::DEFAULT_MAX_PARTS.into(),
+    };
+    PdfError::LimitExceeded(zencodec::LimitExceeded::Memory {
+        actual: (max + 1).saturating_mul(part),
+        max: max.saturating_mul(part),
+    })
+}
 
 fn compute_output_dims(
     bounds: &RenderBounds,
