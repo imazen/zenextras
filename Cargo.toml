@@ -9,6 +9,11 @@ members = [
 ]
 
 [patch.crates-io]
+# zencodec inventory API (imazen/zencodec#133, branch feat/inventory). Swap for
+# the released zencodec / zencodec-testkit before this lands on main.
+zencodec = { git = "https://github.com/imazen/zencodec", branch = "feat/inventory" }
+zencodec-testkit = { git = "https://github.com/imazen/zencodec", branch = "feat/inventory" }
+
 # Pinned PDF stream resource-limit fork used by zenpdf.
 hayro-syntax = { git = "https://github.com/lilith/hayro", rev = "beec7225f7f8cec6cb62f6ecf116db738177d0b9" }
 
