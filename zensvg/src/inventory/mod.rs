@@ -382,23 +382,28 @@ fn text(b: &[u8], max: usize) -> String {
     }
 }
 
+/// The decoder's checks before drawing an uncompressed document (usvg's
+/// parse, the output size, the limits): `Err` names why it refuses.
+pub(crate) type Gate<'g> = &'g dyn Fn(&[u8]) -> Result<(), String>;
+
 pub(crate) fn svg_inventory(
     data: &[u8],
     format: ImageFormat,
     stop: &dyn Stop,
+    gate: Gate<'_>,
 ) -> Result<Inventory, InvError> {
     let mut inv = Inventory::new(format, data.len() as u64);
     if data.starts_with(&[0x1f, 0x8b]) {
-        svgz(data, &mut inv, format, stop)?;
+        svgz(data, &mut inv, format, stop, gate)?;
     } else {
-        walk_xml(data, &mut inv, None, stop)?;
+        walk_xml(data, &mut inv, None, stop, gate)?;
     }
     inv.fill_gaps(None, Disposition::Trailing)?;
     Ok(inv)
 }
 
 /// Whether the decode path accepts the document, and if not, why.
-fn accept(d: &[u8], tree: &XTree) -> Result<(), String> {
+fn accept(d: &[u8], tree: &XTree, gate: Gate<'_>) -> Result<(), String> {
     let s = std::str::from_utf8(d).map_err(|_| "not UTF-8 (usvg requires UTF-8)".to_string())?;
     let opt = usvg::roxmltree::ParsingOptions {
         allow_dtd: true,
@@ -420,7 +425,7 @@ fn accept(d: &[u8], tree: &XTree) -> Result<(), String> {
             "elements nest deeper than {MAX_USVG_DEPTH} (usvg: NodesLimitReached)"
         ));
     }
-    Ok(())
+    gate(d).map_err(|e| format!("the decoder rejects it before drawing: {e}"))
 }
 
 fn max_depth(tree: &XTree) -> usize {
@@ -495,11 +500,12 @@ fn walk_xml(
     inv: &mut Inventory,
     accepted_override: Option<String>,
     stop: &dyn Stop,
+    gate: Gate<'_>,
 ) -> Result<(bool, usize), InvError> {
     let tree = xml::lex(d);
     let accepted = match accepted_override {
         Some(why) => Err(why),
-        None => accept(d, &tree),
+        None => accept(d, &tree, gate),
     };
     let ok = accepted.is_ok();
     let mut entities = HashMap::new();
@@ -819,7 +825,7 @@ impl Walker<'_, '_> {
     fn rejected_note(&self) -> String {
         match &self.accepted {
             Ok(()) => String::new(),
-            Err(why) => format!("usvg rejects the document ({why}); nothing is rendered"),
+            Err(why) => format!("the decoder rejects the document ({why}); nothing is rendered"),
         }
     }
 
@@ -1225,7 +1231,7 @@ impl Walker<'_, '_> {
         let (disposition, detail) = if let Err(why) = &self.accepted {
             (
                 Disposition::Dropped,
-                format!("usvg rejects the document ({why}); nothing is rendered"),
+                format!("the decoder rejects the document ({why}); nothing is rendered"),
             )
         } else if css {
             (
@@ -1500,6 +1506,7 @@ fn svgz(
     inv: &mut Inventory,
     format: ImageFormat,
     stop: &dyn Stop,
+    gate: Gate<'_>,
 ) -> Result<(), InvError> {
     let malformed = |inv: &mut Inventory, r: Range<usize>, why: &str| -> Result<(), InvError> {
         if r.start < r.end {
@@ -1735,7 +1742,7 @@ fn svgz(
             Some(why) => Some(why.to_string()),
             None => (!gzip_ok).then(|| "the gzip trailer does not verify".to_string()),
         };
-        let (accepted, elements) = walk_xml(&inner, &mut inner_inv, reason, stop)?;
+        let (accepted, elements) = walk_xml(&inner, &mut inner_inv, reason, stop, gate)?;
         inner_inv.fill_gaps(None, Disposition::Trailing)?;
         (summary(&inner_inv, accepted, elements), accepted)
     };

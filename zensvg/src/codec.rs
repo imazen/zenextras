@@ -287,7 +287,9 @@ impl<'a> zencodec::decode::DecodeJob<'a> for SvgDecodeJob {
     /// Structural inventory: every element, attribute usvg ignores, comment,
     /// processing instruction, DOCTYPE item and text run, or the gzip
     /// framing of an SVGZ file, with what the render path does with it (see
-    /// `crate::inventory`). Honors `max_input_bytes` and the stop token.
+    /// `crate::inventory`). Honors `max_input_bytes` and the stop token; a
+    /// document the decoder refuses before drawing (usvg's parse, output
+    /// size, limits) draws nothing.
     fn inventory(
         &self,
         data: &[u8],
@@ -297,7 +299,12 @@ impl<'a> zencodec::decode::DecodeJob<'a> for SvgDecodeJob {
             Some(s) => s,
             None => &enough::Unstoppable,
         };
-        match crate::inventory::svg_inventory(data, svg_format(), stop) {
+        // The decoder's own checks before drawing: a document it refuses
+        // draws nothing.
+        let options = &self.config.render_options;
+        let gate =
+            |doc: &[u8]| crate::render::check_render(doc, options).map_err(|e| e.to_string());
+        match crate::inventory::svg_inventory(data, svg_format(), stop, &gate) {
             Ok(inv) => Ok(Some(inv)),
             Err(crate::inventory::InvError::Stopped(r)) => Err(SvgError::Stopped(r).into()),
             Err(crate::inventory::InvError::Parts(e)) => {

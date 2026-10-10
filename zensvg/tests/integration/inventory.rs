@@ -4,7 +4,7 @@
 
 use std::io::Write as _;
 
-use zencodec::decode::{DecodeJob, DecoderConfig};
+use zencodec::decode::{Decode, DecodeJob, DecoderConfig};
 use zencodec::inventory::{Disposition, Inventory, Part, PartKind, PartTag};
 use zensvg::SvgDecoderConfig;
 
@@ -486,6 +486,50 @@ fn rejected_documents_consume_nothing() {
     );
     let tail = &inv.parts()[inv.children(None).last().unwrap().index()];
     assert_eq!(tail.disposition, Disposition::Trailing);
+}
+
+#[test]
+fn documents_the_decoder_refuses_to_draw_consume_nothing() {
+    // SMALL renders at 4x4: over a 15-pixel limit the decoder refuses it
+    // before drawing, at 16 it draws.
+    let job = |max| {
+        SvgDecoderConfig::new()
+            .job()
+            .with_limits(zencodec::ResourceLimits::none().with_max_pixels(max))
+    };
+    let refused = job(15).inventory(SMALL).unwrap().unwrap();
+    refused.validate().unwrap();
+    assert!(
+        job(15)
+            .decoder(SMALL.into(), &[])
+            .unwrap()
+            .decode()
+            .is_err()
+    );
+    assert!(
+        refused.parts().iter().all(|p| !p.disposition.is_consumed()),
+        "{refused}"
+    );
+    let rect = named(&refused, "rect")[0];
+    assert!(
+        detail(rect).contains("rejects it before drawing"),
+        "{rect:?}"
+    );
+    let drawn = job(16).inventory(SMALL).unwrap().unwrap();
+    assert_eq!(
+        named(&drawn, "rect")[0].disposition,
+        Disposition::ImageData,
+        "{drawn}"
+    );
+
+    // usvg refuses a zero-sized document while parsing.
+    let zero = br#"<svg xmlns="http://www.w3.org/2000/svg" width="0" height="4"><rect width="4" height="4"/></svg>"#;
+    assert!(SvgDecoderConfig::new().job().output_info(zero).is_err());
+    let inv = inventory(zero);
+    assert!(
+        inv.parts().iter().all(|p| !p.disposition.is_consumed()),
+        "{inv}"
+    );
 }
 
 #[test]

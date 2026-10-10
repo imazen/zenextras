@@ -145,25 +145,7 @@ pub fn render(data: &[u8], options: &RenderOptions) -> Result<RenderOutput, SvgE
 
 /// Render a pre-parsed usvg tree to RGBA8 pixels with straight alpha.
 pub fn render_tree(tree: &usvg::Tree, options: &RenderOptions) -> Result<RenderOutput, SvgError> {
-    let svg_size = tree.size();
-    let svg_w = svg_size.width();
-    let svg_h = svg_size.height();
-
-    if svg_w <= 0.0 || svg_h <= 0.0 {
-        // This is `tree.size()` itself, before any caller scale/target is
-        // applied — no `RenderOptions` combination can fix a non-positive
-        // intrinsic size, so this is the image's own content, not the
-        // caller's request.
-        return Err(SvgError::Parse(
-            "SVG has zero or negative intrinsic dimensions".into(),
-        ));
-    }
-
-    // Calculate output dimensions
-    let (out_w, out_h, transform) = compute_output(svg_w, svg_h, options)?;
-
-    // Check resource limits
-    check_limits(out_w, out_h, options)?;
+    let (out_w, out_h, transform) = output_plan(tree, options)?;
 
     // Create pixmap
     let mut pixmap = Pixmap::new(out_w, out_h).ok_or(SvgError::AllocationFailed {
@@ -193,6 +175,53 @@ pub fn render_tree(tree: &usvg::Tree, options: &RenderOptions) -> Result<RenderO
         width: out_w,
         height: out_h,
     })
+}
+
+/// The output size and transform for a parsed tree, after the checks that
+/// reject it before drawing.
+fn output_plan(
+    tree: &usvg::Tree,
+    options: &RenderOptions,
+) -> Result<(u32, u32, Transform), SvgError> {
+    let svg_size = tree.size();
+    let svg_w = svg_size.width();
+    let svg_h = svg_size.height();
+
+    if svg_w <= 0.0 || svg_h <= 0.0 {
+        // This is `tree.size()` itself, before any caller scale/target is
+        // applied — no `RenderOptions` combination can fix a non-positive
+        // intrinsic size, so this is the image's own content, not the
+        // caller's request.
+        return Err(SvgError::Parse(
+            "SVG has zero or negative intrinsic dimensions".into(),
+        ));
+    }
+
+    // Calculate output dimensions
+    let (out_w, out_h, transform) = compute_output(svg_w, svg_h, options)?;
+
+    // Check resource limits
+    check_limits(out_w, out_h, options)?;
+    Ok((out_w, out_h, transform))
+}
+
+/// The checks [`render`] runs before drawing, without drawing: usvg parses
+/// the document and the output size is computed and checked against the
+/// limits. Fonts and `<image>` targets are not loaded: neither changes
+/// whether usvg accepts the document or the size it reports, and loading
+/// them reads files (the structural inventory asks whether the document is
+/// drawn). `data` is an uncompressed document.
+pub(crate) fn check_render(data: &[u8], options: &RenderOptions) -> Result<(), SvgError> {
+    let usvg_options = usvg::Options {
+        dpi: options.dpi,
+        image_href_resolver: usvg::ImageHrefResolver {
+            resolve_data: Box::new(|_, _, _| None),
+            resolve_string: Box::new(|_, _| None),
+        },
+        ..usvg::Options::default()
+    };
+    let tree = guard_panic(|| usvg::Tree::from_data(data, &usvg_options).map_err(SvgError::from))?;
+    output_plan(&tree, options).map(|_| ())
 }
 
 /// Compute output dimensions and transform from SVG size + render options.
