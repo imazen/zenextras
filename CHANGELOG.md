@@ -13,7 +13,8 @@ member entries here reference those files.
 - **Temporary `[patch.crates-io]` for zencodec and zencodec-testkit** on the
   `feat/inventory` branch (imazen/zencodec#133), in the root and the zenpdf
   and zensvg fuzz manifests, for `DecodeJob::inventory` (2b30367, 081abf8,
-  4a55611). Swap for the released crates before merging.
+  4a55611; bumped to 413fc6e8 in 4c2fc36). Swap for the released crates before
+  merging.
 
 - Dependencies: compatible floors and locks refreshed (root and fuzz locks); hayro 0.8 held (zenpdf's hayro-syntax patch is a pinned 0.7 fork), hayro-jpeg2000 0.4 held (needs Rust 1.92) (bfa914b).
 - CI: checkout v7, upload-artifact v7 (c4b01fe).
@@ -329,7 +330,7 @@ member entries here reference those files.
   hidden by optional content, pages the job does not decode, and stream
   bytes after each filter's end. See
   [zenpdf/CHANGELOG.md](zenpdf/CHANGELOG.md) (936735e, 081abf8, d811808,
-  ad5dfe9, 16a6a89, b6bddba, a56dd11, eed7d2b).
+  ad5dfe9, 16a6a89, b6bddba, a56dd11, eed7d2b, 9c2b7c7).
 
 #### Fixed (2026-08-27, zenextras#2, #13, #14)
 
