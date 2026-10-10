@@ -318,7 +318,7 @@ fn unused_resources_pdf() -> Vec<u8> {
             3,
             "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 20 20] /Contents 4 0 R \
              /Resources << /XObject << /Im1 5 0 R /Im2 6 0 R /Fm1 7 0 R >> \
-             /Font << /F1 8 0 R /F2 9 0 R >> >> >>",
+             /Font << /F1 8 0 R /F2 9 0 R >> /ProcSet [/PDF /Text] >> >>",
         )
         .stream(4, "", b"q 10 0 0 10 0 0 cm /Im1 Do Q /Fm1 Do BT /F1 6 Tf (x) Tj ET")
         .stream(
@@ -336,7 +336,11 @@ fn unused_resources_pdf() -> Vec<u8> {
             "/Type /XObject /Subtype /Form /BBox [0 0 5 5] /Resources << /ExtGState << /GS1 10 0 R >> >>",
             b"/GS1 gs 0 g 0 0 5 5 re f",
         )
-        .obj(8, "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
+        .obj(
+            8,
+            "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica \
+             /FontDescriptor << /FontName /Helvetica /Flags 32 /CharSet (/x/HIDDEN-CHARSET) >> >>",
+        )
         .obj(9, "<< /Type /Font /Subtype /Type1 /BaseFont /Courier >>")
         .obj(10, "<< /Type /ExtGState /CA 0.5 >>");
     b.end_revision("/Root 1 0 R");
@@ -708,6 +712,12 @@ fn resources_no_content_names_are_unused() {
     }
     let at = find(&data, b"REDACTED-IMAGE") as u64;
     assert!(!leaf_at(&inv, at).disposition.is_consumed());
+    // Unread entries inside direct dictionaries the decoder does read.
+    for marker in [&b"/ProcSet"[..], b"HIDDEN-CHARSET"] {
+        let p = leaf_at(&inv, find(&data, marker) as u64);
+        assert_eq!(p.disposition, Disposition::Skipped, "{p:?}\n{inv}");
+        assert!(detail(p).contains("not read by the decoder"), "{p:?}");
+    }
 }
 
 #[test]

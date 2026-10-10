@@ -317,8 +317,13 @@ mod tests {
         );
         // ISO 32000-1 7.4.4.2's example ("-----A---B", EarlyChange 1): eight
         // 9-bit codes ending in EOD, nine bytes.
-        let spec = [0x80, 0x0B, 0x60, 0x50, 0x22, 0x0C, 0x0C, 0x85, 0x01, b'X', b'Y'];
-        assert_eq!(filter_end(Some(b"LZWDecode"), &spec, None, true), End::At(9));
+        let spec = [
+            0x80, 0x0B, 0x60, 0x50, 0x22, 0x0C, 0x0C, 0x85, 0x01, b'X', b'Y',
+        ];
+        assert_eq!(
+            filter_end(Some(b"LZWDecode"), &spec, None, true),
+            End::At(9)
+        );
         // A code beyond the table: hayro rejects the stream.
         assert!(matches!(
             filter_end(Some(b"LZW"), &lzw9(&[256, 300]), None, true),

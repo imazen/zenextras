@@ -669,6 +669,61 @@ fn dict_children(
     out
 }
 
+/// [`dict_children`] for a dictionary read in `ctx`, then the same for the
+/// direct dictionaries (and arrays of them) under the entries it reads, in
+/// the context the decoder reads those in, to depth 8.
+fn deep_children(
+    data: &[u8],
+    dict: Range<usize>,
+    ctx: Ctx,
+    render_annotations: bool,
+    depth: u32,
+) -> Vec<Child> {
+    let ctx = match ctx {
+        Ctx::Kid if lex::dict_type(&data[dict.clone()]).as_deref() == Some(b"Pages") => {
+            Ctx::PageTree
+        }
+        Ctx::Kid => Ctx::Page,
+        c => c,
+    };
+    let drawn = ctx == Ctx::Annot && graph::annot_drawn(&data[dict.clone()]);
+    let mut out = dict_children(data, dict.clone(), |k| {
+        graph::unread_entry(ctx, k, render_annotations, drawn)
+    });
+    if depth >= 8 {
+        return out;
+    }
+    let listed: Vec<Range<usize>> = out.iter().map(|c| c.range.clone()).collect();
+    for e in lex::dict_entries(data, dict) {
+        if listed
+            .iter()
+            .any(|l| l.start <= e.range.start && e.range.end <= l.end)
+        {
+            continue;
+        }
+        let key = lex::unescape_name(&data[e.key.clone()]);
+        let Some(cc) = graph::child_ctx(ctx, &key, render_annotations) else {
+            continue;
+        };
+        let v = e.value.clone();
+        match lex::value_kind(&data[v.clone()]) {
+            lex::ValueKind::Dict => {
+                out.extend(deep_children(data, v, cc, render_annotations, depth + 1));
+            }
+            lex::ValueKind::Array => {
+                for item in lex::array_items(&data[v.clone()]) {
+                    let abs = v.start + item.start..v.start + item.end;
+                    if lex::value_kind(&data[abs.clone()]) == lex::ValueKind::Dict {
+                        out.extend(deep_children(data, abs, cc, render_annotations, depth + 1));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
 /// Entries of the resource maps in a consumed object that no content
 /// names: the object's own entries when it is a resource map, else the maps
 /// in its resources dictionary (the object itself, or its direct
@@ -891,26 +946,21 @@ fn object_assign(
                 && a.disposition.is_consumed()
                 && !s.objstm.contains_key(&i)
             {
-                let drawn = reach.ctx == Ctx::Annot && graph::annot_drawn(r);
-                let ctx = match reach.ctx {
-                    Ctx::Kid if lex::dict_type(r).as_deref() == Some(b"Pages") => Ctx::PageTree,
-                    Ctx::Kid => Ctx::Page,
-                    c => c,
-                };
-                a.children = dict_children(data, range.clone(), |k| {
-                    graph::unread_entry(ctx, k, s.render_annotations, drawn)
-                });
+                let _ = r;
+                let mut children =
+                    deep_children(data, range.clone(), reach.ctx, s.render_annotations, 0);
                 if let Some(used) = &s.used {
-                    let mut unused = unused_resource_children(data, range, reach, used);
-                    a.children.sort_by_key(|c| c.range.start);
-                    unused.retain(|u| {
-                        let k = a.children.partition_point(|c| c.range.end <= u.range.start);
-                        a.children
-                            .get(k)
-                            .is_none_or(|c| c.range.start >= u.range.end)
+                    // An unused resource entry covers its whole value: it wins
+                    // over anything listed inside it.
+                    let unused = unused_resource_children(data, range, reach, used);
+                    children.retain(|c| {
+                        !unused
+                            .iter()
+                            .any(|u| c.range.start < u.range.end && u.range.start < c.range.end)
                     });
-                    a.children.append(&mut unused);
+                    children.extend(unused);
                 }
+                a.children = children;
             }
             a
         }

@@ -367,6 +367,15 @@ fn side_data(key: &[u8]) -> Option<Rule> {
     })
 }
 
+/// The context a read entry's direct value is read in, or `None` when the
+/// walk does not descend into it.
+pub(crate) fn child_ctx(ctx: Ctx, key: &[u8], render_annotations: bool) -> Option<Ctx> {
+    match rule(ctx, key, render_annotations) {
+        Rule::Follow(c, _) if c.rank() >= 4 => Some(c),
+        _ => None,
+    }
+}
+
 fn rule(ctx: Ctx, key: &[u8], render_annotations: bool) -> Rule {
     let other = || side_data(key).unwrap_or_else(|| skip_key(key));
     match ctx {
