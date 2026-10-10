@@ -127,22 +127,77 @@ impl W {
         let f = ifd as usize + 2 + 12 * index + 8;
         self.b[f..f + 4].copy_from_slice(&v.to_le_bytes());
     }
+
+    fn set_ifd0(&mut self, at: u32) {
+        self.b[4..8].copy_from_slice(&at.to_le_bytes());
+    }
+}
+
+/// A 2x2 gray8 uncompressed page whose one 4-byte strip is at `strip`.
+fn page(strip: u32) -> Vec<E> {
+    vec![
+        short(256, 2),
+        short(257, 2),
+        short(258, 8),
+        short(259, 1),
+        short(262, 1),
+        long(273, strip),
+        short(277, 1),
+        short(278, 2),
+        long(279, 4),
+    ]
+}
+
+fn contains(hay: &[u8], needle: &[u8]) -> bool {
+    hay.windows(needle.len()).any(|w| w == needle)
+}
+
+fn xor(data: &[u8], r: std::ops::Range<u64>, mask: u8) -> Vec<u8> {
+    let mut m = data.to_vec();
+    for b in &mut m[r.start as usize..r.end as usize] {
+        *b ^= mask;
+    }
+    m
+}
+
+/// The part covering exactly `r`.
+fn part(inv: &Inventory, r: std::ops::Range<u64>) -> &Part {
+    inv.parts()
+        .iter()
+        .find(|p| p.range == r)
+        .unwrap_or_else(|| panic!("no part at {r:?}:\n{inv}"))
+}
+
+/// The IFD entry part with `tag` inside the IFD at `ifd`.
+fn entry(inv: &Inventory, ifd: u32, tag: u16) -> &Part {
+    let parts = inv.parts();
+    parts
+        .iter()
+        .find(|p| {
+            p.tag == PartTag::Code(u32::from(tag))
+                && p.parent
+                    .is_some_and(|id| parts[id.index()].range.start == u64::from(ifd))
+        })
+        .unwrap_or_else(|| panic!("no entry {tag} in the IFD at {ifd}:\n{inv}"))
 }
 
 /// One file holding every TIFF unit type: IFD chain (two pages), SubIFD,
 /// EXIF, GPS and Interop IFDs, inline and out-of-line values, strips,
 /// free space, a JPEGInterchangeFormat stream, a private tag, an
-/// unreferenced block, word-alignment padding and trailing junk.
+/// unreferenced block, word-alignment padding and trailing junk; and the
+/// split units: a strip declared longer than its rows, an ASCII value with
+/// bytes after its NUL, a duplicate tag and non-zero inline-field slack.
 fn every_unit_fixture() -> Vec<u8> {
     let mut w = W::new();
-    // IFD0 pixels: 2x2 RGB8 in two contiguous 6-byte strips.
-    let strips = w.put(&[10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120]);
+    // IFD0 pixels: 2x2 RGB8 in two contiguous 6-byte strips, the second
+    // declared 9 bytes long.
+    let strips = w.put(&[10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120, 7, 7, 7]);
     let bps = w.put(&[8, 0, 8, 0, 8, 0]);
     let strip_offsets = w.put(&[strips.to_le_bytes(), (strips + 6).to_le_bytes()].concat());
-    let strip_counts = w.put(&[6u32.to_le_bytes(), 6u32.to_le_bytes()].concat());
+    let strip_counts = w.put(&[6u32.to_le_bytes(), 9u32.to_le_bytes()].concat());
     let xres = w.put(&rational(72, 1));
     let yres = w.put(&rational(72, 1));
-    let desc = w.put(b"A test image\0");
+    let desc = w.put(b"A test\0image\0");
     w.pad();
     let page_name = w.put(b"page one\0");
     w.pad();
@@ -179,7 +234,7 @@ fn every_unit_fixture() -> Vec<u8> {
             inline(271, 2, 4, b"Cam\0"),
             at(273, 4, 2, strip_offsets),
             short(274, 6),
-            short(277, 3),
+            inline(277, 3, 1, &[3, 0, b'H', b'I']),
             short(278, 1),
             at(279, 4, 2, strip_counts),
             at(282, 5, 1, xres),
@@ -187,6 +242,8 @@ fn every_unit_fixture() -> Vec<u8> {
             short(284, 1),
             at(285, 2, 9, page_name),
             short(296, 2),
+            inline(315, 2, 4, b"Ann\0"),
+            inline(315, 2, 4, b"Bob\0"),
             long(330, 0),
             at(700, 7, 12, xmp),
             at(33723, 7, 8, iptc),
@@ -241,19 +298,20 @@ fn every_unit_fixture() -> Vec<u8> {
         ],
         0,
     );
-    w.patch_entry(ifd0, 17, sub);
-    w.patch_entry(ifd0, 21, exif);
-    w.patch_entry(ifd0, 23, gps);
+    w.patch_entry(ifd0, 19, sub);
+    w.patch_entry(ifd0, 23, exif);
+    w.patch_entry(ifd0, 25, gps);
     // IFD0's next pointer → IFD1.
-    let next_at = ifd0 as usize + 2 + 12 * 25;
+    let next_at = ifd0 as usize + 2 + 12 * 27;
     w.b[next_at..next_at + 4].copy_from_slice(&ifd1.to_le_bytes());
     w.b[4..8].copy_from_slice(&ifd0.to_le_bytes());
     w.put(b"TRAILING junk");
     w.b
 }
 
-/// One expected part: kind, tag, range, disposition, label, and whether it is
-/// an IFD entry (a child of the preceding IFD).
+/// One expected part: kind, tag, range, disposition, label, and its depth
+/// (0 for top-level parts, 1 for their children, and so on), in depth-first
+/// order.
 type Row = (
     PartKind,
     PartTag,
@@ -261,22 +319,27 @@ type Row = (
     u64,
     Disposition,
     Option<&'static str>,
-    bool,
+    u8,
 );
 
 fn rows(inv: &Inventory) -> Vec<Row> {
-    let mut out = Vec::new();
-    for id in inv.children(None) {
-        let p = inv.get(id).unwrap();
-        out.push(row(p, false));
-        for c in inv.children(Some(id)) {
-            out.push(row(inv.get(c).unwrap(), true));
+    fn walk(
+        inv: &Inventory,
+        parent: Option<zencodec::inventory::PartId>,
+        depth: u8,
+        out: &mut Vec<Row>,
+    ) {
+        for id in inv.children(parent) {
+            out.push(row(inv.get(id).unwrap(), depth));
+            walk(inv, Some(id), depth + 1, out);
         }
     }
+    let mut out = Vec::new();
+    walk(inv, None, 0, &mut out);
     out
 }
 
-fn row(p: &Part, child: bool) -> Row {
+fn row(p: &Part, depth: u8) -> Row {
     (
         p.kind,
         p.tag.clone(),
@@ -286,7 +349,7 @@ fn row(p: &Part, child: bool) -> Row {
         p.label
             .as_ref()
             .map(|l| -> &'static str { Box::leak(l.to_string().into_boxed_str()) }),
-        child,
+        depth,
     )
 }
 
@@ -319,99 +382,119 @@ fn every_unit_fixture_part_list_is_pinned() {
     let inv = inventory(&data);
     inv.validate().unwrap();
     let expected: Vec<Row> = vec![
-        (Header, n.clone(), 0, 8, Structure, None, false),
-        (Extent, c(273), 8, 20, ImageData, None, false),
-        (Field, c(258), 20, 26, Structure, None, false),
-        (Field, c(273), 26, 34, Structure, None, false),
-        (Field, c(279), 34, 42, Structure, None, false),
-        (Field, c(282), 42, 50, M(Resolution), None, false),
-        (Field, c(283), 50, 58, M(Resolution), None, false),
-        (Field, c(270), 58, 71, M(Exif), None, false),
-        (Gap, n.clone(), 71, 72, Padding, None, false),
-        (Field, c(285), 72, 81, Dropped, None, false),
-        (Gap, n.clone(), 81, 82, Padding, None, false),
-        (Field, c(700), 82, 94, M(Xmp), None, false),
-        (Field, c(33723), 94, 102, Dropped, None, false),
-        (Field, c(34377), 102, 114, Skipped, None, false),
-        (Field, c(34675), 114, 130, M(Icc), None, false),
-        (Field, c(65000), 130, 138, Unknown, None, false),
-        (Gap, n.clone(), 138, 146, Unreferenced, None, false),
-        (Field, c(33434), 146, 154, M(Exif), None, false),
-        (Field, c(36867), 154, 174, M(Exif), None, false),
-        (Field, c(37500), 174, 184, M(Exif), None, false),
-        (Field, c(50000), 184, 192, Dropped, None, false),
-        (Field, c(2), 192, 216, Skipped, None, false),
-        (Extent, c(273), 216, 217, Skipped, None, false),
-        (Gap, n.clone(), 217, 218, Padding, None, false),
-        (Extent, c(273), 218, 219, Skipped, None, false),
-        (Gap, n.clone(), 219, 220, Padding, None, false),
-        (EmbeddedImage, c(513), 220, 224, Skipped, None, false),
-        (Extent, c(288), 224, 228, Padding, None, false),
-        (Ifd, n.clone(), 228, 534, Structure, None, false),
-        (Field, c(256), 230, 242, Structure, None, true),
-        (Field, c(257), 242, 254, Structure, None, true),
-        (Field, c(258), 254, 266, Structure, None, true),
-        (Field, c(259), 266, 278, Structure, None, true),
-        (Field, c(262), 278, 290, Structure, None, true),
-        (Field, c(270), 290, 302, M(Exif), None, true),
-        (Field, c(271), 302, 314, M(Exif), None, true),
-        (Field, c(273), 314, 326, Structure, None, true),
-        (Field, c(274), 326, 338, M(Orientation), None, true),
-        (Field, c(277), 338, 350, Structure, None, true),
-        (Field, c(278), 350, 362, Structure, None, true),
-        (Field, c(279), 362, 374, Structure, None, true),
-        (Field, c(282), 374, 386, M(Resolution), None, true),
-        (Field, c(283), 386, 398, M(Resolution), None, true),
-        (Field, c(284), 398, 410, Structure, None, true),
-        (Field, c(285), 410, 422, Dropped, None, true),
-        (Field, c(296), 422, 434, M(Resolution), None, true),
-        (Field, c(330), 434, 446, Skipped, None, true),
-        (Field, c(700), 446, 458, M(Xmp), None, true),
-        (Field, c(33723), 458, 470, Dropped, None, true),
-        (Field, c(34377), 470, 482, Skipped, None, true),
-        (Field, c(34665), 482, 494, Structure, None, true),
-        (Field, c(34675), 494, 506, M(Icc), None, true),
-        (Field, c(34853), 506, 518, Skipped, None, true),
-        (Field, c(65000), 518, 530, Unknown, None, true),
-        (Ifd, n.clone(), 534, 552, Skipped, None, false),
-        (Field, c(1), 536, 548, Skipped, None, true),
-        (Ifd, n.clone(), 552, 618, Structure, None, false),
-        (Field, c(33434), 554, 566, M(Exif), None, true),
-        (Field, c(36867), 566, 578, M(Exif), None, true),
-        (Field, c(37500), 578, 590, M(Exif), None, true),
-        (Field, c(40965), 590, 602, M(Exif), None, true),
-        (Field, c(50000), 602, 614, Dropped, None, true),
-        (Ifd, n.clone(), 618, 648, Skipped, None, false),
-        (Field, c(0), 620, 632, Skipped, None, true),
-        (Field, c(2), 632, 644, Skipped, None, true),
-        (Ifd, n.clone(), 648, 738, Skipped, None, false),
-        (Field, c(254), 650, 662, Skipped, None, true),
-        (Field, c(256), 662, 674, Skipped, None, true),
-        (Field, c(257), 674, 686, Skipped, None, true),
-        (Field, c(258), 686, 698, Skipped, None, true),
-        (Field, c(262), 698, 710, Skipped, None, true),
-        (Field, c(273), 710, 722, Skipped, None, true),
-        (Field, c(279), 722, 734, Skipped, None, true),
-        (Ifd, n.clone(), 738, 912, Structure, None, false),
-        (Field, c(254), 740, 752, Skipped, None, true),
-        (Field, c(256), 752, 764, Structure, None, true),
-        (Field, c(257), 764, 776, Structure, None, true),
-        (Field, c(258), 776, 788, Structure, None, true),
-        (Field, c(259), 788, 800, Structure, None, true),
-        (Field, c(262), 800, 812, Structure, None, true),
-        (Field, c(273), 812, 824, Structure, None, true),
-        (Field, c(277), 824, 836, Structure, None, true),
-        (Field, c(278), 836, 848, Structure, None, true),
-        (Field, c(279), 848, 860, Structure, None, true),
-        (Field, c(288), 860, 872, Skipped, None, true),
-        (Field, c(289), 872, 884, Skipped, None, true),
-        (Field, c(513), 884, 896, Skipped, None, true),
-        (Field, c(514), 896, 908, Skipped, None, true),
-        (Gap, n.clone(), 912, 925, Trailing, None, false),
+        (Header, n.clone(), 0, 8, Structure, None, 0),
+        (Extent, c(273), 8, 14, ImageData, None, 0),
+        (Extent, c(273), 14, 23, ImageData, None, 0),
+        (Extent, c(273), 20, 23, Dropped, None, 1),
+        (Field, c(258), 23, 29, Structure, None, 0),
+        (Field, c(273), 29, 37, Structure, None, 0),
+        (Field, c(279), 37, 45, Structure, None, 0),
+        (Field, c(282), 45, 53, M(Resolution), None, 0),
+        (Field, c(283), 53, 61, M(Resolution), None, 0),
+        (Field, c(270), 61, 74, M(Exif), None, 0),
+        (Field, c(270), 68, 74, Dropped, None, 1),
+        (Field, c(285), 74, 83, Dropped, None, 0),
+        (Gap, n.clone(), 83, 84, Padding, None, 0),
+        (Field, c(700), 84, 96, M(Xmp), None, 0),
+        (Field, c(33723), 96, 104, Dropped, None, 0),
+        (Field, c(34377), 104, 116, Skipped, None, 0),
+        (Field, c(34675), 116, 132, M(Icc), None, 0),
+        (Field, c(65000), 132, 140, Unknown, None, 0),
+        (Gap, n.clone(), 140, 148, Unreferenced, None, 0),
+        (Field, c(33434), 148, 156, M(Exif), None, 0),
+        (Field, c(36867), 156, 176, M(Exif), None, 0),
+        (Field, c(37500), 176, 186, M(Exif), None, 0),
+        (Field, c(50000), 186, 194, Dropped, None, 0),
+        (Field, c(2), 194, 218, Skipped, None, 0),
+        (Extent, c(273), 218, 219, Skipped, None, 0),
+        (Gap, n.clone(), 219, 220, Padding, None, 0),
+        (Extent, c(273), 220, 221, Skipped, None, 0),
+        (Gap, n.clone(), 221, 222, Padding, None, 0),
+        (EmbeddedImage, c(513), 222, 226, Skipped, None, 0),
+        (Extent, c(288), 226, 230, Padding, None, 0),
+        (Ifd, n.clone(), 230, 560, Structure, None, 0),
+        (Field, c(256), 232, 244, Structure, None, 1),
+        (Field, c(257), 244, 256, Structure, None, 1),
+        (Field, c(258), 256, 268, Structure, None, 1),
+        (Field, c(259), 268, 280, Structure, None, 1),
+        (Field, c(262), 280, 292, Structure, None, 1),
+        (Field, c(270), 292, 304, M(Exif), None, 1),
+        (Field, c(271), 304, 316, M(Exif), None, 1),
+        (Field, c(273), 316, 328, Structure, None, 1),
+        (Field, c(274), 328, 340, M(Orientation), None, 1),
+        (Field, c(277), 340, 352, Structure, None, 1),
+        (Gap, n.clone(), 350, 352, Padding, None, 2),
+        (Field, c(278), 352, 364, Structure, None, 1),
+        (Field, c(279), 364, 376, Structure, None, 1),
+        (Field, c(282), 376, 388, M(Resolution), None, 1),
+        (Field, c(283), 388, 400, M(Resolution), None, 1),
+        (Field, c(284), 400, 412, Structure, None, 1),
+        (Field, c(285), 412, 424, Dropped, None, 1),
+        (Field, c(296), 424, 436, M(Resolution), None, 1),
+        (Field, c(315), 436, 448, Dropped, None, 1),
+        (Field, c(315), 448, 460, M(Exif), None, 1),
+        (Field, c(330), 460, 472, Skipped, None, 1),
+        (Field, c(700), 472, 484, M(Xmp), None, 1),
+        (Field, c(33723), 484, 496, Dropped, None, 1),
+        (Field, c(34377), 496, 508, Skipped, None, 1),
+        (Field, c(34665), 508, 520, Structure, None, 1),
+        (Field, c(34675), 520, 532, M(Icc), None, 1),
+        (Field, c(34853), 532, 544, Skipped, None, 1),
+        (Field, c(65000), 544, 556, Unknown, None, 1),
+        (Ifd, n.clone(), 560, 578, Skipped, None, 0),
+        (Field, c(1), 562, 574, Skipped, None, 1),
+        (Ifd, n.clone(), 578, 644, Structure, None, 0),
+        (Field, c(33434), 580, 592, M(Exif), None, 1),
+        (Field, c(36867), 592, 604, M(Exif), None, 1),
+        (Field, c(37500), 604, 616, M(Exif), None, 1),
+        (Field, c(40965), 616, 628, M(Exif), None, 1),
+        (Field, c(50000), 628, 640, Dropped, None, 1),
+        (Ifd, n.clone(), 644, 674, Skipped, None, 0),
+        (Field, c(0), 646, 658, Skipped, None, 1),
+        (Field, c(2), 658, 670, Skipped, None, 1),
+        (Ifd, n.clone(), 674, 764, Skipped, None, 0),
+        (Field, c(254), 676, 688, Skipped, None, 1),
+        (Field, c(256), 688, 700, Skipped, None, 1),
+        (Field, c(257), 700, 712, Skipped, None, 1),
+        (Field, c(258), 712, 724, Skipped, None, 1),
+        (Field, c(262), 724, 736, Skipped, None, 1),
+        (Field, c(273), 736, 748, Skipped, None, 1),
+        (Field, c(279), 748, 760, Skipped, None, 1),
+        (Ifd, n.clone(), 764, 938, Structure, None, 0),
+        (Field, c(254), 766, 778, Skipped, None, 1),
+        (Field, c(256), 778, 790, Structure, None, 1),
+        (Field, c(257), 790, 802, Structure, None, 1),
+        (Field, c(258), 802, 814, Structure, None, 1),
+        (Field, c(259), 814, 826, Structure, None, 1),
+        (Field, c(262), 826, 838, Structure, None, 1),
+        (Field, c(273), 838, 850, Structure, None, 1),
+        (Field, c(277), 850, 862, Structure, None, 1),
+        (Field, c(278), 862, 874, Structure, None, 1),
+        (Field, c(279), 874, 886, Structure, None, 1),
+        (Field, c(288), 886, 898, Skipped, None, 1),
+        (Field, c(289), 898, 910, Skipped, None, 1),
+        (Field, c(513), 910, 922, Skipped, None, 1),
+        (Field, c(514), 922, 934, Skipped, None, 1),
+        (Gap, n.clone(), 938, 951, Trailing, None, 0),
     ];
     let actual = rows(&inv);
     if actual != expected {
-        panic!("pinned part list changed:\n{inv}\nactual rows:\n{actual:#?}");
+        // Printed in the form above, to re-pin after checking each change.
+        let listing: String = actual
+            .iter()
+            .map(|(k, t, s, e, d, l, depth)| {
+                let tag = match t {
+                    PartTag::Code(c) => format!("c({c})"),
+                    _ => "n.clone()".into(),
+                };
+                let disp = match d {
+                    M(m) => format!("M({m:?})"),
+                    d => format!("{d:?}"),
+                };
+                format!("        ({k:?}, {tag}, {s}, {e}, {disp}, {l:?}, {depth}),\n")
+            })
+            .collect();
+        panic!("pinned part list changed:\n{inv}\nactual rows:\n{listing}");
     }
 }
 
@@ -1027,17 +1110,34 @@ fn exiftool_oracle_agrees() {
 
 // ── Dispositions against the decoder itself ───────────────────────────
 
-/// What the zencodec decode returns: pixels and the reported `ImageInfo`.
-fn decode_summary(data: &[u8]) -> Result<(Vec<u8>, String), String> {
+/// What a zencodec decode returns: pixels, the reported `ImageInfo`, and
+/// the EXIF, XMP and ICC bytes in full.
+type Summary = (Vec<u8>, String, [Option<Vec<u8>>; 3]);
+
+fn decode_with(job: zentiff::codec::TiffDecodeJob, data: &[u8]) -> Result<Summary, String> {
     use std::borrow::Cow;
     use zencodec::decode::Decode;
-    let out = TiffDecoderCodecConfig::new()
-        .job()
+    let out = job
         .decoder(Cow::Borrowed(data), &[])
         .and_then(|d| d.decode())
         .map_err(|e| e.to_string())?;
+    let info = out.info();
+    let meta = [
+        info.embedded_metadata.exif.as_ref().map(|v| v.to_vec()),
+        info.embedded_metadata.xmp.as_ref().map(|v| v.to_vec()),
+        info.source_color.icc_profile.as_ref().map(|v| v.to_vec()),
+    ];
     let pixels = out.pixels().contiguous_bytes().into_owned();
-    Ok((pixels, format!("{:?}", out.info())))
+    // `ImageInfo`'s Debug leaves out the resolution.
+    Ok((
+        pixels,
+        format!("{info:?} resolution: {:?}", info.resolution),
+        meta,
+    ))
+}
+
+fn decode_summary(data: &[u8]) -> Result<Summary, String> {
+    decode_with(TiffDecoderCodecConfig::new().job(), data)
 }
 
 fn unread(p: &Part) -> bool {
@@ -1270,5 +1370,687 @@ fn bigtiff_unknown_type_entry_desyncs_the_directory() {
             .iter()
             .all(|p| p.disposition == Disposition::Malformed),
         "{inv}"
+    );
+}
+
+// ── Review round 1: dispositions the first version got wrong ───────────
+
+/// zentiff serializes every entry of the directory the last ExifIFD of IFD0
+/// points at, whatever other path reaches it first: IFD0 itself, a SubIFD,
+/// or the next page.
+#[test]
+fn exif_ifd_reached_by_another_path_is_still_re_serialized() {
+    // ExifIFD → IFD0.
+    let mut w = W::new();
+    let strip = w.put(&[1, 2, 3, 4]);
+    let secret = w.put(b"SECRET-PRIVATE-1");
+    let mut e = page(strip);
+    e.push(long(34665, 0));
+    e.push(at(65000, 7, 16, secret));
+    let ifd0 = w.ifd(&e, 0);
+    w.patch_entry(ifd0, 9, ifd0);
+    w.set_ifd0(ifd0);
+    let data = w.b;
+    let inv = inventory(&data);
+    inv.validate().unwrap();
+    let exif = decode_summary(&data).unwrap().2[0].clone().unwrap();
+    assert!(contains(&exif, b"SECRET-PRIVATE-1"));
+    let v = part(&inv, u64::from(secret)..u64::from(secret) + 16);
+    assert_eq!(
+        v.disposition,
+        Disposition::Metadata(MetadataKind::Exif),
+        "{inv}"
+    );
+
+    // SubIFDs and ExifIFD → one directory.
+    let mut w = W::new();
+    let strip = w.put(&[1, 2, 3, 4]);
+    let secret = w.put(b"SECRET-PRIVATE-2");
+    let x = w.ifd(&[at(65001, 7, 16, secret)], 0);
+    let mut e = page(strip);
+    e.push(long(330, x));
+    e.push(long(34665, x));
+    let ifd0 = w.ifd(&e, 0);
+    w.set_ifd0(ifd0);
+    let data = w.b;
+    let inv = inventory(&data);
+    inv.validate().unwrap();
+    let exif = decode_summary(&data).unwrap().2[0].clone().unwrap();
+    assert!(contains(&exif, b"SECRET-PRIVATE-2"));
+    let v = part(&inv, u64::from(secret)..u64::from(secret) + 16);
+    assert_eq!(
+        v.disposition,
+        Disposition::Metadata(MetadataKind::Exif),
+        "{inv}"
+    );
+    let dir = inv
+        .parts()
+        .iter()
+        .find(|p| p.kind == PartKind::Ifd && p.range.start == u64::from(x))
+        .unwrap();
+    assert_eq!(dir.disposition, Disposition::Structure, "{inv}");
+    assert!(
+        dir.detail
+            .as_deref()
+            .unwrap()
+            .contains("also reached as EXIF IFD"),
+        "{inv}"
+    );
+
+    // ExifIFD → IFD1, a page with its own strip and a next page.
+    let mut w = W::new();
+    let strip = w.put(&[1, 2, 3, 4]);
+    let strip1 = w.put(&[5, 6, 7, 8]);
+    let strip2 = w.put(&[9, 9, 9, 9]);
+    let ifd2 = w.ifd(&page(strip2), 0);
+    let ifd1 = w.ifd(&page(strip1), ifd2);
+    let mut e = page(strip);
+    e.push(long(34665, ifd1));
+    let ifd0 = w.ifd(&e, ifd1);
+    w.set_ifd0(ifd0);
+    let data = w.b;
+    let inv = inventory(&data);
+    inv.validate().unwrap();
+    // IFD1's strip is page 1's pixels (not decoded), not unreferenced.
+    let s1 = part(&inv, u64::from(strip1)..u64::from(strip1) + 4);
+    assert_eq!(s1.disposition, Disposition::Skipped, "{inv}");
+    // Its entries reach the EXIF blob; IFD2 still counts as a page.
+    assert_eq!(
+        entry(&inv, ifd1, 256).disposition,
+        Disposition::Metadata(MetadataKind::Exif),
+        "{inv}"
+    );
+    assert_eq!(
+        entry(&inv, ifd2, 256).disposition,
+        Disposition::Structure,
+        "{inv}"
+    );
+}
+
+/// image-tiff reads RowsPerStrip only for strips, TileWidth/TileLength only
+/// for tiles and JPEGTables only for Compression 7.
+#[test]
+fn layout_tags_count_only_for_their_layout() {
+    let mut w = W::new();
+    let strip = w.put(&[1, 2, 3, 4]);
+    let tables = w.put(b"HIDDEN-IN-JPEGTABLES");
+    let tile_width = w.put(b"TILEWIDTH-HIDDEN");
+    let mut e = page(strip);
+    e.insert(9, at(322, 4, 4, tile_width));
+    e.insert(10, at(347, 7, 20, tables));
+    let ifd0 = w.ifd(&e, 0);
+    w.set_ifd0(ifd0);
+    let data = w.b;
+    let inv = inventory(&data);
+    inv.validate().unwrap();
+    let base = decode_summary(&data).unwrap();
+    for (r, why) in [
+        (
+            u64::from(tables)..u64::from(tables) + 20,
+            "Compression is 7",
+        ),
+        (
+            u64::from(tile_width)..u64::from(tile_width) + 16,
+            "striped image",
+        ),
+    ] {
+        let p = part(&inv, r.clone());
+        assert_eq!(p.disposition, Disposition::Skipped, "{inv}");
+        assert!(p.detail.as_deref().unwrap().contains(why), "{inv}");
+        assert_eq!(decode_summary(&xor(&data, r, 0x5A)).unwrap(), base);
+    }
+
+    // RowsPerStrip in a tiled image.
+    let mut w = W::new();
+    let tile = w.put(&[7; 256]);
+    let ifd0 = w.ifd(
+        &[
+            short(256, 16),
+            short(257, 16),
+            short(258, 8),
+            short(259, 1),
+            short(262, 1),
+            short(277, 1),
+            short(278, 3),
+            short(322, 16),
+            short(323, 16),
+            long(324, tile),
+            long(325, 256),
+        ],
+        0,
+    );
+    w.set_ifd0(ifd0);
+    let inv = inventory(&w.b);
+    assert_eq!(
+        entry(&inv, ifd0, 278).disposition,
+        Disposition::Skipped,
+        "{inv}"
+    );
+    assert_eq!(
+        entry(&inv, ifd0, 322).disposition,
+        Disposition::Structure,
+        "{inv}"
+    );
+}
+
+/// Bytes of an inline value field past a short value are a `Padding` child
+/// when not zero.
+#[test]
+fn inline_value_field_slack_is_split() {
+    let mut w = W::new();
+    let strip = w.put(&[1, 2, 3, 4]);
+    let mut e = page(strip);
+    e.insert(5, inline(274, 3, 1, &[6, 0, b'H', b'I']));
+    let ifd0 = w.ifd(&e, 0);
+    w.set_ifd0(ifd0);
+    let data = w.b;
+    let inv = inventory(&data);
+    inv.validate().unwrap();
+    let at = u64::from(ifd0) + 2 + 12 * 5;
+    let slack = part(&inv, at + 10..at + 12);
+    assert_eq!(slack.disposition, Disposition::Padding, "{inv}");
+    assert_eq!(
+        inv.get(slack.parent.unwrap()).unwrap().disposition,
+        Disposition::Metadata(MetadataKind::Orientation)
+    );
+    let base = decode_summary(&data).unwrap();
+    assert_eq!(
+        decode_summary(&xor(&data, at + 10..at + 12, 0x5A)).unwrap(),
+        base
+    );
+}
+
+/// `count_pages` stops at the first page `Image::from_reader` rejects, so
+/// later pages are never read.
+#[test]
+fn pages_after_a_rejected_page_are_skipped() {
+    let mut w = W::new();
+    let strip = w.put(&[1, 2, 3, 4]);
+    let strip2 = w.put(&[9, 9, 9, 9]);
+    let bps2 = w.put(&[8, 0]);
+    let mut e2 = page(strip2);
+    e2[2] = at(258, 3, 1, bps2);
+    // A one-SHORT value fits inline; keep it out of line with count 1 by
+    // pointing a two-SHORT value instead.
+    e2[2] = at(258, 3, 2, bps2 - 2);
+    let ifd2 = w.ifd(&e2, 0);
+    // IFD1 lacks ImageWidth.
+    let ifd1 = w.ifd(&[short(257, 2), short(262, 1)], ifd2);
+    let ifd0 = w.ifd(&page(strip), ifd1);
+    w.set_ifd0(ifd0);
+    let data = w.b;
+    let inv = inventory(&data);
+    inv.validate().unwrap();
+    let dir = |at: u32| {
+        inv.parts()
+            .iter()
+            .find(|p| p.kind == PartKind::Ifd && p.range.start == u64::from(at))
+            .unwrap()
+    };
+    assert_eq!(dir(ifd1).disposition, Disposition::Structure, "{inv}");
+    assert!(
+        dir(ifd1)
+            .detail
+            .as_deref()
+            .unwrap()
+            .contains("rejects this page"),
+        "{inv}"
+    );
+    assert_eq!(dir(ifd2).disposition, Disposition::Skipped, "{inv}");
+    assert_eq!(
+        entry(&inv, ifd2, 258).disposition,
+        Disposition::Skipped,
+        "{inv}"
+    );
+    let base = decode_summary(&data).unwrap();
+    assert!(base.1.contains("Single"), "{}", base.1);
+    let r = u64::from(ifd2)..u64::from(ifd2) + 2 + 12 * 9 + 4;
+    assert_eq!(decode_summary(&xor(&data, r, 0x5A)).unwrap(), base);
+}
+
+/// An out-of-line value with more elements than image-tiff's
+/// `decoding_buffer_size / size_of::<Value>()` fails to read and is dropped;
+/// a job's memory limit lowers that bound.
+#[test]
+fn values_over_the_value_limit_are_dropped() {
+    let limit = tiff::decoder::Limits::default().decoding_buffer_size
+        / std::mem::size_of::<tiff::decoder::ifd::Value>();
+    for (n, surfaced) in [(limit, true), (limit + 1, false)] {
+        let mut w = W::new();
+        let strip = w.put(&[1, 2, 3, 4]);
+        let mut xmp = vec![b' '; n];
+        xmp[..12].copy_from_slice(b"<x:xmpmeta/>");
+        let x = w.put(&xmp);
+        let mut e = page(strip);
+        e.push(at(700, 7, n as u32, x));
+        let ifd0 = w.ifd(&e, 0);
+        w.set_ifd0(ifd0);
+        let data = w.b;
+        let inv = inventory(&data);
+        inv.validate().unwrap();
+        let v = part(&inv, u64::from(x)..u64::from(x) + n as u64);
+        assert_eq!(
+            decode_summary(&data).unwrap().2[1].is_some(),
+            surfaced,
+            "{n}"
+        );
+        if surfaced {
+            assert_eq!(v.disposition, Disposition::Metadata(MetadataKind::Xmp));
+        } else {
+            assert_eq!(v.disposition, Disposition::Dropped);
+            assert!(v.detail.as_deref().unwrap().contains("per-value limit"));
+        }
+    }
+
+    // ResourceLimits::with_max_memory lowers decoding_buffer_size.
+    let n = 3_000_000u32;
+    let mut w = W::new();
+    let strip = w.put(&[1, 2, 3, 4]);
+    let icc = w.put(&vec![0x41u8; n as usize]);
+    let mut e = page(strip);
+    e.push(at(34675, 7, n, icc));
+    let ifd0 = w.ifd(&e, 0);
+    w.set_ifd0(ifd0);
+    let data = w.b;
+    let job = || {
+        TiffDecoderCodecConfig::new()
+            .job()
+            .with_limits(zencodec::ResourceLimits::none().with_max_memory(64 << 20))
+    };
+    let inv = job().inventory(&data).unwrap().unwrap();
+    let v = part(&inv, u64::from(icc)..u64::from(icc) + u64::from(n));
+    assert_eq!(v.disposition, Disposition::Dropped, "{inv}");
+    assert!(decode_with(job(), &data).unwrap().2[2].is_none());
+    let inv = inventory(&data);
+    let v = part(&inv, u64::from(icc)..u64::from(icc) + u64::from(n));
+    assert_eq!(v.disposition, Disposition::Metadata(MetadataKind::Icc));
+}
+
+/// Under a policy that suppresses EXIF, the EXIF IFD and its pointer are
+/// parsed for nothing.
+#[test]
+fn suppressed_exif_ifd_and_pointer_are_dropped() {
+    let mut w = W::new();
+    let strip = w.put(&[1, 2, 3, 4]);
+    let dto = w.put(b"2026:10:09 12:00:00\0");
+    let exif = w.ifd(&[at(36867, 2, 20, dto)], 0);
+    let mut e = page(strip);
+    e.push(long(34665, exif));
+    let ifd0 = w.ifd(&e, 0);
+    w.set_ifd0(ifd0);
+    let data = w.b;
+    let inv = TiffDecoderCodecConfig::new()
+        .job()
+        .with_policy(DecodePolicy::strict())
+        .inventory(&data)
+        .unwrap()
+        .unwrap();
+    inv.validate().unwrap();
+    let dir = inv
+        .parts()
+        .iter()
+        .find(|p| p.kind == PartKind::Ifd && p.range.start == u64::from(exif))
+        .unwrap();
+    assert_eq!(dir.disposition, Disposition::Dropped, "{inv}");
+    assert!(
+        dir.detail.as_deref().unwrap().contains("EXIF suppressed"),
+        "{inv}"
+    );
+    assert_eq!(
+        entry(&inv, ifd0, 34665).disposition,
+        Disposition::Dropped,
+        "{inv}"
+    );
+}
+
+/// A tiled 3x3 image in one 16x16 tile: image-tiff reads the three rows
+/// inside the image (right-edge padding included) and never the rows below.
+#[test]
+fn edge_tile_rows_below_the_image_are_split() {
+    let tiled = |payload: &[u8], compression: u16| {
+        let mut w = W::new();
+        let t = w.put(payload);
+        w.pad();
+        let ifd0 = w.ifd(
+            &[
+                short(256, 3),
+                short(257, 3),
+                short(258, 8),
+                short(259, compression),
+                short(262, 1),
+                short(277, 1),
+                short(322, 16),
+                short(323, 16),
+                long(324, t),
+                long(325, payload.len() as u32),
+            ],
+            0,
+        );
+        w.set_ifd0(ifd0);
+        (w.b, u64::from(t))
+    };
+    let mut tile = vec![0u8; 256];
+    for y in 0..3 {
+        for x in 0..3 {
+            tile[y * 16 + x] = (10 * y + x) as u8;
+        }
+    }
+    tile[200..216].copy_from_slice(b"HIDDEN-IN-TILE!!");
+    let (data, t) = tiled(&tile, 1);
+    let inv = inventory(&data);
+    inv.validate().unwrap();
+    let whole = part(&inv, t..t + 256);
+    assert_eq!(whole.disposition, Disposition::ImageData, "{inv}");
+    assert!(
+        whole
+            .detail
+            .as_deref()
+            .unwrap()
+            .contains("13 padding bytes per decoded row")
+    );
+    assert_eq!(
+        part(&inv, t + 48..t + 256).disposition,
+        Disposition::Dropped,
+        "{inv}"
+    );
+    let base = decode_summary(&data).unwrap();
+    assert_eq!(
+        decode_summary(&xor(&data, t + 48..t + 256, 0x5A)).unwrap(),
+        base
+    );
+
+    // PackBits: one literal run holding the 48 bytes read, then junk.
+    let mut packed = vec![47u8];
+    packed.extend_from_slice(&tile[..48]);
+    packed.extend_from_slice(b"AFTER-THE-ROWS-READ!");
+    let (data, t) = tiled(&packed, 32773);
+    let inv = inventory(&data);
+    inv.validate().unwrap();
+    assert_eq!(
+        part(&inv, t + 49..t + 69).disposition,
+        Disposition::Dropped,
+        "{inv}"
+    );
+    let base = decode_summary(&data).unwrap();
+    assert_eq!(
+        decode_summary(&xor(&data, t + 49..t + 69, 0x5A)).unwrap(),
+        base
+    );
+}
+
+/// Strips longer than the bytes the decoder reads: uncompressed by row
+/// count, PackBits by running the stream to the rows' decoded size.
+#[test]
+fn strip_tails_are_split() {
+    for (payload, compression, used) in [
+        (&b"\x01\x02\x03\x04TAIL!!"[..], 1, 4u64),
+        (&b"\x03\x01\x02\x03\x04PII-AFTER-PACKBITS"[..], 32773, 5),
+        // A repeat run, a no-op header, then a one-byte literal.
+        (&b"\xfe\x07\x80\x00\x08TAIL"[..], 32773, 5),
+    ] {
+        let mut w = W::new();
+        let strip = w.put(payload);
+        let mut e = page(strip);
+        e[3] = short(259, compression);
+        e[8] = long(279, payload.len() as u32);
+        let ifd0 = w.ifd(&e, 0);
+        w.set_ifd0(ifd0);
+        let data = w.b;
+        let inv = inventory(&data);
+        inv.validate().unwrap();
+        let s = u64::from(strip);
+        let tail = s + used..s + payload.len() as u64;
+        assert_eq!(
+            part(&inv, tail.clone()).disposition,
+            Disposition::Dropped,
+            "{inv}"
+        );
+        let base = decode_summary(&data).unwrap();
+        assert_eq!(decode_summary(&xor(&data, tail, 0x5A)).unwrap(), base);
+        assert_ne!(
+            decode_summary(&xor(&data, s..s + used, 0x01)).ok(),
+            Some(base)
+        );
+    }
+}
+
+/// Uncompressed data is read by row size: a strip declared shorter than its
+/// rows is read past its declared end.
+#[test]
+fn short_uncompressed_strip_is_read_past_its_count() {
+    let mut w = W::new();
+    let strip = w.put(&[1, 2, 3, 4]);
+    let mut e = page(strip);
+    e[8] = long(279, 2);
+    let ifd0 = w.ifd(&e, 0);
+    w.set_ifd0(ifd0);
+    let data = w.b;
+    let inv = inventory(&data);
+    inv.validate().unwrap();
+    let s = u64::from(strip);
+    let p = part(&inv, s..s + 4);
+    assert_eq!(p.disposition, Disposition::ImageData, "{inv}");
+    assert!(
+        p.detail
+            .as_deref()
+            .unwrap()
+            .contains("declared 2 bytes; the decoder reads 4")
+    );
+    let base = decode_summary(&data).unwrap();
+    assert_ne!(
+        decode_summary(&xor(&data, s + 3..s + 4, 0x5A)).unwrap(),
+        base
+    );
+}
+
+/// ICC bytes past the profile's declared size and XMP bytes after the
+/// packet's end are split off, and stay metadata: the caller gets them.
+#[test]
+fn blob_tails_the_caller_receives_stay_metadata() {
+    let mut icc = vec![0u8; 160];
+    icc[..4].copy_from_slice(&128u32.to_be_bytes());
+    icc[128..].copy_from_slice(b"PAST-THE-DECLARED-PROFILE-SIZE!!");
+    let xmp =
+        b"<?xpacket begin='' id='W5M0MpCehiHzreSzNTczkc9d'?><x:xmpmeta/><?xpacket end='w'?>\n  PAD";
+    let mut w = W::new();
+    let strip = w.put(&[1, 2, 3, 4]);
+    let x = w.put(xmp);
+    w.pad();
+    let i = w.put(&icc);
+    let mut e = page(strip);
+    e.push(at(700, 7, xmp.len() as u32, x));
+    e.push(at(34675, 7, icc.len() as u32, i));
+    let ifd0 = w.ifd(&e, 0);
+    w.set_ifd0(ifd0);
+    let data = w.b;
+    let inv = inventory(&data);
+    inv.validate().unwrap();
+    let out = decode_summary(&data).unwrap();
+    assert_eq!(out.2[1].as_deref(), Some(&xmp[..]));
+    assert_eq!(out.2[2].as_deref(), Some(&icc[..]));
+    let (x, i) = (u64::from(x), u64::from(i));
+    let xmp_end = xmp.len() as u64 - 6;
+    let tail = part(&inv, x + xmp_end..x + xmp.len() as u64);
+    assert_eq!(
+        tail.disposition,
+        Disposition::Metadata(MetadataKind::Xmp),
+        "{inv}"
+    );
+    let tail = part(&inv, i + 128..i + 160);
+    assert_eq!(
+        tail.disposition,
+        Disposition::Metadata(MetadataKind::Icc),
+        "{inv}"
+    );
+}
+
+/// `read_rational` takes any value `into_u32_vec` turns into two integers,
+/// IFD and LONG8 pairs included.
+#[test]
+fn resolution_as_integer_pairs_is_reported() {
+    for typ in [3u16, 4, 13, 16] {
+        let size = match typ {
+            3 => 2,
+            4 | 13 => 4,
+            _ => 8,
+        };
+        let pair = |v: u64| -> Vec<u8> {
+            [
+                v.to_le_bytes()[..size].to_vec(),
+                1u64.to_le_bytes()[..size].to_vec(),
+            ]
+            .concat()
+        };
+        let mut w = W::new();
+        let strip = w.put(&[1, 2, 3, 4]);
+        let x = w.put(&pair(300));
+        let y = w.put(&pair(300));
+        let mut e = page(strip);
+        let (xe, ye) = if size == 2 {
+            (
+                inline(282, typ, 2, &pair(300)),
+                inline(283, typ, 2, &pair(300)),
+            )
+        } else {
+            (at(282, typ, 2, x), at(283, typ, 2, y))
+        };
+        e.extend([xe, ye, short(296, 2)]);
+        let ifd0 = w.ifd(&e, 0);
+        w.set_ifd0(ifd0);
+        let data = w.b;
+        let inv = inventory(&data);
+        inv.validate().unwrap();
+        let info = decode_summary(&data).unwrap().1;
+        assert!(
+            info.contains("resolution: Some(Resolution { x: 300.0"),
+            "type {typ}: {info}"
+        );
+        assert_eq!(
+            entry(&inv, ifd0, 282).disposition,
+            Disposition::Metadata(MetadataKind::Resolution),
+            "type {typ}: {inv}"
+        );
+    }
+}
+
+/// The reverse of [`unread_parts_do_not_influence_decode`]: changing a leaf
+/// part reported as read (`Structure`, `Metadata`, `ImageData`) changes the
+/// decode, under one of four XOR masks, unless its detail says why not.
+/// Entries are mutated in their value field only.
+#[test]
+fn read_parts_influence_decode() {
+    // Details that name why a read part leaves this decode unchanged.
+    const EXPLAINED: &[&str] = &[
+        // Later pages are only validated and counted.
+        "count pages",
+        // Values past a threshold, or used only for their count.
+        "decodes the same",
+        "reads only the rows inside",
+        "only checks the counts",
+        "only its count matters",
+    ];
+    let mut inputs: Vec<(String, Vec<u8>)> = corpus_tiffs()
+        .into_iter()
+        .filter(|p| !p.components().any(|c| c.as_os_str() == "robustness"))
+        .map(|p| (p.display().to_string(), std::fs::read(&p).unwrap()))
+        .collect();
+    inputs.push(("every_unit_fixture".into(), every_unit_fixture()));
+    let (mut files, mut mutated) = (0, 0);
+    let mut failures = Vec::new();
+    for (name, data) in &inputs {
+        let Ok(base) = decode_summary(data) else {
+            continue;
+        };
+        files += 1;
+        let inv = inventory(data);
+        let parts = inv.parts();
+        let big = parts.first().and_then(|p| p.detail.as_deref()) == Some("BigTIFF header");
+        let mut has_child = vec![false; parts.len()];
+        for p in parts {
+            if let Some(par) = p.parent {
+                has_child[par.index()] = true;
+            }
+        }
+        let mut targets: Vec<_> = parts
+            .iter()
+            .enumerate()
+            .filter(|&(i, p)| p.disposition.is_consumed() && !has_child[i])
+            .filter(|(_, p)| {
+                let d = p.detail.as_deref().unwrap_or("");
+                !EXPLAINED.iter().any(|x| d.contains(x))
+            })
+            .map(|(_, p)| p)
+            .collect();
+        // At most 40 per file, spread over the file.
+        let step = targets.len().div_ceil(40).max(1);
+        targets = targets.into_iter().step_by(step).collect();
+        for p in targets {
+            let entry = p.kind == PartKind::Field
+                && p.parent
+                    .is_some_and(|id| parts[id.index()].kind == PartKind::Ifd);
+            let r = if entry {
+                p.range.start + if big { 12 } else { 8 }..p.range.end
+            } else {
+                p.range.clone()
+            };
+            mutated += 1;
+            let mut decrements = Vec::new();
+            // Whole-range masks, then single bytes: a value well past a
+            // threshold (RowsPerStrip above the height) needs a small change.
+            let (s, e) = (r.start, r.end);
+            // Decrement the range as one little- or big-endian integer:
+            // lowers the first or last element by one.
+            for le in [true, false] {
+                let mut m = data.to_vec();
+                let bytes = &mut m[s as usize..e as usize];
+                let order: Vec<usize> = if le {
+                    (0..bytes.len()).collect()
+                } else {
+                    (0..bytes.len()).rev().collect()
+                };
+                for i in order {
+                    let (v, borrow) = bytes[i].overflowing_sub(1);
+                    bytes[i] = v;
+                    if !borrow {
+                        break;
+                    }
+                }
+                decrements.push(m);
+            }
+            let variants = [
+                (s..e, 0x5A),
+                (s..e, 0x01),
+                (s..e, 0x07),
+                (s..e, 0x80),
+                (s..s + 1, 0x01),
+                (s..s + 1, 0x07),
+                (s..s + 1, 0x80),
+                (e - 1..e, 0x01),
+                (e - 1..e, 0x07),
+            ];
+            let changed = variants
+                .into_iter()
+                .map(|(r, m)| xor(data, r, m))
+                .chain(decrements.drain(..))
+                .any(|m| decode_summary(&m).as_ref() != Ok(&base));
+            if !changed {
+                failures.push(format!(
+                    "{name}: {} {}..{} {} ({}) left the decode unchanged",
+                    p.kind.name(),
+                    r.start,
+                    r.end,
+                    p.disposition,
+                    p.detail.as_deref().unwrap_or("")
+                ));
+            }
+        }
+    }
+    println!("{files} decodable files, {mutated} read parts mutated");
+    assert!(files >= 100, "only {files} corpus files decode");
+    assert!(
+        failures.is_empty(),
+        "{} read parts do not influence the decode:\n{}",
+        failures.len(),
+        failures.join("\n")
     );
 }

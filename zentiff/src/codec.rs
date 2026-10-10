@@ -667,19 +667,41 @@ impl<'a> zencodec::decode::DecodeJob<'a> for TiffDecodeJob {
         &self,
         data: &[u8],
     ) -> Result<Option<zencodec::inventory::Inventory>, At<CodecError>> {
-        if let Some(stop) = &self.stop {
-            stop.check()
-                .map_err(|e| CodecError::of(at!(TiffError::from(e))))?;
+        let stop: &dyn Stop = match &self.stop {
+            Some(s) => s,
+            None => &enough::Unstoppable,
+        };
+        stop.check()
+            .map_err(|e| CodecError::of(at!(TiffError::from(e))))?;
+        // The same input-size limit `decoder()` enforces.
+        if let Some(max) = self.max_input_bytes
+            && data.len() as u64 > max
+        {
+            return Err(CodecError::of(at!(TiffError::from(
+                zencodec::LimitExceeded::InputSize {
+                    actual: data.len() as u64,
+                    max,
+                }
+            ))));
         }
         let policy = self.policy.as_ref();
         let surf = crate::inventory::Surfaced {
             icc: policy.is_none_or(|p| p.resolve_icc(true)),
             exif: policy.is_none_or(|p| p.resolve_exif(true)),
             xmp: policy.is_none_or(|p| p.resolve_xmp(true)),
+            // The value limit the decode applies (`decode::decode_inner`).
+            decoding_buffer_size: crate::decode::derive_tiff_limits(&self.effective_decode_config())
+                .decoding_buffer_size as u64,
         };
-        crate::inventory::inventory(data, surf)
-            .map(Some)
-            .map_err(|e| CodecError::of(at!(TiffError::LimitExceeded(e.to_string()))))
+        match crate::inventory::inventory(data, surf, stop) {
+            Ok(inv) => Ok(Some(inv)),
+            Err(crate::inventory::Failed::Stopped(r)) => {
+                Err(CodecError::of(at!(TiffError::from(r))))
+            }
+            Err(crate::inventory::Failed::Parts(e)) => {
+                Err(CodecError::of(at!(TiffError::LimitExceeded(e.to_string()))))
+            }
+        }
     }
 
     fn probe(&self, data: &[u8]) -> Result<ImageInfo, At<CodecError>> {
