@@ -56,7 +56,7 @@ fn find(hay: &[u8], needle: &[u8]) -> usize {
 fn leaf_at(inv: &Inventory, off: u64) -> &Part {
     let mut best: Option<&Part> = None;
     for p in inv.parts() {
-        if p.range.start <= off && off < p.range.end {
+        if p.range().start <= off && off < p.range().end {
             match best {
                 Some(b) if b.len() <= p.len() => {}
                 _ => best = Some(p),
@@ -67,7 +67,7 @@ fn leaf_at(inv: &Inventory, off: u64) -> &Part {
 }
 
 fn parts_with(inv: &Inventory, tag: PartTag) -> Vec<&Part> {
-    inv.parts().iter().filter(|p| p.tag == tag).collect()
+    inv.parts().iter().filter(|p| *p.tag() == tag).collect()
 }
 
 /// Replace the codestream in test.jp2's jp2c (the last box) with `cs`.
@@ -130,9 +130,9 @@ fn f1_com_hidden_in_cod_slack_is_a_comment() {
         let i = inv(&f);
         let secret = find(&f, b"SECRET") as u64;
         let p = leaf_at(&i, secret);
-        assert_eq!(p.tag, PartTag::Marker(0x64), "{name}: {i}");
-        assert_eq!(p.disposition, Disposition::Skipped, "{name}");
-        assert!(p.label.as_deref().unwrap().starts_with("SECRET"), "{name}");
+        assert_eq!(*p.tag(), PartTag::Marker(0x64), "{name}: {i}");
+        assert_eq!(p.disposition(), Disposition::Skipped, "{name}");
+        assert!(p.label().unwrap().starts_with("SECRET"), "{name}");
         // The COD itself ends where hayro's parse ends and says so.
         let cod_part = parts_with(&i, PartTag::Marker(0x52))[0];
         assert_eq!(
@@ -142,7 +142,7 @@ fn f1_com_hidden_in_cod_slack_is_a_comment() {
         );
         assert!(
             cod_part
-                .detail
+                .detail()
                 .as_deref()
                 .unwrap()
                 .contains("but hayro parses")
@@ -158,10 +158,10 @@ fn f1_com_hidden_in_siz_slack_is_a_comment() {
     assert_eq!(rows(&decode(&f).expect("decodes")), base);
     let i = inv(&f);
     let p = leaf_at(&i, find(&f, b"SECRET") as u64);
-    assert_eq!(p.tag, PartTag::Marker(0x64), "{i}");
-    assert_eq!(p.disposition, Disposition::Skipped);
+    assert_eq!(*p.tag(), PartTag::Marker(0x64), "{i}");
+    assert_eq!(p.disposition(), Disposition::Skipped);
     assert_eq!(
-        parts_with(&i, PartTag::Marker(0x51))[0].range,
+        parts_with(&i, PartTag::Marker(0x51))[0].range(),
         2..(2 + 2 + 45 + 2)
     );
 }
@@ -175,7 +175,7 @@ fn f1_junk_in_cod_slack_is_malformed() {
     assert!(decode(&f).is_err());
     let i = inv(&f);
     let p = leaf_at(&i, find(&f, b"JUNKJUNK") as u64);
-    assert_eq!(p.disposition, Disposition::Malformed, "{i}");
+    assert_eq!(p.disposition(), Disposition::Malformed, "{i}");
 }
 
 // ───────── F7: short length fields do not turn decoded data malformed ─────────
@@ -194,13 +194,13 @@ fn f7_short_cod_or_sot_length_keeps_image_data() {
         assert!(
             i.parts()
                 .iter()
-                .any(|p| p.disposition == Disposition::ImageData),
+                .any(|p| p.disposition() == Disposition::ImageData),
             "{what}: {i}"
         );
         assert!(
             !i.parts()
                 .iter()
-                .any(|p| p.disposition == Disposition::Malformed),
+                .any(|p| p.disposition() == Disposition::Malformed),
             "{what}: {i}"
         );
     }
@@ -218,8 +218,8 @@ fn f2_extra_signature_and_ftyp_boxes_are_skipped() {
     let i = inv(&f);
     for needle in [&b"Jane Doe"[..], b"GPS 40"] {
         let p = leaf_at(&i, find(&f, needle) as u64);
-        assert!(!p.disposition.is_consumed(), "{p:?}");
-        assert!(p.detail.as_deref().unwrap().contains("ignored by hayro"));
+        assert!(!p.disposition().is_consumed(), "{p:?}");
+        assert!(p.detail().unwrap().contains("ignored by hayro"));
     }
 }
 
@@ -233,13 +233,13 @@ fn f12_second_box_must_be_ftyp() {
     assert!(decode(&g).is_err(), "hayro requires ftyp second");
     let i = inv(&g);
     let free = parts_with(&i, PartTag::FourCc(*b"free"))[0];
-    assert!(free.detail.as_deref().unwrap().contains("fails the decode"));
+    assert!(free.detail().unwrap().contains("fails the decode"));
     let jp2c = parts_with(&i, PartTag::FourCc(*b"jp2c"))[0];
-    assert_eq!(jp2c.disposition, Disposition::Dropped, "{i}");
+    assert_eq!(jp2c.disposition(), Disposition::Dropped, "{i}");
     assert!(
         !i.parts()
             .iter()
-            .any(|p| p.disposition.is_consumed() && p.range.start >= free.range.end),
+            .any(|p| p.disposition().is_consumed() && p.range().start >= free.range().end),
         "{i}"
     );
 }
@@ -260,10 +260,10 @@ fn f12_siz_in_a_tile_part_header_is_not_structure() {
     );
     let i = inv(&f);
     let tile_siz = parts_with(&i, PartTag::Marker(0x51))[1];
-    assert!(!tile_siz.disposition.is_consumed(), "{i}");
+    assert!(!tile_siz.disposition().is_consumed(), "{i}");
     assert!(
         tile_siz
-            .detail
+            .detail()
             .as_deref()
             .unwrap()
             .contains("fails the decode")
@@ -296,19 +296,19 @@ fn f3_slack_after_the_last_packet_is_unreferenced() {
     let i = inv(&f);
     let at = find(&f, b"SLACK") as u64;
     let p = leaf_at(&i, at);
-    assert_eq!(p.disposition, Disposition::Unreferenced, "{i}");
-    assert!(p.range.start <= at && at + text.len() as u64 <= p.range.end);
+    assert_eq!(p.disposition(), Disposition::Unreferenced, "{i}");
+    assert!(p.range().start <= at && at + text.len() as u64 <= p.range().end);
     // The packets themselves stay image data, and end where the slack starts.
     let scan = i
         .parts()
         .iter()
-        .find(|p| p.kind == PartKind::ScanData)
+        .find(|p| p.kind() == PartKind::ScanData)
         .unwrap();
-    assert_eq!(scan.disposition, Disposition::ImageData);
-    assert_eq!(scan.range.end, p.range.start, "{i}");
+    assert_eq!(scan.disposition(), Disposition::ImageData);
+    assert_eq!(scan.range().end, p.range().start, "{i}");
     // Overwriting the unreferenced bytes changes nothing.
     let mut g = f.clone();
-    for b in &mut g[p.range.start as usize..p.range.end as usize] {
+    for b in &mut g[p.range().start as usize..p.range().end as usize] {
         *b = !*b;
     }
     assert_eq!(rows(&decode(&g).expect("decodes")), base);
@@ -322,7 +322,7 @@ fn f3_clean_tile_part_has_no_tail() {
         let i = inv(data);
         assert!(
             !i.parts().iter().any(|p| matches!(
-                p.disposition,
+                p.disposition(),
                 Disposition::Unreferenced | Disposition::Malformed
             )),
             "{i}"
@@ -343,16 +343,16 @@ fn f3_packed_headers_are_walked() {
     let i = inv(&f);
     assert!(
         !i.parts().iter().any(|p| p
-            .detail
+            .detail()
             .as_deref()
             .is_some_and(|d| d.contains("not detected"))),
         "{i}"
     );
-    let sod = parts_with(&i, PartTag::Marker(0x93))[0].range.end;
-    let eoc = parts_with(&i, PartTag::Marker(0xD9))[0].range.start;
+    let sod = parts_with(&i, PartTag::Marker(0x93))[0].range().end;
+    let eoc = parts_with(&i, PartTag::Marker(0xD9))[0].range().start;
     let last = leaf_at(&i, eoc - 1);
-    assert!(!last.disposition.is_consumed(), "{i}");
-    assert!(last.range.start >= sod);
+    assert!(!last.disposition().is_consumed(), "{i}");
+    assert!(last.range().start >= sod);
 }
 
 // ───────── F4: slack inside consumed leaf boxes ─────────
@@ -390,15 +390,15 @@ fn f4_leaf_box_slack_is_not_consumed() {
     let i = inv(&f);
     let a = leaf_at(&i, find(&f, b"SERIAL") as u64);
     let b = leaf_at(&i, find(&f, b"HIDDEN") as u64);
-    assert_eq!(a.disposition, Disposition::Skipped, "{i}");
-    assert_eq!(b.disposition, Disposition::Unreferenced, "{i}");
+    assert_eq!(a.disposition(), Disposition::Skipped, "{i}");
+    assert_eq!(b.disposition(), Disposition::Unreferenced, "{i}");
     // The colour code itself is still the consumed field.
     let fields = parts_with(&i, PartTag::Name("fields".into()))
         .into_iter()
-        .find(|p| p.range.start >= find(&f, b"colr") as u64)
+        .find(|p| p.range().start >= find(&f, b"colr") as u64)
         .unwrap();
     assert_eq!(
-        fields.disposition,
+        fields.disposition(),
         Disposition::Metadata(MetadataKind::Colour)
     );
 }
@@ -421,12 +421,12 @@ fn colr_disposition(f: &[u8]) -> Disposition {
             i.parts()
                 .iter()
                 .filter(move |p| {
-                    p.parent.is_some()
-                        && p.range.start >= c.range.start
-                        && p.range.end <= c.range.end
+                    p.parent().is_some()
+                        && p.range().start >= c.range().start
+                        && p.range().end <= c.range().end
                 })
-                .map(|p| p.disposition)
-                .chain(core::iter::once(c.disposition))
+                .map(|p| p.disposition())
+                .chain(core::iter::once(c.disposition()))
         })
         .find(|d| *d != Disposition::Structure)
         .expect("colr disposition")
@@ -480,8 +480,8 @@ fn f8_earlier_cdef_used_when_last_is_invalid() {
     assert_ne!(probe(&both).ok(), probe(&only_bad).ok());
     let i = inv(&both);
     let cdefs = parts_with(&i, PartTag::FourCc(*b"cdef"));
-    assert_eq!(cdefs[0].disposition, Disposition::Structure, "{i}");
-    assert_eq!(cdefs[1].disposition, Disposition::Malformed, "{i}");
+    assert_eq!(cdefs[0].disposition(), Disposition::Structure, "{i}");
+    assert_eq!(cdefs[1].disposition(), Disposition::Malformed, "{i}");
 }
 
 // ───────── F9: superseded main-header COD / QCD / COC ─────────
@@ -509,9 +509,9 @@ fn f9_superseded_cod_and_qcd_are_dropped() {
     for tag in [0x52, 0x5C] {
         let v = parts_with(&i, PartTag::Marker(tag));
         assert_eq!(v.len(), 2, "{i}");
-        assert_eq!(v[0].disposition, Disposition::Dropped, "{i}");
-        assert!(v[0].detail.as_deref().unwrap().starts_with("superseded"));
-        assert_eq!(v[1].disposition, Disposition::Structure, "{i}");
+        assert_eq!(v[0].disposition(), Disposition::Dropped, "{i}");
+        assert!(v[0].detail().unwrap().starts_with("superseded"));
+        assert_eq!(v[1].disposition(), Disposition::Structure, "{i}");
     }
 }
 
@@ -523,8 +523,8 @@ fn f10_truncated_jp2c_is_malformed() {
     let i = inv(f);
     let jp2c = parts_with(&i, PartTag::FourCc(*b"jp2c"));
     assert_eq!(jp2c.len(), 1);
-    assert_eq!(jp2c[0].disposition, Disposition::Malformed, "{i}");
-    assert!(!jp2c[0].detail.as_deref().unwrap().contains("superseded"));
+    assert_eq!(jp2c[0].disposition(), Disposition::Malformed, "{i}");
+    assert!(!jp2c[0].detail().unwrap().contains("superseded"));
 }
 
 // ───────── F5: junk in a tile-part header ends hayro's tile loop ─────────
@@ -543,13 +543,13 @@ fn f5_junk_in_tile_part_header_ends_the_walk() {
     assert!(
         !i.parts()
             .iter()
-            .any(|p| p.disposition == Disposition::ImageData),
+            .any(|p| p.disposition() == Disposition::ImageData),
         "{i}"
     );
     let p = leaf_at(&i, sod as u64);
-    assert_eq!(p.disposition, Disposition::Malformed, "{i}");
+    assert_eq!(p.disposition(), Disposition::Malformed, "{i}");
     assert!(
-        p.detail
+        p.detail()
             .as_deref()
             .unwrap()
             .contains("hayro stops reading tile-parts")
@@ -570,16 +570,16 @@ fn f5_second_tile_part_is_walked_when_the_first_is_fine() {
     let scans: Vec<_> = i
         .parts()
         .iter()
-        .filter(|p| p.kind == PartKind::ScanData)
+        .filter(|p| p.kind() == PartKind::ScanData)
         .collect();
     // The first tile-part holds all the packets; the second finds the
     // progression exhausted, so its data is one unreferenced gap.
     assert_eq!(scans.len(), 1, "{i}");
-    assert_eq!(scans[0].disposition, Disposition::ImageData);
-    let second_sot = parts_with(&i, PartTag::Marker(0x90))[1].range.start;
+    assert_eq!(scans[0].disposition(), Disposition::ImageData);
+    let second_sot = parts_with(&i, PartTag::Marker(0x90))[1].range().start;
     let tail = leaf_at(&i, second_sot + 14 + 1);
-    assert_eq!(tail.disposition, Disposition::Unreferenced, "{i}");
-    assert_eq!(tail.range.start, second_sot + 14, "{i}");
+    assert_eq!(tail.disposition(), Disposition::Unreferenced, "{i}");
+    assert_eq!(tail.range().start, second_sot + 14, "{i}");
 }
 
 // ───────────────────────── review round 2 ─────────────────────────
@@ -633,7 +633,7 @@ fn undetected(i: &Inventory, why: &str) -> usize {
     i.parts()
         .iter()
         .filter(|p| {
-            p.detail
+            p.detail()
                 .as_deref()
                 .is_some_and(|d| d.contains("unreferenced tail not detected") && d.contains(why))
         })
@@ -646,11 +646,11 @@ fn budget_exhausted(i: &Inventory) -> usize {
     i.parts()
         .iter()
         .filter(|p| {
-            p.detail
+            p.detail()
                 .as_deref()
                 .is_some_and(|d| d.starts_with("work budget exhausted"))
         })
-        .inspect(|p| assert!(!p.disposition.is_consumed(), "{p:?}"))
+        .inspect(|p| assert!(!p.disposition().is_consumed(), "{p:?}"))
         .count()
 }
 
@@ -667,7 +667,7 @@ fn r2_1_no_empty_part_when_the_data_starts_with_eoc() {
     let i = inv(&f);
     assert!(
         parts_with(&i, PartTag::Marker(0x51))[0]
-            .detail
+            .detail()
             .as_deref()
             .unwrap()
             .contains("fails the decode"),
@@ -694,7 +694,7 @@ fn r2_1_eoc_as_tile_data_with_an_empty_ppm() {
     let i = inv(&f);
     assert!(i.parts().iter().all(|p| !p.is_empty()), "{i}");
     let tail = leaf_at(&i, f.len() as u64 - 2);
-    assert_eq!(tail.disposition, Disposition::Malformed, "{i}");
+    assert_eq!(tail.disposition(), Disposition::Malformed, "{i}");
 }
 
 /// R2-3: a tile 4 wide and 32768 tall with 32 components gives each
@@ -755,7 +755,7 @@ fn r2_4_one_work_budget_across_tiles() {
         .parts()
         .iter()
         .position(|p| {
-            p.detail
+            p.detail()
                 .as_deref()
                 .is_some_and(|d| d.starts_with("work budget exhausted"))
         })
@@ -763,9 +763,9 @@ fn r2_4_one_work_budget_across_tiles() {
     assert!(
         i.parts()[first..]
             .iter()
-            .filter(|p| p.kind == PartKind::ScanData)
-            .all(|p| p.disposition == Disposition::Malformed
-                && p.detail
+            .filter(|p| p.kind() == PartKind::ScanData)
+            .all(|p| p.disposition() == Disposition::Malformed
+                && p.detail()
                     .as_deref()
                     .unwrap()
                     .starts_with("work budget exhausted"))
@@ -858,18 +858,18 @@ fn r2_2_body_after_packed_headers_is_unreferenced() {
         let i = inv(&f);
         let at = find(&f, b"PPT-SLACK") as u64;
         let p = leaf_at(&i, at);
-        assert_eq!(p.disposition, Disposition::Unreferenced, "ppm={ppm}: {i}");
+        assert_eq!(p.disposition(), Disposition::Unreferenced, "ppm={ppm}: {i}");
         assert_eq!(p.len() as usize, slack.len(), "ppm={ppm}: {i}");
         assert!(
             !i.parts().iter().any(|p| p
-                .detail
+                .detail()
                 .as_deref()
                 .is_some_and(|d| d.contains("not detected"))),
             "ppm={ppm}: the walk ran: {i}"
         );
         // Overwriting it leaves the decode unchanged.
         let mut g = f.clone();
-        for b in &mut g[p.range.start as usize..p.range.end as usize] {
+        for b in &mut g[p.range().start as usize..p.range().end as usize] {
             *b = !*b;
         }
         assert_eq!(
@@ -948,11 +948,11 @@ fn r3_1_budget_exhaustion_does_not_vouch_for_later_tiles() {
         let i = inv(&f);
         let at = find(&f, b"BUDGET-SLACK") as u64;
         let p = leaf_at(&i, at);
-        assert_eq!(p.disposition, want, "expensive={expensive}: {i}");
-        assert!(p.range.end >= at + text.len() as u64, "{i}");
+        assert_eq!(p.disposition(), want, "expensive={expensive}: {i}");
+        assert!(p.range().end >= at + text.len() as u64, "{i}");
         if expensive > 0 {
             assert!(
-                p.detail
+                p.detail()
                     .as_deref()
                     .unwrap()
                     .starts_with("work budget exhausted")
@@ -986,12 +986,12 @@ fn r3_2_packed_header_slack_is_unreferenced() {
         let i = inv(&f);
         let at = find(&f, b"PPT-HEADER-SLACK") as u64;
         let p = leaf_at(&i, at);
-        assert_eq!(p.disposition, Disposition::Unreferenced, "ppm={ppm}: {i}");
-        assert_eq!(p.range, at..at + text.len() as u64, "ppm={ppm}: {i}");
+        assert_eq!(p.disposition(), Disposition::Unreferenced, "ppm={ppm}: {i}");
+        assert_eq!(p.range(), at..at + text.len() as u64, "ppm={ppm}: {i}");
         // The two header bytes before it are what hayro reads.
         let read = leaf_at(&i, at - 1);
-        assert_eq!(read.disposition, Disposition::Structure, "ppm={ppm}: {i}");
-        assert_eq!(read.range, at - 2..at, "ppm={ppm}: {i}");
+        assert_eq!(read.disposition(), Disposition::Structure, "ppm={ppm}: {i}");
+        assert_eq!(read.range(), at - 2..at, "ppm={ppm}: {i}");
     }
 }
 
@@ -1002,16 +1002,16 @@ fn r3_2_packed_header_slack_is_unreferenced() {
 /// checked (review round 4; the R3-1 rule extended to every cap).
 fn assert_cap_unverified(f: &[u8], cap: &str) {
     let i = inv(f);
-    let sod = parts_with(&i, PartTag::Marker(0x93))[0].range.end;
+    let sod = parts_with(&i, PartTag::Marker(0x93))[0].range().end;
     let p = leaf_at(&i, sod);
-    assert_eq!(p.disposition, Disposition::Malformed, "{cap}: {i}");
-    let d = p.detail.as_deref().unwrap();
+    assert_eq!(p.disposition(), Disposition::Malformed, "{cap}: {i}");
+    let d = p.detail().unwrap();
     assert!(
         d.starts_with(cap) && d.contains("packet structure not verified"),
         "{d}"
     );
     let text = find(f, b"CAP-SLACK") as u64;
-    assert!(!leaf_at(&i, text).disposition.is_consumed(), "{i}");
+    assert!(!leaf_at(&i, text).disposition().is_consumed(), "{i}");
 }
 
 const CAP_SLACK: &[u8] = b"CAP-SLACK: owner Jane Doe, serial 12345";

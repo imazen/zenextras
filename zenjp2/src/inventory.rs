@@ -154,10 +154,11 @@ fn contains(hay: &[u8], needle: &[u8]) -> bool {
 }
 
 fn append_detail(part: &mut Part, more: &str) {
-    part.detail = Some(match part.detail.take() {
+    let d = match part.detail() {
         Some(d) => format!("{d}; {more}"),
         None => more.into(),
-    });
+    };
+    part.set_detail(d);
 }
 
 // ───────────────────── jp2h child parsers (hayro `jp2/*.rs`) ─────────────────────
@@ -319,9 +320,9 @@ impl Walker<'_> {
     }
 
     fn push(&mut self, parent: Option<PartId>, part: Part) -> Res<PartId> {
-        let d = self.disp(part.disposition);
+        let d = self.disp(part.disposition());
         let mut part = part;
-        part.disposition = d;
+        part.set_disposition(d);
         self.inv.push(parent, part)
     }
 
@@ -450,82 +451,82 @@ impl Walker<'_> {
             // and, for the second box, its type: `jp2::parse`. The payloads
             // are never read, and any later `jP  `/`ftyp` hits `_ => {}`.
             b"jP  " if index == 0 => {
-                part.disposition = Disposition::Structure;
-                part.label = Some(Cow::Borrowed("jP  "));
+                part.set_disposition(Disposition::Structure);
+                part.set_label(Cow::Borrowed("jP  "));
                 unread_payload = Some(("signature payload", None));
             }
             b"ftyp" if index == 1 => {
-                part.disposition = Disposition::Structure;
+                part.set_disposition(Disposition::Structure);
                 unread_payload = Some((
                     "brand, minor version and compatibility list",
                     (body.len() >= 4).then(|| label_of(&body[..4])),
                 ));
             }
             b"jP  " | b"ftyp" => {
-                part.detail = Some(format!(
+                part.set_detail(format!(
                     "ignored by hayro: only box {} is read as {}",
                     if &b.ty == b"jP  " { 0 } else { 1 },
                     fourcc_name(b.ty).trim_end()
                 ));
             }
             b"jp2h" => {
-                part.disposition = Disposition::Structure;
-                part.body = Some(payload.clone());
+                part.set_disposition(Disposition::Structure);
+                part.set_body(payload.clone());
                 descend = Some(Descend::Jp2h);
                 if Some(b.start) != last_jp2h && !b.truncated {
-                    part.detail = Some("superseded by a later jp2h (hayro keeps the last)".into());
+                    part.set_detail("superseded by a later jp2h (hayro keeps the last)");
                     superseded_here = true;
                 }
             }
             b"jp2c" => {
-                part.disposition = Disposition::ImageData;
-                part.body = Some(payload.clone());
+                part.set_disposition(Disposition::ImageData);
+                part.set_body(payload.clone());
                 descend = Some(Descend::Jp2c);
                 if Some(b.start) != last_jp2c && !b.truncated {
-                    part.detail = Some("superseded by a later jp2c (hayro keeps the last)".into());
+                    part.set_detail("superseded by a later jp2c (hayro keeps the last)");
                     superseded_here = true;
                 }
             }
             b"xml " => {
-                part.detail = Some(
+                part.set_detail(
                     if contains(body, b"xpacket") || contains(body, b"xmpmeta") {
-                        "XMP packet; not surfaced by zenjp2".into()
+                        "XMP packet; not surfaced by zenjp2"
                     } else {
-                        "XML; not surfaced by zenjp2".into()
+                        "XML; not surfaced by zenjp2"
                     },
                 );
             }
             b"uuid" => {
                 if body.len() >= 16 {
-                    part.label = Some(Cow::Owned(uuid_string(body)));
+                    part.set_label(Cow::Owned(uuid_string(body)));
                 }
-                part.detail = Some(match uuid_kind(body) {
+                part.set_detail(match uuid_kind(body) {
                     Some(k) => format!("{k}; not surfaced by zenjp2"),
                     None => "UUID payload; not surfaced by zenjp2".into(),
                 });
             }
             // JPX association box: `lbl ` labels and `xml ` metadata inside.
             b"asoc" => {
-                part.body = Some(payload.clone());
+                part.set_body(payload.clone());
                 descend = Some(Descend::Asoc);
-                part.detail = Some("JPX association; not read".into());
+                part.set_detail("JPX association; not read");
             }
             b"uinf" => {
-                part.body = Some(payload.clone());
+                part.set_body(payload.clone());
                 descend = Some(Descend::Uinf);
-                part.detail = Some("UUID info; not read".into());
+                part.set_detail("UUID info; not read");
             }
-            b"jp2i" => part.detail = Some("intellectual property; not read".into()),
-            b"free" => part.disposition = Disposition::Padding,
+            b"jp2i" => part.set_detail("intellectual property; not read"),
+            b"free" => part.set_disposition(Disposition::Padding),
             // JPX extension boxes hayro-jpeg2000 does not interpret.
             b"rreq" | b"jpch" | b"jplh" | b"cgrp" | b"ftbl" | b"lbl " | b"jpxl" | b"drep"
             | b"dtbl" | b"flst" | b"nlst" | b"roid" | b"mp7b" | b"bfil" | b"comp" => {
-                part.detail = Some("JPX extension box; not read".into());
+                part.set_detail("JPX extension box; not read");
             }
-            _ => part.disposition = Disposition::Unknown,
+            _ => part.set_disposition(Disposition::Unknown),
         }
-        if part.label.is_none() && part.disposition == Disposition::Unknown {
-            part.label = Some(Cow::Owned(fourcc_name(b.ty)));
+        if part.label().is_none() && part.disposition() == Disposition::Unknown {
+            part.set_label(Cow::Owned(fourcc_name(b.ty)));
         }
         if b.to_end {
             append_detail(&mut part, "LBox=0, runs to end of file");
@@ -533,14 +534,14 @@ impl Walker<'_> {
         if b.truncated {
             // hayro-jpeg2000 `box::read` fails when the declared length runs
             // past the data, ending the box loop: the box is never parsed.
-            part.disposition = Disposition::Malformed;
+            part.set_disposition(Disposition::Malformed);
             append_detail(&mut part, "declared length exceeds the input");
             descend = None;
-            part.body = None;
+            part.clear_body();
             unread_payload = None;
         }
         if superseded_here {
-            part.disposition = Disposition::Dropped;
+            part.set_disposition(Disposition::Dropped);
         }
         // The second box must be `ftyp` (`InvalidFileType` otherwise).
         let bad_second = index == 1 && &b.ty != b"ftyp";
@@ -551,10 +552,10 @@ impl Walker<'_> {
             );
         }
         if unread_payload.is_some() && !payload.is_empty() {
-            part.body = Some(payload.clone());
+            part.set_body(payload.clone());
         }
 
-        let body_range = part.body.clone();
+        let body_range = part.body();
         let id = self.push(None, part)?;
         if let Some((what, label)) = unread_payload
             && !payload.is_empty()
@@ -582,7 +583,7 @@ impl Walker<'_> {
             };
             self.superseded = saved;
             res?;
-            if self.inv.get(id).is_some_and(|p| p.body.is_some()) {
+            if self.inv.get(id).is_some_and(|p| p.body().is_some()) {
                 let fill = if &b.ty == b"jp2c" {
                     Disposition::Trailing
                 } else {
@@ -600,17 +601,17 @@ impl Walker<'_> {
     /// Children of `asoc`: `lbl `, `xml ` and nested `asoc`, to a depth cap.
     fn walk_asoc(&mut self, parent: PartId, body: Range<u64>, depth: u32) -> Res {
         self.walk_children(parent, body, |_, b, part| match &b.ty {
-            b"lbl " | b"xml " => part.disposition = Disposition::Skipped,
+            b"lbl " | b"xml " => part.set_disposition(Disposition::Skipped),
             b"asoc" => {
-                part.disposition = Disposition::Skipped;
+                part.set_disposition(Disposition::Skipped);
                 if depth < 8 {
-                    part.body = Some(b.payload());
+                    part.set_body(b.payload());
                 }
             }
-            _ => part.disposition = Disposition::Unknown,
+            _ => part.set_disposition(Disposition::Unknown),
         })?;
         for c in self.inv.children(Some(parent)) {
-            let sub = self.inv.get(c).and_then(|p| p.body.clone());
+            let sub = self.inv.get(c).and_then(|p| p.body());
             if let Some(sub) = sub {
                 self.walk_asoc(c, sub, depth + 1)?;
             }
@@ -621,8 +622,8 @@ impl Walker<'_> {
     /// Children of `uinf`: `ulst` and `url ` (ISO 15444-1 I.7.3).
     fn walk_uinf(&mut self, parent: PartId, body: Range<u64>) -> Res {
         self.walk_children(parent, body, |_, b, part| match &b.ty {
-            b"ulst" | b"url " => part.disposition = Disposition::Skipped,
-            _ => part.disposition = Disposition::Unknown,
+            b"ulst" | b"url " => part.set_disposition(Disposition::Skipped),
+            _ => part.set_disposition(Disposition::Unknown),
         })
     }
 
@@ -652,12 +653,12 @@ impl Walker<'_> {
                 Disposition::Unknown,
             );
             classify(bytes, &b, &mut part);
-            if part.disposition == Disposition::Unknown && part.label.is_none() {
-                part.label = Some(Cow::Owned(fourcc_name(b.ty)));
+            if part.disposition() == Disposition::Unknown && part.label().is_none() {
+                part.set_label(Cow::Owned(fourcc_name(b.ty)));
             }
             if b.truncated {
-                part.disposition = Disposition::Malformed;
-                part.detail = Some("declared length exceeds the enclosing box".into());
+                part.set_disposition(Disposition::Malformed);
+                part.set_detail("declared length exceeds the enclosing box");
             }
             self.push(Some(parent), part)?;
             pos = b.end;
@@ -754,24 +755,25 @@ impl Walker<'_> {
                 // `_ => debug!("ignoring header box")`: geometry and bit depth
                 // come from the codestream SIZ marker, not from these boxes.
                 b"ihdr" => {
-                    part.disposition = Disposition::Skipped;
-                    part.detail = Some("geometry and depth are taken from SIZ".into());
+                    part.set_disposition(Disposition::Skipped);
+                    part.set_detail("geometry and depth are taken from SIZ");
                 }
                 b"bpcc" => {
-                    part.disposition = Disposition::Skipped;
-                    part.detail = Some("depth is taken from SIZ".into());
+                    part.set_disposition(Disposition::Skipped);
+                    part.set_detail("depth is taken from SIZ");
                 }
                 b"colr" => {
                     if let Some((_, why)) = fatal_here {
-                        part.disposition = Disposition::Malformed;
-                        part.detail =
-                            Some(format!("hayro-jpeg2000 0.3.5 fails the decode here: {why}"));
+                        part.set_disposition(Disposition::Malformed);
+                        part.set_detail(format!(
+                            "hayro-jpeg2000 0.3.5 fails the decode here: {why}"
+                        ));
                         make_dead = true;
                     } else if let Some((cpos, out)) = &colr_outcome
                         && *cpos == pos
                     {
-                        part.disposition = out.disposition;
-                        part.detail = Some(out.detail.clone());
+                        part.set_disposition(out.disposition);
+                        part.set_detail(out.detail.clone());
                         if out.fatal {
                             make_dead = true;
                         }
@@ -788,8 +790,8 @@ impl Walker<'_> {
                             ));
                         }
                     } else {
-                        part.disposition = Disposition::Skipped;
-                        part.detail = Some("ignored: hayro keeps only the first colr".into());
+                        part.set_disposition(Disposition::Skipped);
+                        part.set_detail("ignored: hayro keeps only the first colr");
                     }
                 }
                 b"pclr" | b"cdef" => {
@@ -800,16 +802,15 @@ impl Walker<'_> {
                         info.cdef.map(|(p, _, u)| (p, u))
                     };
                     if info.invalid.contains(&pos) {
-                        part.disposition = Disposition::Malformed;
-                        part.detail = Some(
+                        part.set_disposition(Disposition::Malformed);
+                        part.set_detail(
                             "fails to parse; hayro ignores it in non-strict mode and keeps an \
-                             earlier valid box"
-                                .into(),
+                             earlier valid box",
                         );
                     } else if let Some((bp, used)) = best
                         && bp == pos
                     {
-                        part.disposition = Disposition::Structure;
+                        part.set_disposition(Disposition::Structure);
                         let what = if is_pclr {
                             "palette"
                         } else {
@@ -817,41 +818,41 @@ impl Walker<'_> {
                         };
                         fields = Some((payload.start + used, Disposition::Structure, what.into()));
                     } else {
-                        part.disposition = Disposition::Dropped;
-                        part.detail = Some("replaced by a later valid box of the same type".into());
+                        part.set_disposition(Disposition::Dropped);
+                        part.set_detail("replaced by a later valid box of the same type");
                     }
                 }
                 b"cmap" => {
                     if let Some((_, why)) = fatal_here {
-                        part.disposition = Disposition::Malformed;
-                        part.detail =
-                            Some(format!("hayro-jpeg2000 0.3.5 fails the decode here: {why}"));
+                        part.set_disposition(Disposition::Malformed);
+                        part.set_detail(format!(
+                            "hayro-jpeg2000 0.3.5 fails the decode here: {why}"
+                        ));
                         make_dead = true;
                     } else if info.cmap == Some(pos) {
-                        part.disposition = Disposition::Structure;
+                        part.set_disposition(Disposition::Structure);
                     } else {
-                        part.disposition = Disposition::Dropped;
-                        part.detail = Some("replaced by a later cmap".into());
+                        part.set_disposition(Disposition::Dropped);
+                        part.set_detail("replaced by a later cmap");
                     }
                 }
                 b"res " => {
-                    part.disposition = Disposition::Skipped;
-                    part.detail = Some("resolution is not reported".into());
-                    part.body = Some(payload.clone());
+                    part.set_disposition(Disposition::Skipped);
+                    part.set_detail("resolution is not reported");
+                    part.set_body(payload.clone());
                     is_res = true;
                 }
                 _ => {
-                    part.label = Some(Cow::Owned(fourcc_name(b.ty)));
+                    part.set_label(Cow::Owned(fourcc_name(b.ty)));
                 }
             }
             if b.truncated {
                 // `box::read(..).ok_or(InvalidBox)?`: fatal.
-                part.disposition = Disposition::Malformed;
-                part.detail = Some(
-                    "hayro-jpeg2000 0.3.5 fails the decode here: child box length exceeds jp2h"
-                        .into(),
+                part.set_disposition(Disposition::Malformed);
+                part.set_detail(
+                    "hayro-jpeg2000 0.3.5 fails the decode here: child box length exceeds jp2h",
                 );
-                part.body = None;
+                part.clear_body();
                 is_res = false;
                 fields = None;
                 make_dead = true;
@@ -861,13 +862,13 @@ impl Walker<'_> {
             if let Some((fend, _, _)) = &fields
                 && payload.start < *fend
             {
-                part.disposition = self.disp(Disposition::Structure);
-                part.detail = None;
-                part.body = Some(payload.clone());
+                part.set_disposition(self.disp(Disposition::Structure));
+                part.clear_detail();
+                part.set_body(payload.clone());
             } else {
                 fields = None;
             }
-            let body_range = part.body.clone();
+            let body_range = part.body();
             let id = self.push(Some(parent), part)?;
             if let Some((fend, d, detail)) = fields {
                 let fend = fend.min(payload.end);
@@ -885,8 +886,8 @@ impl Walker<'_> {
             }
             if is_res && let Some(r) = body_range {
                 self.walk_children(id, r, |_, cb, cp| match &cb.ty {
-                    b"resc" | b"resd" => cp.disposition = Disposition::Skipped,
-                    _ => cp.disposition = Disposition::Unknown,
+                    b"resc" | b"resd" => cp.set_disposition(Disposition::Skipped),
+                    _ => cp.set_disposition(Disposition::Unknown),
                 })?;
                 self.inv.fill_gaps(Some(id), Disposition::Malformed)?;
             }

@@ -87,7 +87,7 @@ fn corpus_conformance() {
                 .is_ok()
         };
         for p in inv.parts() {
-            if let Some(d) = p.detail.as_deref()
+            if let Some(d) = p.detail()
                 && let Some((_, why)) = d.split_once("unreferenced tail not detected: ")
             {
                 undetected.push(format!("{}: {why}", f.display()));
@@ -214,20 +214,20 @@ fn marker_code(name: &str) -> Option<u8> {
 fn find_unit(inv: &Inventory, unit: &Unit, base: u64, len: u64) -> bool {
     inv.parts().iter().any(|p| match unit {
         Unit::Box(name, off, n) => {
-            let PartTag::FourCc(t) = &p.tag else {
+            let PartTag::FourCc(t) = &p.tag() else {
                 return false;
             };
             String::from_utf8_lossy(t).eq_ignore_ascii_case(name)
-                && [8, 16].iter().any(|h| p.range.start + h == off + base)
+                && [8, 16].iter().any(|h| p.range().start + h == off + base)
                 && match n {
-                    Some(n) => p.range.end == off + base + n,
-                    None => p.range.end == len,
+                    Some(n) => p.range().end == off + base + n,
+                    None => p.range().end == len,
                 }
         }
         Unit::Marker(name, off, n, _) => {
-            marker_code(name).is_some_and(|c| p.tag == PartTag::Marker(c))
-                && p.range.start + 4 == off + base
-                && p.range.end == off + base + n
+            marker_code(name).is_some_and(|c| *p.tag() == PartTag::Marker(c))
+                && p.range().start + 4 == off + base
+                && p.range().end == off + base + n
         }
         Unit::Sod => false,
     })
@@ -336,10 +336,10 @@ fn exiftool_oracle() {
         // Inside a JP2, run the codestream through exiftool on its own so the
         // marker segments are cross-checked too.
         let cs = inv.parts().iter().find(|p| {
-            p.tag == PartTag::FourCc(*b"jp2c") && p.disposition == Disposition::ImageData
+            *p.tag() == PartTag::FourCc(*b"jp2c") && p.disposition() == Disposition::ImageData
         });
         if let Some(cs) = cs
-            && let Some(body) = &cs.body
+            && let Some(body) = &cs.body()
             && body.start < body.end
         {
             let tmp = scratch.join("cs.j2c");
@@ -433,27 +433,27 @@ fn corpus_unconsumed_bytes_do_not_change_pixels() {
         let inv = inventory_of(&data);
         let mut has_child = vec![false; inv.parts().len()];
         for p in inv.parts() {
-            if let Some(par) = p.parent {
+            if let Some(par) = p.parent() {
                 has_child[par.index()] = true;
             }
         }
         let name = f.file_name().unwrap().to_string_lossy().into_owned();
         let mut n = 0;
         for (i, p) in inv.parts().iter().enumerate() {
-            if has_child[i] || p.disposition.is_consumed() {
+            if has_child[i] || p.disposition().is_consumed() {
                 continue;
             }
             let tail = matches!(
-                p.disposition,
+                p.disposition(),
                 Disposition::Unreferenced | Disposition::Malformed
-            ) && p.tag == PartTag::None;
+            ) && *p.tag() == PartTag::None;
             if tail {
                 tails.push(format!(
                     "{name}: {} {}..{} {}",
-                    p.disposition,
-                    p.range.start,
-                    p.range.end,
-                    p.detail.as_deref().unwrap_or("")
+                    p.disposition(),
+                    p.range().start,
+                    p.range().end,
+                    p.detail().unwrap_or("")
                 ));
             }
             // Skipped markers and boxes carry payloads worth checking too, but
@@ -462,24 +462,27 @@ fn corpus_unconsumed_bytes_do_not_change_pixels() {
                 continue;
             }
             n += 1;
-            let skip = match p.kind {
+            let skip = match p.kind() {
                 PartKind::Box => 8,
                 PartKind::Segment => 4,
                 _ => 0,
             };
-            let from = (p.range.start + skip).min(p.range.end);
-            if from >= p.range.end {
+            let from = (p.range().start + skip).min(p.range().end);
+            if from >= p.range().end {
                 continue;
             }
             let mut m = data.clone();
-            for b in &mut m[from as usize..p.range.end as usize] {
+            for b in &mut m[from as usize..p.range().end as usize] {
                 *b = !*b;
             }
             checked_parts += 1;
             if decode(&m).as_ref() != Some(&base) {
                 failures.push(format!(
                     "{name}: flipping {} {:?} {}..{} changed the decode",
-                    p.disposition, p.tag, p.range.start, p.range.end
+                    p.disposition(),
+                    p.tag(),
+                    p.range().start,
+                    p.range().end
                 ));
             }
         }
@@ -529,12 +532,12 @@ fn corpus_planted_tile_slack_is_unconsumed() {
         let has_packed = inv
             .parts()
             .iter()
-            .any(|p| matches!(p.tag, PartTag::Marker(0x60 | 0x61)));
+            .any(|p| matches!(p.tag(), PartTag::Marker(0x60 | 0x61)));
         let Some(sot) = inv
             .parts()
             .iter()
-            .filter(|p| p.tag == PartTag::Marker(0x90))
-            .map(|p| p.range.start as usize)
+            .filter(|p| *p.tag() == PartTag::Marker(0x90))
+            .map(|p| p.range().start as usize)
             .max()
         else {
             continue;
@@ -561,17 +564,17 @@ fn corpus_planted_tile_slack_is_unconsumed() {
         let leaf = mi
             .parts()
             .iter()
-            .filter(|p| p.range.start <= at as u64 && (at as u64) < p.range.end)
+            .filter(|p| p.range().start <= at as u64 && (at as u64) < p.range().end)
             .min_by_key(|p| p.len())
             .unwrap();
-        if leaf.disposition.is_consumed() || leaf.range.end < (at + text.len()) as u64 {
+        if leaf.disposition().is_consumed() || leaf.range().end < (at + text.len()) as u64 {
             failures.push(format!(
                 "{name}{}: planted text is {} {}..{} ({:?})",
                 if has_packed { " (PPM/PPT)" } else { "" },
-                leaf.disposition,
-                leaf.range.start,
-                leaf.range.end,
-                leaf.detail
+                leaf.disposition(),
+                leaf.range().start,
+                leaf.range().end,
+                leaf.detail()
             ));
         }
     }
@@ -617,8 +620,8 @@ fn corpus_planted_ppt_header_slack() {
         let Some(last) = inv
             .parts()
             .iter()
-            .filter(|p| p.tag == PartTag::Marker(0x90))
-            .map(|p| p.range.start)
+            .filter(|p| *p.tag() == PartTag::Marker(0x90))
+            .map(|p| p.range().start)
             .max()
         else {
             continue;
@@ -626,14 +629,14 @@ fn corpus_planted_ppt_header_slack() {
         let Some(ppt) = inv
             .parts()
             .iter()
-            .filter(|p| p.tag == PartTag::Marker(0x61) && p.range.start > last)
-            .max_by_key(|p| p.range.start)
+            .filter(|p| *p.tag() == PartTag::Marker(0x61) && p.range().start > last)
+            .max_by_key(|p| p.range().start)
         else {
             continue;
         };
         let l = last as usize;
         let psot = u32::from_be_bytes(data[l + 6..l + 10].try_into().unwrap());
-        let (ps, pe) = (ppt.range.start as usize, ppt.range.end as usize);
+        let (ps, pe) = (ppt.range().start as usize, ppt.range().end as usize);
         let lppt = u16::from_be_bytes([data[ps + 2], data[ps + 3]]) as usize;
         if psot == 0 || ps + 2 + lppt != pe {
             continue;
@@ -647,21 +650,24 @@ fn corpus_planted_ppt_header_slack() {
         let leaf = mi
             .parts()
             .iter()
-            .filter(|p| p.range.start <= pe as u64 && (pe as u64) < p.range.end)
+            .filter(|p| p.range().start <= pe as u64 && (pe as u64) < p.range().end)
             .min_by_key(|p| p.len())
             .unwrap();
         let same = decode(&m).as_ref() == Some(&base);
         let row = format!(
             "{name}: {} {}..{} ({:?})",
-            leaf.disposition, leaf.range.start, leaf.range.end, leaf.detail
+            leaf.disposition(),
+            leaf.range().start,
+            leaf.range().end,
+            leaf.detail()
         );
         if same {
-            if leaf.disposition.is_consumed() || leaf.range.end < (pe + text.len()) as u64 {
+            if leaf.disposition().is_consumed() || leaf.range().end < (pe + text.len()) as u64 {
                 failures.push(format!("unchanged decode, but {row}"));
             }
             unchanged.push(row);
         } else {
-            if leaf.disposition == Disposition::Unreferenced {
+            if leaf.disposition() == Disposition::Unreferenced {
                 failures.push(format!("decode changes, but {row}"));
             }
             changed.push(row);

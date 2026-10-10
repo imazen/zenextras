@@ -181,7 +181,7 @@ fn assert_part(
 ) {
     let p = &inv.parts()[idx];
     assert_eq!(
-        (p.kind, &p.tag, &p.range, p.disposition, p.label.as_deref()),
+        (p.kind(), p.tag(), &p.range(), p.disposition(), p.label()),
         (kind, &tag, &range, d, label),
         "part {idx}\n{inv}"
     );
@@ -284,7 +284,7 @@ fn rich_jp2_exact_parts() {
     for (i, (k, t, r, d, l)) in expected.into_iter().enumerate() {
         assert_part(&inv, i, k, t, r, d, l);
     }
-    assert_eq!(inv.parts()[0].range.start, 0);
+    assert_eq!(inv.parts()[0].range().start, 0);
 }
 
 #[test]
@@ -295,8 +295,8 @@ fn exotic_boxes() {
     let by_ty = |ty: &[u8; 4]| -> Vec<(core::ops::Range<u64>, Disposition)> {
         inv.parts()
             .iter()
-            .filter(|p| p.tag == PartTag::FourCc(*ty))
-            .map(|p| (p.range.clone(), p.disposition))
+            .filter(|p| *p.tag() == PartTag::FourCc(*ty))
+            .map(|p| (p.range(), p.disposition()))
             .collect()
     };
     // The first jp2h is replaced by the second: Dropped, children included.
@@ -310,10 +310,10 @@ fn exotic_boxes() {
     assert!(
         inv.parts()
             .iter()
-            .any(|p| p.disposition == Metadata(MetadataKind::Icc)
-                && p.parent.is_some()
-                && p.range.start >= colr[1].0.start
-                && p.range.end <= colr[1].0.end),
+            .any(|p| p.disposition() == Metadata(MetadataKind::Icc)
+                && p.parent().is_some()
+                && p.range().start >= colr[1].0.start
+                && p.range().end <= colr[1].0.end),
         "{inv}"
     );
     // pclr: the second replaces the first; cmap and cdef are read.
@@ -330,17 +330,17 @@ fn exotic_boxes() {
     let xl = &inv
         .parts()
         .iter()
-        .find(|p| p.tag == PartTag::FourCc(*b"jp2c") && p.disposition == ImageData)
+        .find(|p| *p.tag() == PartTag::FourCc(*b"jp2c") && p.disposition() == ImageData)
         .unwrap();
-    assert_eq!(xl.body.as_ref().unwrap().start, xl.range.start + 16);
+    assert_eq!(xl.body().as_ref().unwrap().start, xl.range().start + 16);
     // The codestream inside the superseded box is walked but nothing in it counts.
     assert!(
         inv.parts()
             .iter()
-            .filter(|p| p.range.end <= jp2c[0].0.end
-                && p.range.start >= jp2c[0].0.start
-                && p.parent.is_some())
-            .all(|p| !p.disposition.is_consumed()),
+            .filter(|p| p.range().end <= jp2c[0].0.end
+                && p.range().start >= jp2c[0].0.start
+                && p.parent().is_some())
+            .all(|p| !p.disposition().is_consumed()),
         "{inv}"
     );
     // `LBox = 0` runs to the end of the file.
@@ -363,41 +363,44 @@ fn unconsumed_bytes_do_not_affect_decode() {
         let inv = inventory_of(&data);
         let mut has_child = vec![false; inv.parts().len()];
         for p in inv.parts() {
-            if let Some(par) = p.parent {
+            if let Some(par) = p.parent() {
                 has_child[par.index()] = true;
             }
         }
         let mut checked = 0;
         for (i, p) in inv.parts().iter().enumerate() {
-            if has_child[i] || p.disposition.is_consumed() {
+            if has_child[i] || p.disposition().is_consumed() {
                 continue;
             }
-            let skip = match p.kind {
+            let skip = match p.kind() {
                 PartKind::Box => 8,
                 PartKind::Segment => 4,
                 _ => 0,
             };
             // Reserved 2-byte markers have no payload.
-            let from = (p.range.start + skip).min(p.range.end);
-            if from >= p.range.end {
+            let from = (p.range().start + skip).min(p.range().end);
+            if from >= p.range().end {
                 continue;
             }
             let mut mutated = data.clone();
-            for b in &mut mutated[from as usize..p.range.end as usize] {
+            for b in &mut mutated[from as usize..p.range().end as usize] {
                 *b = !*b;
             }
             let got = decode(&mutated).unwrap_or_else(|e| {
                 panic!(
                     "{name}: part {i} {:?} {}..{} ({}): {e:?}",
-                    p.tag, p.range.start, p.range.end, p.disposition
+                    p.tag(),
+                    p.range().start,
+                    p.range().end,
+                    p.disposition()
                 )
             });
             assert_eq!(
                 rows(&got),
                 want,
                 "{name}: part {i} {:?} ({}) changed the pixels",
-                p.tag,
-                p.disposition
+                p.tag(),
+                p.disposition()
             );
             assert_eq!(
                 got.info().source_color.icc_profile.as_deref(),
@@ -431,7 +434,7 @@ fn truncations_and_flips_stay_valid() {
 fn non_jpeg2000_is_one_malformed_part() {
     let inv = inventory_of(b"GIF89a not jpeg 2000 at all");
     assert_eq!(inv.parts().len(), 1);
-    assert_eq!(inv.parts()[0].disposition, Disposition::Malformed);
+    assert_eq!(inv.parts()[0].disposition(), Disposition::Malformed);
     assert!(inventory_of(b"").parts().is_empty());
 }
 
@@ -441,6 +444,6 @@ fn bare_codestream_trailing_bytes() {
     d.extend_from_slice(b"trailing text after EOC");
     let inv = inventory_of(&d);
     let last = inv.parts().last().unwrap();
-    assert_eq!(last.disposition, Disposition::Trailing);
-    assert_eq!(last.range, J2K.len() as u64..d.len() as u64);
+    assert_eq!(last.disposition(), Disposition::Trailing);
+    assert_eq!(last.range(), J2K.len() as u64..d.len() as u64);
 }

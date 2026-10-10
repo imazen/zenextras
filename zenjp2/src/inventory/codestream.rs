@@ -502,7 +502,7 @@ impl Walker<'_> {
             let note =
                 format!("hayro-jpeg2000 0.3.5 fails the decode here: no {why} in the main header");
             if let Some(p) = self.inv.get(soc) {
-                let d = match &p.detail {
+                let d = match &p.detail() {
                     Some(d) => format!("{d}; {note}"),
                     None => note,
                 };
