@@ -172,8 +172,11 @@ member entries here reference those files.
   (data URIs, local paths the default image resolver opens, external `use`),
   the DOCTYPE's entities, and SVGZ gzip framing (FNAME/FCOMMENT, deflate
   stream, trailer, extra members; the header checked as flate2 checks it).
-  Reference-only elements nothing references (`defs` children, symbols,
-  gradients, patterns, clip paths, masks, filters, markers) are `Dropped`.
+  Elements usvg converts but never draws are `Dropped` with the reason:
+  reference-only elements nothing references (`defs` children, symbols,
+  gradients, patterns, clip paths, masks, filters, markers), `display: none`,
+  failed `requiredExtensions`/`requiredFeatures`/`systemLanguage`, and
+  `switch` children after the selected one (e83f7b0).
   Capability `inventory` declared. Fuzz target `inventory`, regression seed,
   xmllint oracle (`just inventory-oracle`) (4a55611, c3d2cdd, 13adb11,
   b37e153).
@@ -320,9 +323,10 @@ member entries here reference those files.
 - **`DecodeJob::inventory`**: a byte-exact structural inventory of PDF files
   (every object, xref section, trailer, revision and comment, superseded and
   unreferenced copies, /Info, XMP, attachments, JavaScript, thumbnails), with
-  dispositions resolved through hayro-syntax, unused resources, and stream
-  bytes after each filter's end. See [zenpdf/CHANGELOG.md](zenpdf/CHANGELOG.md)
-  (936735e, 081abf8, d811808, ad5dfe9, 16a6a89).
+  dispositions resolved through hayro-syntax, unused resources, content
+  hidden by optional content, and stream bytes after each filter's end. See
+  [zenpdf/CHANGELOG.md](zenpdf/CHANGELOG.md) (936735e, 081abf8, d811808,
+  ad5dfe9, 16a6a89, b6bddba).
 
 #### Fixed (2026-08-27, zenextras#2, #13, #14)
 
