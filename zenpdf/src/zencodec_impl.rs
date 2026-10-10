@@ -323,8 +323,9 @@ impl<'a> zencodec::decode::DecodeJob<'a> for PdfDecodeJob {
 
     /// Structural inventory: every indirect object, xref section, trailer,
     /// comment and revision marker, with what the render path does with it
-    /// (see `crate::inventory`). Honors `max_input_bytes` and the start frame:
-    /// only the page this job decodes has its content and annotations read.
+    /// (see `crate::inventory`). Honors `max_input_bytes`, the stop token and
+    /// the start frame: only the page this job decodes has its content and
+    /// annotations read.
     fn inventory(
         &self,
         data: &[u8],
@@ -332,15 +333,25 @@ impl<'a> zencodec::decode::DecodeJob<'a> for PdfDecodeJob {
         self.check_input_size(data)?;
         // A job the decoder rejects before drawing draws no page.
         let rejected = self.draw_gate(data).err().map(|e| e.to_string());
-        crate::inventory::pdf_inventory(
+        let stop: &dyn zencodec::enough::Stop = match &self.stop {
+            Some(s) => s,
+            None => &zencodec::enough::Unstoppable,
+        };
+        match crate::inventory::pdf_inventory(
             data,
             pdf_image_format(),
             self.config.render_annotations,
             self.start_frame,
             rejected,
-        )
-        .map(Some)
-        .map_err(|e| inventory_error(e).into())
+            stop,
+        ) {
+            Ok(inv) => Ok(Some(inv)),
+            Err(crate::inventory::InvError::Parts(e)) => Err(inventory_error(e).into()),
+            Err(crate::inventory::InvError::Stopped(r)) => {
+                use whereat::ErrorAtExt;
+                Err(zencodec::CodecError::new(Some("zenpdf"), r.into()).start_at())
+            }
+        }
     }
 
     fn output_info(&self, data: &[u8]) -> Result<OutputInfo, At<CodecError>> {

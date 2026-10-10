@@ -874,10 +874,22 @@ fn image_byte(data: &[u8], b: u8) -> usize {
 #[test]
 fn only_the_decoded_page_is_drawn() {
     let data = two_page_pdf();
-    let not_decoded = |inv: &Inventory, n: u32, what: &str| {
+    // `page`: the undecoded page that leads to the object, when a page
+    // (not a page-tree node) does.
+    let not_decoded = |inv: &Inventory, n: u32, what: &str, page: Option<usize>| {
         let p = the_object(inv, n);
         assert_eq!(p.disposition, Disposition::Skipped, "obj {n}\n{inv}");
-        assert_eq!(label(p), format!("{what} (page not decoded)"), "obj {n}");
+        let want = match page {
+            Some(k) => format!("{what} (page {k} not decoded)"),
+            None => format!("{what} (page not decoded)"),
+        };
+        assert_eq!(label(p), want, "obj {n}");
+        if let Some(k) = page {
+            assert!(
+                detail(p).contains(&format!("with_start_frame_index({k})")),
+                "{p:?}"
+            );
+        }
     };
     // Page 0: its content and images, plus the root node's inherited image.
     let inv = inventory_of_page(&data, 0);
@@ -896,15 +908,16 @@ fn only_the_decoded_page_is_drawn() {
         );
     }
     assert!(
-        detail(the_object(&inv, 6)).contains("page not decoded"),
+        detail(the_object(&inv, 6))
+            .contains("page 1: rendered only with with_start_frame_index(1)"),
         "{inv}"
     );
-    not_decoded(&inv, 8, "Contents");
-    not_decoded(&inv, 11, "XObject");
+    not_decoded(&inv, 8, "Contents", Some(1));
+    not_decoded(&inv, 11, "XObject", Some(1));
     // Node 20 is not an ancestor of page 0: its map is never searched.
-    not_decoded(&inv, 21, "XObject");
-    not_decoded(&inv, 12, "Annots");
-    not_decoded(&inv, 13, "Annots");
+    not_decoded(&inv, 21, "XObject", None);
+    not_decoded(&inv, 12, "Annots", Some(1));
+    not_decoded(&inv, 13, "Annots", Some(1));
     for entry in [
         &b"/Contents 8 0 R"[..],
         b"/ImB 11 0 R",
@@ -933,8 +946,8 @@ fn only_the_decoded_page_is_drawn() {
             Disposition::Structure,
             "{inv}"
         );
-        not_decoded(&inv, 4, "Contents");
-        not_decoded(&inv, 5, "XObject");
+        not_decoded(&inv, 4, "Contents", Some(0));
+        not_decoded(&inv, 5, "XObject", Some(0));
         let top = the_object(&inv, 9);
         assert_eq!(top.disposition, Disposition::Skipped, "{inv}");
         assert_eq!(label(top), "unused resource");
@@ -975,15 +988,15 @@ fn a_job_the_decoder_rejects_draws_no_page() {
     assert!(job().output_info(&data).is_err());
     let inv = job().inventory(&data).unwrap().unwrap();
     inv.validate().unwrap();
-    for (n, what) in [
-        (4, "Contents"),
-        (5, "XObject"),
-        (9, "XObject"),
-        (8, "Contents"),
+    for (n, want) in [
+        (4, "Contents (page 0 not decoded)"),
+        (5, "XObject (page 0 not decoded)"),
+        (9, "XObject (page not decoded)"),
+        (8, "Contents (page 1 not decoded)"),
     ] {
         let p = the_object(&inv, n);
         assert_eq!(p.disposition, Disposition::Skipped, "obj {n}\n{inv}");
-        assert_eq!(label(p), format!("{what} (page not decoded)"), "obj {n}");
+        assert_eq!(label(p), want, "obj {n}");
         assert!(detail(p).contains("rejects this job"), "{p:?}");
     }
     // At 16 pixels the same job draws page 0.
@@ -1118,9 +1131,10 @@ fn oracle_mutool_exiftool() {
     collect_pdfs(std::path::Path::new(&dir), &mut files);
     files.sort();
     assert!(!files.is_empty(), "no PDFs under {dir:?}");
+    files.extend(oracle_variants(&mutool));
 
     let mut table = String::from(
-        "file\tbytes\tmutool_n\tmatched\tmutool_o\tin_objstm\tinfo\txmp\tunused_res\tmismatches\n",
+        "file\tbytes\tmutool_n\tmatched\tmutool_o\tin_objstm\tstreams\tinfo\txmp\tunused_res\tmismatches\n",
     );
     let mut failures = Vec::new();
     for f in &files {
@@ -1178,8 +1192,114 @@ fn oracle_mutool_exiftool() {
                     } else {
                         mism.push(format!("obj {num} in stream {a} (index {b}): not listed"));
                     }
+                    // An unconsumed object stream (encrypted ones included)
+                    // names every live member it holds as not consumed: it is
+                    // never demoted while the decode reads a member.
+                    let stm = objects(&inv, a as u32);
+                    if !stm.iter().any(|p| p.disposition.is_consumed())
+                        && !stm.iter().any(|p| detail(p).contains(&format!(" {num} (")))
+                    {
+                        mism.push(format!(
+                            "object stream {a} is unconsumed but does not say why live obj {num} is"
+                        ));
+                    }
                 }
                 _ => {}
+            }
+        }
+        // Every stream's data, as mutool reads its /Length, is the stream's
+        // data part plus any tail after its internal end.
+        let in_use: Vec<String> = xref
+            .lines()
+            .filter(|l| l.trim_end().ends_with(" n"))
+            .filter_map(|l| {
+                l.split_once(':')
+                    .map(|(n, _)| n.trim().trim_start_matches('0').to_string())
+            })
+            .filter(|n| !n.is_empty())
+            .collect();
+        let mut s_total = 0;
+        if !in_use.is_empty() {
+            let shown = std::process::Command::new(&mutool)
+                .arg("show")
+                .arg("-g")
+                .arg(f)
+                .args(&in_use)
+                .output()
+                .expect("run mutool");
+            let shown = String::from_utf8_lossy(&shown.stdout);
+            let mut ints = std::collections::BTreeMap::new();
+            for line in shown.lines() {
+                let mut w = line.split_whitespace();
+                if let (Some(n), Some(_), Some("obj"), Some(v), None) =
+                    (w.next(), w.next(), w.next(), w.next(), w.next())
+                    && let (Ok(n), Ok(v)) = (n.parse::<u32>(), v.parse::<u64>())
+                {
+                    ints.insert(n, v);
+                }
+            }
+            for line in shown.lines() {
+                if !line.ends_with(" stream") {
+                    continue;
+                }
+                let Some(num) = line
+                    .split_whitespace()
+                    .next()
+                    .and_then(|n| n.parse::<u32>().ok())
+                else {
+                    continue;
+                };
+                // `/Length` of the stream dictionary itself: not `/Length1`
+                // (font files), not one inside a nested dictionary.
+                let Some(rest) = top_level_value(line, "/Length") else {
+                    continue;
+                };
+                let toks: Vec<&str> = rest
+                    .trim_start()
+                    .split(|c: char| c.is_whitespace() || c == '/' || c == '>')
+                    .filter(|t| !t.is_empty())
+                    .take(3)
+                    .collect();
+                let length = match toks.as_slice() {
+                    [n, _, "R", ..] => n.parse::<u32>().ok().and_then(|n| ints.get(&n).copied()),
+                    [n, ..] => n.parse::<u64>().ok(),
+                    _ => None,
+                };
+                let Some(length) = length else {
+                    continue;
+                };
+                let Some(obj) = objects(&inv, num)
+                    .into_iter()
+                    .find(|p| p.disposition.is_consumed())
+                else {
+                    continue;
+                };
+                let id = inv
+                    .children(None)
+                    .into_iter()
+                    .find(|id| inv.parts()[id.index()].range == obj.range);
+                let Some(id) = id else {
+                    continue;
+                };
+                let kids: Vec<&Part> = inv
+                    .children(Some(id))
+                    .into_iter()
+                    .map(|c| &inv.parts()[c.index()])
+                    .collect();
+                let Some(ext) = kids.iter().find(|k| k.kind == PartKind::Extent) else {
+                    continue;
+                };
+                s_total += 1;
+                let tail = kids
+                    .iter()
+                    .find(|k| k.range.start == ext.range.end && k.kind == PartKind::Gap)
+                    .map_or(0, |k| k.len());
+                if ext.len() + tail != length {
+                    mism.push(format!(
+                        "obj {num}: stream data {} + tail {tail} bytes, mutool /Length {length}",
+                        ext.len()
+                    ));
+                }
             }
         }
         let trailer = std::process::Command::new(&mutool)
@@ -1245,7 +1365,7 @@ fn oracle_mutool_exiftool() {
             .count();
         writeln!(
             table,
-            "{name}{}\t{}\t{n_total}\t{n_ok}\t{o_total}\t{o_ok}\t{info_ok}\t{xmp_ok}\t{unused}\t{}",
+            "{name}{}\t{}\t{n_total}\t{n_ok}\t{o_total}\t{o_ok}\t{s_total}\t{info_ok}\t{xmp_ok}\t{unused}\t{}",
             if repaired { " (mutool repaired)" } else { "" },
             data.len(),
             mism.len()
@@ -1260,6 +1380,79 @@ fn oracle_mutool_exiftool() {
         std::fs::write(path, &table).unwrap();
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// The text after `key` at the top level of the first dictionary on a
+/// `mutool show -g` line.
+fn top_level_value<'a>(line: &'a str, key: &str) -> Option<&'a str> {
+    let b = line.as_bytes();
+    let mut depth = 0i32;
+    let mut i = 0;
+    while i < b.len() {
+        if b[i..].starts_with(b"<<") {
+            depth += 1;
+            i += 2;
+        } else if b[i..].starts_with(b">>") {
+            depth -= 1;
+            i += 2;
+        } else if depth == 1
+            && b[i..].starts_with(key.as_bytes())
+            && !b
+                .get(i + key.len())
+                .is_some_and(|c| c.is_ascii_alphanumeric())
+        {
+            return Some(&line[i + key.len()..]);
+        } else {
+            i += 1;
+        }
+    }
+    None
+}
+
+/// The fixtures, rewritten by mutool with object streams, with encryption,
+/// and with both, so the oracle covers features the real-file corpus lacks
+/// (encryption, object streams holding the page tree, incremental updates,
+/// appearance states).
+fn oracle_variants(mutool: &std::ffi::OsStr) -> Vec<std::path::PathBuf> {
+    let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("inventory-oracle");
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut out = Vec::new();
+    for (name, bytes) in [
+        ("two_revision", two_revision_pdf()),
+        ("everything", everything_pdf()),
+        ("hidden_layer", hidden_layer_pdf()),
+        ("two_page", two_page_pdf()),
+    ] {
+        // The originals have their own tests (and deliberate leading junk
+        // that shifts mutool's offsets); the oracle reads mutool's rewrites.
+        let src = dir.join(format!("{name}.pdf"));
+        std::fs::write(&src, bytes).unwrap();
+        for (suffix, args) in [
+            ("objstm", &["-Z"][..]),
+            ("aes", &["-E", "aes-256", "-U", "", "-O", "owner"][..]),
+            (
+                "aes-objstm",
+                &["-Z", "-E", "aes-256", "-U", "", "-O", "owner"][..],
+            ),
+        ] {
+            let dst = dir.join(format!("{name}-{suffix}.pdf"));
+            let st = std::process::Command::new(mutool)
+                .arg("clean")
+                .args(args)
+                .arg(&src)
+                .arg(&dst)
+                .status()
+                .expect("run mutool clean");
+            // The two-revision fixture keeps a dangling reference on
+            // purpose; mutool refuses to rewrite such a file.
+            if st.success() {
+                out.push(dst);
+            } else {
+                println!("mutool clean {args:?} refused {name}");
+            }
+        }
+    }
+    out
 }
 
 /// The object numbers an `ObjStm` part's detail lists (`… objects: 1-3, 5;`).
@@ -1301,4 +1494,415 @@ fn collect_pdfs(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
             out.push(p);
         }
     }
+}
+
+// ── Review round 1 pins (adapted from the PR #33 reviewer's probes) ─────
+
+const CAT: &str = "<< /Type /Catalog /Pages 2 0 R >>";
+const PAGES1: &str = "<< /Type /Pages /Kids [3 0 R] /Count 1 >>";
+const RED: &[u8] = b"1 0 0 rg 0 0 10 10 re f";
+
+/// The page-0 decode's pixels.
+fn render0(data: &[u8]) -> Vec<u8> {
+    let p = zenpdf::render_page(data, 0, &zenpdf::RenderBounds::Scale(1.0)).unwrap();
+    p.buffer.as_contiguous_bytes().unwrap().to_vec()
+}
+
+/// `marker` sits in an unconsumed part, and changing it leaves the decode
+/// unchanged.
+fn assert_unconsumed(data: &[u8], inv: &Inventory, marker: &[u8]) {
+    let at = find(data, marker);
+    let p = leaf_at(inv, at as u64);
+    assert!(
+        !p.disposition.is_consumed(),
+        "{}: {p:?}\n{inv}",
+        String::from_utf8_lossy(marker)
+    );
+    let mut changed = data.to_vec();
+    for b in &mut changed[at..at + marker.len()] {
+        *b = if *b == b'Z' { b'Y' } else { b'Z' };
+    }
+    assert_eq!(
+        render0(&changed),
+        render0(data),
+        "{}",
+        String::from_utf8_lossy(marker)
+    );
+}
+
+/// A one-page document whose page draws `content` with `resources`.
+fn one_page(resources: &str, content: &[u8], extra: &[(u32, &str, Option<&[u8]>)]) -> Vec<u8> {
+    let mut b = PdfBuilder::new();
+    b.obj(1, CAT).obj(2, PAGES1).obj(
+        3,
+        &format!(
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 10 10] /Contents 4 0 R {resources} >>"
+        ),
+    );
+    b.stream(4, "", content);
+    for &(n, body, data) in extra {
+        match data {
+            Some(d) => b.stream(n, body, d),
+            None => b.obj(n, body),
+        };
+    }
+    b.end_revision("/Root 1 0 R");
+    b.finish()
+}
+
+#[test]
+fn p12_bytes_after_an_objects_value_are_unreferenced() {
+    let mut b = PdfBuilder::new();
+    b.obj(1, CAT).obj(2, PAGES1).obj(
+        3,
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 10 10] /Contents 4 0 R >>\n\
+         (SECRET-AFTER-VALUE) /SECRETNAME 42",
+    );
+    b.stream(4, "", RED);
+    b.end_revision("/Root 1 0 R");
+    let data = b.finish();
+    let inv = inventory(&data);
+    for m in [&b"SECRET-AFTER-VALUE"[..], b"SECRETNAME"] {
+        assert_unconsumed(&data, &inv, m);
+        let p = leaf_at(&inv, find(&data, m) as u64);
+        assert_eq!(p.disposition, Disposition::Unreferenced, "{p:?}");
+    }
+}
+
+#[test]
+fn p10_keys_an_image_reader_never_takes_are_skipped() {
+    let data = one_page(
+        "/Resources << /XObject << /Im1 7 0 R >> >>",
+        b"q 10 0 0 10 0 0 cm /Im1 Do Q",
+        &[(
+            7,
+            "/Type /XObject /Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceGray \
+             /BitsPerComponent 8 /T (SECRET-T) /M (SECRET-M) /V (SECRET-V) \
+             /Size (SECRET-SIZE) /ID (SECRET-ID)",
+            Some(b"\x40"),
+        )],
+    );
+    let inv = inventory(&data);
+    for m in [
+        &b"SECRET-T"[..],
+        b"SECRET-M",
+        b"SECRET-V",
+        b"SECRET-SIZE",
+        b"SECRET-ID",
+    ] {
+        assert_unconsumed(&data, &inv, m);
+    }
+    // The keys the image reader does take stay consumed.
+    let w = leaf_at(&inv, find(&data, b"/Width 1") as u64);
+    assert!(w.disposition.is_consumed(), "{w:?}");
+}
+
+#[test]
+fn p9_optional_content_configuration_is_read_only_in_part() {
+    let mut b = PdfBuilder::new();
+    b.obj(
+        1,
+        "<< /Type /Catalog /Pages 2 0 R /OCProperties << /OCGs [8 0 R] /D << \
+         /Name (SECRET-CONFIG-NAME) /Creator (SECRET-CREATOR) /Order [8 0 R] >> >> >>",
+    )
+    .obj(2, PAGES1)
+    .obj(
+        3,
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 10 10] /Contents 4 0 R >>",
+    );
+    b.stream(4, "", RED);
+    b.obj(
+        8,
+        "<< /Type /OCG /Name (SECRET-LAYER-NAME) /Usage << /User << /Type /Ind \
+         /Name (SECRET-USER-NAME) >> >> >>",
+    );
+    b.end_revision("/Root 1 0 R");
+    let data = b.finish();
+    let inv = inventory(&data);
+    for m in [
+        &b"SECRET-CONFIG-NAME"[..],
+        b"SECRET-CREATOR",
+        b"SECRET-LAYER-NAME",
+        b"SECRET-USER-NAME",
+    ] {
+        assert_unconsumed(&data, &inv, m);
+    }
+}
+
+#[test]
+fn p8_appearance_states_are_never_drawn() {
+    let mut b = PdfBuilder::new();
+    b.obj(1, CAT).obj(2, PAGES1).obj(
+        3,
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 10 10] /Contents 4 0 R /Annots [9 0 R] >>",
+    );
+    b.stream(4, "", b"");
+    b.obj(
+        9,
+        "<< /Type /Annot /Subtype /Widget /FT /Btn /Rect [0 0 10 10] /AS /On \
+         /AP << /N << /On 10 0 R /Off 11 0 R >> >> >>",
+    );
+    b.stream(
+        10,
+        "/Type /XObject /Subtype /Form /BBox [0 0 10 10]",
+        b"1 0 0 rg 0 0 10 10 re f % SECRET-ON-STATE",
+    );
+    b.stream(11, "/Type /XObject /Subtype /Form /BBox [0 0 10 10]", b"");
+    b.end_revision("/Root 1 0 R");
+    let data = b.finish();
+    let inv = inventory(&data);
+    assert_unconsumed(&data, &inv, b"SECRET-ON-STATE");
+    // `/AS` is never read.
+    let as_ = leaf_at(&inv, find(&data, b"/AS /On") as u64);
+    assert!(!as_.disposition.is_consumed(), "{as_:?}");
+}
+
+/// An 8×8 grey baseline JPEG.
+const GRAY8_JPEG: &[u8] = &[
+    0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x00, 0x00, 0x01,
+    0x00, 0x01, 0x00, 0x00, 0xff, 0xdb, 0x00, 0x43, 0x00, 0x03, 0x02, 0x02, 0x03, 0x02, 0x02, 0x03,
+    0x03, 0x03, 0x03, 0x04, 0x03, 0x03, 0x04, 0x05, 0x08, 0x05, 0x05, 0x04, 0x04, 0x05, 0x0a, 0x07,
+    0x07, 0x06, 0x08, 0x0c, 0x0a, 0x0c, 0x0c, 0x0b, 0x0a, 0x0b, 0x0b, 0x0d, 0x0e, 0x12, 0x10, 0x0d,
+    0x0e, 0x11, 0x0e, 0x0b, 0x0b, 0x10, 0x16, 0x10, 0x11, 0x13, 0x14, 0x15, 0x15, 0x15, 0x0c, 0x0f,
+    0x17, 0x18, 0x16, 0x14, 0x18, 0x12, 0x14, 0x15, 0x14, 0xff, 0xc0, 0x00, 0x0b, 0x08, 0x00, 0x08,
+    0x00, 0x08, 0x01, 0x01, 0x11, 0x00, 0xff, 0xc4, 0x00, 0x14, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x08, 0xff, 0xc4, 0x00, 0x14,
+    0x10, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0xff, 0xda, 0x00, 0x08, 0x01, 0x01, 0x00, 0x00, 0x3f, 0x00, 0x2a, 0x3f, 0xff, 0xd9,
+];
+
+#[test]
+fn p2_jpeg_segments_the_dct_decoder_skips_are_unconsumed() {
+    let payload = b"Exif\0\0SECRET-EXIF-GPS-SERIAL";
+    let mut j = GRAY8_JPEG[..2].to_vec();
+    j.extend_from_slice(&[0xFF, 0xE1]);
+    j.extend_from_slice(&((payload.len() + 2) as u16).to_be_bytes());
+    j.extend_from_slice(payload);
+    j.extend_from_slice(&[0xFF, 0xFE, 0x00, 0x10]);
+    j.extend_from_slice(b"SECRET-COMMENT");
+    j.extend_from_slice(&GRAY8_JPEG[2..]);
+    let data = one_page(
+        "/Resources << /XObject << /Im1 7 0 R >> >>",
+        b"q 10 0 0 10 0 0 cm /Im1 Do Q",
+        &[(
+            7,
+            "/Type /XObject /Subtype /Image /Width 8 /Height 8 /ColorSpace /DeviceGray \
+             /BitsPerComponent 8 /Filter /DCTDecode",
+            Some(&j),
+        )],
+    );
+    let inv = inventory(&data);
+    for m in [&b"SECRET-EXIF-GPS-SERIAL"[..], b"SECRET-COMMENT"] {
+        assert_unconsumed(&data, &inv, m);
+    }
+    let exif = leaf_at(&inv, find(&data, b"SECRET-EXIF") as u64);
+    assert_eq!(exif.label.as_deref(), Some("Exif"), "{exif:?}");
+    // The scan data is read: changing it changes the pixels.
+    let mut scan = data.clone();
+    let eoi = find(&data, b"\xFF\xD9");
+    scan[eoi - 2] ^= 0xFF;
+    assert_ne!(render0(&scan), render0(&data));
+}
+
+/// Catalog and Info in an unfiltered object stream, no xref (hayro repairs).
+fn objstm_catalog_pdf(filter: bool) -> Vec<u8> {
+    let members = [
+        "<< /Type /Catalog /Pages 3 0 R /OpenAction << /S /JavaScript \
+         /JS (app.alert('SECRET-JS-IN-OBJSTM')) >> >>",
+        "<< /Author (SECRET-AUTHOR-IN-OBJSTM) >>",
+    ];
+    let mut header = String::new();
+    let mut body = String::new();
+    for (k, m) in members.iter().enumerate() {
+        header.push_str(&format!("{} {} ", k + 1, body.len()));
+        body.push_str(m);
+        body.push(' ');
+    }
+    let stm = format!("{header}{body}").into_bytes();
+    let (stm, f) = if filter {
+        use std::io::Write as _;
+        let mut e = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+        e.write_all(&stm).unwrap();
+        (e.finish().unwrap(), "/Filter /FlateDecode ")
+    } else {
+        (stm, "")
+    };
+    let mut b = PdfBuilder::new();
+    let _ = write!(
+        b,
+        "5 0 obj\n<< /Type /ObjStm /N 2 /First {} {f}/Length {} >>\nstream\n",
+        header.len(),
+        stm.len()
+    );
+    b.raw(&stm).raw(b"\nendstream\nendobj\n");
+    b.raw(b"3 0 obj\n<< /Type /Pages /Kids [4 0 R] /Count 1 >>\nendobj\n");
+    b.raw(
+        b"4 0 obj\n<< /Type /Page /Parent 3 0 R /MediaBox [0 0 10 10] /Contents 6 0 R >>\nendobj\n",
+    );
+    let _ = write!(b, "6 0 obj\n<< /Length {} >>\nstream\n", RED.len());
+    b.raw(RED).raw(b"\nendstream\nendobj\n");
+    b.raw(b"trailer\n<< /Size 7 /Root 1 0 R /Info 2 0 R >>\n%%EOF\n");
+    b.finish()
+}
+
+#[test]
+fn p1_object_stream_members_unread_entries() {
+    // Unfiltered: members are parts with real offsets.
+    let data = objstm_catalog_pdf(false);
+    let inv = inventory(&data);
+    for m in [&b"SECRET-JS-IN-OBJSTM"[..], b"SECRET-AUTHOR-IN-OBJSTM"] {
+        assert_unconsumed(&data, &inv, m);
+    }
+    // Compressed: the object stream's detail names what is inside.
+    let data = objstm_catalog_pdf(true);
+    let inv = inventory(&data);
+    let stm = inv
+        .parts()
+        .iter()
+        .find(|p| p.parent.is_none() && p.label.as_deref() == Some("ObjStm"))
+        .expect("ObjStm part");
+    let d = detail(stm);
+    assert!(d.contains("1 Catalog: Type, OpenAction"), "{d}");
+    assert!(d.contains("2 Info keys: Author"), "{d}");
+    assert!(d.contains("compressed or encrypted"), "{d}");
+}
+
+#[test]
+fn p4_object_stream_members_need_no_per_member_lookup() {
+    use std::io::Write as _;
+    let n = 30_000;
+    let mut header = String::new();
+    let mut body = String::new();
+    for k in 0..n {
+        header.push_str(&format!("{} {} ", k + 10, body.len()));
+        body.push_str("<<>> ");
+    }
+    let stm = format!("{header}{body}");
+    let mut e = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+    e.write_all(stm.as_bytes()).unwrap();
+    let z = e.finish().unwrap();
+    let mut b = PdfBuilder::new();
+    b.raw(b"1 0 obj\n<< /Type /Catalog /Pages 3 0 R >>\nendobj\n");
+    let _ = write!(
+        b,
+        "5 0 obj\n<< /Type /ObjStm /N {n} /First {} /Filter /FlateDecode /Length {} >>\nstream\n",
+        header.len(),
+        z.len()
+    );
+    b.raw(&z).raw(b"\nendstream\nendobj\n");
+    b.raw(b"3 0 obj\n<< /Type /Pages /Kids [4 0 R] /Count 1 >>\nendobj\n");
+    b.raw(
+        b"4 0 obj\n<< /Type /Page /Parent 3 0 R /MediaBox [0 0 10 10] /Contents 6 0 R >>\nendobj\n",
+    );
+    let _ = write!(b, "6 0 obj\n<< /Length {} >>\nstream\n", RED.len());
+    b.raw(RED).raw(b"\nendstream\nendobj\n");
+    b.raw(b"trailer\n<< /Size 7 /Root 1 0 R >>\n%%EOF\n");
+    let data = b.finish();
+    // One lookup per member re-parsed the 30,000-entry table each time
+    // (minutes in a debug build); the table is now parsed once.
+    let t = std::time::Instant::now();
+    let inv = inventory(&data);
+    assert!(t.elapsed().as_secs() < 30, "took {:?}", t.elapsed());
+    let stm = inv
+        .parts()
+        .iter()
+        .find(|p| p.label.as_deref() == Some("ObjStm"))
+        .unwrap();
+    assert!(
+        detail(stm).contains(&format!("holding {n} objects")),
+        "{}",
+        detail(stm)
+    );
+}
+
+#[test]
+fn p5_the_lexer_stops_at_the_part_cap() {
+    let mut b = PdfBuilder::new();
+    b.obj(1, CAT).obj(2, PAGES1);
+    b.obj(
+        3,
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 10 10] /Contents 4 0 R >>",
+    );
+    b.stream(4, "", RED);
+    // Two parts per line (comment, line end): past the 1 Mi part cap.
+    for _ in 0..600_000 {
+        b.raw(b"%c\n");
+    }
+    b.end_revision("/Root 1 0 R");
+    let data = b.finish();
+    let r = PdfDecoderConfig::new().job().inventory(&data);
+    assert!(r.is_err(), "the part cap applies");
+}
+
+#[test]
+fn p11_the_stop_token_cancels_the_inventory() {
+    struct Cancelled;
+    impl zencodec::enough::Stop for Cancelled {
+        fn check(&self) -> Result<(), zencodec::enough::StopReason> {
+            Err(zencodec::enough::StopReason::Cancelled)
+        }
+    }
+    let data = one_page("", RED, &[]);
+    let r = PdfDecoderConfig::new()
+        .job()
+        .with_stop(zencodec::StopToken::new(Cancelled))
+        .inventory(&data);
+    assert!(r.is_err(), "a cancelled token stops the inventory");
+}
+
+#[test]
+fn p16_an_object_read_from_inside_a_comment_is_consumed() {
+    // The xref points one byte into a comment line holding the page tree.
+    let mut b = PdfBuilder::new();
+    b.obj(1, CAT);
+    let at = b.offset() + 1;
+    b.raw(b"%2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 /MediaBox [0 0 17 17] >> endobj\n");
+    b.rev.push((2, at));
+    b.obj(3, "<< /Type /Page /Parent 2 0 R /Contents 4 0 R >>");
+    b.stream(4, "", RED);
+    b.end_revision("/Root 1 0 R");
+    let data = b.finish();
+    let inv = inventory(&data);
+    let p = leaf_at(&inv, find(&data, b"17 17") as u64);
+    assert_eq!(p.disposition, Disposition::Structure, "{p:?}\n{inv}");
+    assert!(
+        detail(p).contains("hayro reads object 2 0 from here"),
+        "{p:?}"
+    );
+}
+
+#[test]
+fn p13_p15_details_name_what_is_not_distinguished() {
+    // P13: a content stream's internals.
+    let data = one_page(
+        "",
+        b"% SECRET-CONTENT-COMMENT\n1 0 0 rg 0 0 10 10 re f",
+        &[],
+    );
+    let inv = inventory(&data);
+    let p = leaf_at(&inv, find(&data, b"SECRET-CONTENT-COMMENT") as u64);
+    assert!(detail(p).contains("not distinguished"), "{p:?}");
+    // P15: an unfiltered image in a colour space the inventory does not
+    // resolve.
+    let data = one_page(
+        "/Resources << /XObject << /Im1 7 0 R >> >>",
+        b"q 10 0 0 10 0 0 cm /Im1 Do Q",
+        &[
+            (8, "/DeviceGray", None),
+            (
+                7,
+                "/Type /XObject /Subtype /Image /Width 1 /Height 1 /ColorSpace 8 0 R \
+                 /BitsPerComponent 8",
+                Some(b"\x40SECRET-IMAGE-TAIL"),
+            ),
+        ],
+    );
+    let inv = inventory(&data);
+    let at = find(&data, b"SECRET-IMAGE-TAIL") as u64;
+    assert!(
+        inv.parts()
+            .iter()
+            .any(|q| q.range.contains(&at) && detail(q).contains("not distinguished")),
+        "{inv}"
+    );
 }

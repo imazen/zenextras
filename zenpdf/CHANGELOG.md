@@ -31,7 +31,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   decoded", the decoded page searches its own and its ancestor nodes'
   resources, a page hayro finds by scanning objects is drawn, and a job the
   decoder rejects before drawing (page geometry, output size, limits)
-  draws no page (eed7d2b). Fuzz target `inventory`,
+  draws no page (eed7d2b). Review round 1 (9c2b7c7, 07dd716): object-stream
+  members are inspected (unread entries listed in the stream's detail,
+  real parts when the stream is stored as is) and read through the
+  decryptor; embedded JPEGs' APPn and COM segments are child parts;
+  appearance states, optional-content configuration and keys a
+  dictionary's reader never takes (per dictionary kind) are unconsumed;
+  bytes after an object's value are a child; object-stream lookups are
+  bounded, the lexer stops at the part cap, and the stop token is
+  honoured. Fuzz target `inventory`,
   regression seeds, mutool/exiftool oracle (`just inventory-oracle DIR`).
 
 ### Fixed

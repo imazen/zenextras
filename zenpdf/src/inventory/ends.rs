@@ -17,6 +17,8 @@ pub(crate) enum End {
 
 /// hayro's `MAX_DECODED_STREAM_BYTES`: a stream that inflates past it is
 /// rejected.
+use core::ops::Range;
+
 const MAX_DECODED: u64 = 512 << 20;
 
 /// The internal end of `data` under `filter` (the first filter in the
@@ -239,6 +241,51 @@ pub(crate) fn jpeg_end(d: &[u8]) -> Option<usize> {
             _ => i = i.checked_add(seg_len(i)?)?,
         }
     }
+}
+
+/// APPn (other than APP14) and COM segments of a JPEG stream, marker
+/// included, in order. hayro hands the stream to zune-jpeg and uses only
+/// the pixels and the component count; APP14 (Adobe) decides the colour
+/// transform, every other application segment and comment reaches no one.
+pub(crate) fn jpeg_segments(d: &[u8]) -> Vec<(u8, Range<usize>)> {
+    let mut out = Vec::new();
+    if !d.starts_with(&[0xFF, 0xD8]) {
+        return out;
+    }
+    let mut i = 2usize;
+    let seg_len = |at: usize| -> Option<usize> {
+        let n = usize::from(u16::from_be_bytes([*d.get(at)?, *d.get(at + 1)?]));
+        (n >= 2).then_some(n)
+    };
+    while out.len() < 4096 {
+        let Some(p) = d.get(i..).and_then(|r| r.iter().position(|&b| b == 0xFF)) else {
+            break;
+        };
+        i += p;
+        while d.get(i) == Some(&0xFF) {
+            i += 1;
+        }
+        let Some(&m) = d.get(i) else {
+            break;
+        };
+        let marker_at = i - 1;
+        i += 1;
+        match m {
+            0xD9 | 0xDA => break,
+            0x00 | 0x01 | 0xD0..=0xD7 => {}
+            _ => {
+                let Some(n) = seg_len(i) else {
+                    break;
+                };
+                let end = i.saturating_add(n).min(d.len());
+                if matches!(m, 0xE0..=0xED | 0xEF | 0xFE) {
+                    out.push((m, marker_at..end));
+                }
+                i = end;
+            }
+        }
+    }
+    out
 }
 
 #[cfg(test)]
