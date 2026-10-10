@@ -394,7 +394,9 @@ impl<'a> Lexer<'a> {
             }
             match tok {
                 Tok::DictOpen => {
-                    if depth == 0 && dict.is_none() {
+                    // Only a dictionary that is the object's first value:
+                    // hayro's `IndirectObject::read` reads one value.
+                    if depth == 0 && dict.is_none() && values == 1 {
                         dict_start = Some(i);
                     }
                     depth = depth.saturating_add(1);
