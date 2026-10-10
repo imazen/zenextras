@@ -994,3 +994,95 @@ fn r3_2_packed_header_slack_is_unreferenced() {
         assert_eq!(read.range, at - 2..at, "ppm={ppm}: {i}");
     }
 }
+
+// ───────────────────────── review round 4 ─────────────────────────
+
+/// The tile data of `f` (after SOD) must be one unverified part naming `cap`,
+/// not consumed: a per-tile cap stopped the walk before any packet was
+/// checked (review round 4; the R3-1 rule extended to every cap).
+fn assert_cap_unverified(f: &[u8], cap: &str) {
+    let i = inv(f);
+    let sod = parts_with(&i, PartTag::Marker(0x93))[0].range.end;
+    let p = leaf_at(&i, sod);
+    assert_eq!(p.disposition, Disposition::Malformed, "{cap}: {i}");
+    let d = p.detail.as_deref().unwrap();
+    assert!(
+        d.starts_with(cap) && d.contains("packet structure not verified"),
+        "{d}"
+    );
+    let text = find(f, b"CAP-SLACK") as u64;
+    assert!(!leaf_at(&i, text).disposition.is_consumed(), "{i}");
+}
+
+const CAP_SLACK: &[u8] = b"CAP-SLACK: owner Jane Doe, serial 12345";
+
+/// One precinct with 1024 x 1024 code-blocks: over the per-precinct cap.
+#[test]
+fn r4_precinct_block_cap_leaves_bytes_unverified() {
+    let c = Cs {
+        xsiz: 4096,
+        ysiz: 4096,
+        xt: 4096,
+        yt: 4096,
+        csiz: 1,
+        nlev: 0,
+        prog: 0,
+        layers: 1,
+        scod: 0,
+        prec: vec![],
+    };
+    let mut d = vec![0x80];
+    d.extend_from_slice(CAP_SLACK);
+    assert_cap_unverified(
+        &build_cs(&c, &[(0, d)]),
+        "precinct has more code-blocks than the walker's cap",
+    );
+}
+
+/// Two components of 512 x 512 code-blocks each: the second goes over the
+/// per-tile code-block state cap.
+#[test]
+fn r4_tile_block_state_cap_leaves_bytes_unverified() {
+    let c = Cs {
+        xsiz: 2048,
+        ysiz: 2048,
+        xt: 2048,
+        yt: 2048,
+        csiz: 2,
+        nlev: 0,
+        prog: 0,
+        layers: 1,
+        scod: 0,
+        prec: vec![],
+    };
+    let mut d = vec![0x80, 0x80];
+    d.extend_from_slice(CAP_SLACK);
+    assert_cap_unverified(
+        &build_cs(&c, &[(0, d)]),
+        "tile exceeds the walker's code-block state cap",
+    );
+}
+
+/// RPCL with 2^20 one-pixel precincts: over the position-progression
+/// element cap.
+#[test]
+fn r4_position_element_cap_leaves_bytes_unverified() {
+    let c = Cs {
+        xsiz: 1024,
+        ysiz: 1024,
+        xt: 1024,
+        yt: 1024,
+        csiz: 1,
+        nlev: 0,
+        prog: 2,
+        layers: 1,
+        scod: 1,
+        prec: vec![0x00],
+    };
+    let mut d = vec![0x00];
+    d.extend_from_slice(CAP_SLACK);
+    assert_cap_unverified(
+        &build_cs(&c, &[(0, d)]),
+        "too many precincts for a position-based progression",
+    );
+}

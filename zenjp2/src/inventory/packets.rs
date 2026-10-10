@@ -15,7 +15,8 @@
 //! caps; anything it cannot follow with those bounds (packed packet headers,
 //! very large tiles, geometry hayro itself cannot handle) returns
 //! [`Fail::Unsupported`] and the caller reports "unreferenced tail not
-//! detected" instead of guessing.
+//! detected" instead of guessing; a cap or the work budget returns
+//! [`Fail::Cap`] and the caller reports the bytes as unverified (`Malformed`).
 
 use alloc::collections::BTreeMap;
 use alloc::format;
@@ -117,7 +118,14 @@ pub(super) struct PartOut {
 
 pub(super) enum Fail {
     Parse(&'static str),
+    /// A resource cap or the file's work budget stopped the walk before the
+    /// packet structure was checked: the bytes are not vouched for.
+    Cap(&'static str),
     Unsupported(String),
+}
+
+fn cap<T>(why: &'static str) -> Result<T, Fail> {
+    Err(Fail::Cap(why))
 }
 
 fn unsupported<T>(why: impl Into<String>) -> Result<T, Fail> {
@@ -125,13 +133,13 @@ fn unsupported<T>(why: impl Into<String>) -> Result<T, Fail> {
 }
 
 /// Reason [`analyze`] returns once the file's work budget is spent.
-pub(super) const BUDGET_EXHAUSTED: &str = "work budget for the whole file is used up";
+pub(super) const BUDGET_EXHAUSTED: &str = "work budget exhausted";
 
 /// Take `n` units from the file's work budget.
 fn spend(budget: &mut u64, n: u64) -> Result<(), Fail> {
     if *budget < n {
         *budget = 0;
-        return unsupported(BUDGET_EXHAUSTED);
+        return cap(BUDGET_EXHAUSTED);
     }
     *budget -= n;
     Ok(())
@@ -257,11 +265,11 @@ impl TagNode {
 fn push_node(nodes: &mut Vec<TagNode>, n: TagNode, budget: &mut u64) -> Result<u32, Fail> {
     spend(budget, 1)?;
     if nodes.len() >= MAX_NODES {
-        return unsupported("tag-tree node cap reached");
+        return cap("tag-tree node cap reached");
     }
     nodes
         .try_reserve(1)
-        .map_err(|_| Fail::Unsupported("out of memory".into()))?;
+        .map_err(|_| Fail::Cap("out of memory"))?;
     let idx = nodes.len() as u32;
     nodes.push(n);
     Ok(idx)
@@ -420,7 +428,7 @@ impl<'a> Ctx<'a> {
         }
         let mut res = Vec::new();
         res.try_reserve(ncomp)
-            .map_err(|_| Fail::Unsupported("out of memory".into()))?;
+            .map_err(|_| Fail::Cap("out of memory"))?;
         let mut max_res = 0u8;
         for (c, comp) in cfg.comps.iter().enumerate() {
             let (hr, vr) = (u64::from(geo.comps[c].0), u64::from(geo.comps[c].1));
@@ -440,7 +448,7 @@ impl<'a> Ctx<'a> {
             max_res = max_res.max(nres as u8);
             let mut v = Vec::new();
             v.try_reserve(nres)
-                .map_err(|_| Fail::Unsupported("out of memory".into()))?;
+                .map_err(|_| Fail::Cap("out of memory"))?;
             for r in 0..nres {
                 let sh = u32::from(comp.p.nlev) - r as u32;
                 let den = 1u64 << sh;
@@ -562,7 +570,7 @@ impl<'a> Ctx<'a> {
         let bx = axis(prx0, prx1, sb.x0, sb.x1, cbw)?;
         let by = axis(pry0, pry1, sb.y0, sb.y1, cbh)?;
         if bx.saturating_mul(by) > MAX_BLOCKS {
-            return unsupported("precinct has more code-blocks than the walker's cap");
+            return cap("precinct has more code-blocks than the walker's cap");
         }
         Ok((bx as u32, by as u32))
     }
@@ -806,7 +814,7 @@ impl Ctx<'_> {
         let ri = &self.res[c][r];
         let n = ri.nx.saturating_mul(ri.ny);
         if (out.len() as u64).saturating_add(n) > MAX_ELEMS {
-            return unsupported("too many precincts for a position-based progression");
+            return cap("too many precincts for a position-based progression");
         }
         let (ppx, ppy) = (u32::from(ri.ppx), u32::from(ri.ppy));
         if r > 0 && (ppx == 0 || ppy == 0) {
@@ -838,7 +846,7 @@ impl Ctx<'_> {
             r_y = next_mult(r_y, step_y)?;
         }
         out.try_reserve(n as usize)
-            .map_err(|_| Fail::Unsupported("out of memory".into()))?;
+            .map_err(|_| Fail::Cap("out of memory"))?;
         for y in 0..ri.ny {
             let mut cur_x = r_x;
             for x in 0..ri.nx {
@@ -890,14 +898,12 @@ impl State<'_> {
         }
         let (w, h) = ctx.blocks(c, r, b, p)?;
         let n = u64::from(w) * u64::from(h);
-        if self.precincts.len() >= MAX_STATES || self.blocks_total.saturating_add(n) > MAX_BLOCKS {
-            return unsupported("tile exceeds the walker's code-block state cap");
-        }
+        state_room(self.precincts.len(), self.blocks_total, n)?;
         self.blocks_total += n;
         let mut blocks = Vec::new();
         blocks
             .try_reserve_exact(n as usize)
-            .map_err(|_| Fail::Unsupported("out of memory".into()))?;
+            .map_err(|_| Fail::Cap("out of memory"))?;
         for _ in 0..n {
             blocks.push(Block {
                 included: false,
@@ -919,6 +925,23 @@ impl State<'_> {
         );
         Ok(())
     }
+}
+
+/// Per-tile state caps: precinct-band entries and code-blocks.
+fn state_room(states: usize, blocks_total: u64, n: u64) -> Result<(), Fail> {
+    if states >= MAX_STATES || blocks_total.saturating_add(n) > MAX_BLOCKS {
+        return cap("tile exceeds the walker's code-block state cap");
+    }
+    Ok(())
+}
+
+/// One work unit against the per-tile cap.
+fn tick(ops: &mut u64) -> Result<(), Fail> {
+    *ops += 1;
+    if *ops > MAX_OPS {
+        return cap("work cap reached");
+    }
+    Ok(())
 }
 
 fn segment_for_bypass(pass: u8) -> u8 {
@@ -947,10 +970,7 @@ fn packet<'d>(
         .comps
         .get(c)
         .ok_or(Fail::Parse("component out of range"))?;
-    st.ops += 1;
-    if st.ops > MAX_OPS {
-        return unsupported("work cap reached");
-    }
+    tick(&mut st.ops)?;
     spend(st.budget, 1)?;
 
     // SOP comes from the body reader, EPH from the header reader.
@@ -986,10 +1006,7 @@ fn packet<'d>(
             } = st;
             let ps = precincts.get_mut(&key).ok_or(Fail::Parse("state"))?;
             for i in 0..ps.blocks.len() {
-                *ops += 1;
-                if *ops > MAX_OPS {
-                    return unsupported("work cap reached");
-                }
+                tick(ops)?;
                 spend(budget, 1)?;
                 let (bx, by) = (
                     (i as u64 % u64::from(ps.w)) as u32,
@@ -1068,7 +1085,7 @@ fn packet<'d>(
                     let bits = (l_block.wrapping_add(passes.ilog2())) as u8;
                     let len = rd.bits(bits).ok_or(Fail::Parse("segment length"))?;
                     lens.try_reserve(1)
-                        .map_err(|_| Fail::Unsupported("out of memory".into()))?;
+                        .map_err(|_| Fail::Cap("out of memory"))?;
                     lens.push(len);
                     Ok(())
                 };
@@ -1126,11 +1143,47 @@ pub(super) fn analyze(
     tile_idx: u32,
     parts: &[TpIn],
     budget: &mut u64,
-) -> Result<Vec<PartOut>, String> {
-    run(data, geo, cfg, tile_idx, parts, budget).map_err(|f| match f {
-        Fail::Unsupported(s) => s,
-        Fail::Parse(s) => format!("walk error: {s}"),
-    })
+) -> Result<Vec<PartOut>, Unwalked> {
+    run(data, geo, cfg, tile_idx, parts, budget).map_err(Unwalked::from)
+}
+
+impl From<Fail> for Unwalked {
+    fn from(f: Fail) -> Self {
+        match f {
+            Fail::Unsupported(s) => Unwalked::other(s),
+            Fail::Parse(s) => Unwalked::other(format!("walk error: {s}")),
+            Fail::Cap(s) => Unwalked {
+                why: s.into(),
+                cap: true,
+            },
+        }
+    }
+}
+
+/// Why a tile was not walked.
+#[derive(Clone)]
+pub(super) struct Unwalked {
+    pub why: String,
+    /// A resource cap or the work budget, not the file's geometry: the
+    /// caller must not report the tile's bytes as consumed.
+    pub cap: bool,
+}
+
+impl Unwalked {
+    pub fn other(why: impl Into<String>) -> Self {
+        Self {
+            why: why.into(),
+            cap: false,
+        }
+    }
+
+    /// Detail for bytes left unverified by a cap.
+    pub fn cap_detail(&self) -> String {
+        format!(
+            "{}: packet structure not verified; decode reads these bytes as tile data",
+            self.why
+        )
+    }
 }
 
 fn run(
@@ -1154,7 +1207,7 @@ fn run(
     };
     let mut out = Vec::new();
     out.try_reserve(parts.len())
-        .map_err(|_| Fail::Unsupported("out of memory".into()))?;
+        .map_err(|_| Fail::Cap("out of memory"))?;
     let slice = |r: &Range<u64>| -> Result<&[u8], Fail> {
         data.get(r.start as usize..r.end as usize)
             .ok_or_else(|| Fail::Unsupported("tile-part outside the input".into()))
@@ -1189,7 +1242,7 @@ fn run(
             // body bytes after the last packet are never read.
             let mut hdrs = Vec::new();
             hdrs.try_reserve_exact(part.headers.len())
-                .map_err(|_| Fail::Unsupported("out of memory".into()))?;
+                .map_err(|_| Fail::Cap("out of memory"))?;
             for h in &part.headers {
                 hdrs.push(Rd::new(slice(h)?));
             }
@@ -1215,7 +1268,7 @@ fn run(
             };
             headers_used
                 .try_reserve_exact(hdrs.len())
-                .map_err(|_| Fail::Unsupported("out of memory".into()))?;
+                .map_err(|_| Fail::Cap("out of memory"))?;
             for (h, r) in part.headers.iter().zip(&hdrs) {
                 headers_used.push(h.start + r.used_bytes() as u64);
             }
@@ -1229,4 +1282,71 @@ fn run(
         });
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn is_cap<T>(r: Result<T, Fail>) -> bool {
+        matches!(r, Err(Fail::Cap(_)))
+    }
+
+    /// Every non-geometry limit reports `Fail::Cap`, which the caller turns
+    /// into unverified (`Malformed`) bytes; these two are not reachable from a
+    /// file while the block, state and budget caps hold, so they are checked
+    /// here directly (review round 4).
+    #[test]
+    fn node_cap_is_a_cap() {
+        let mut nodes = Vec::new();
+        nodes.resize_with(MAX_NODES, || TagNode {
+            w: 1,
+            h: 1,
+            value: 0,
+            level: 0,
+            init: false,
+            ch: [NONE; 4],
+        });
+        let mut budget = WORK_BUDGET;
+        let n = TagNode {
+            w: 1,
+            h: 1,
+            value: 0,
+            level: 0,
+            init: false,
+            ch: [NONE; 4],
+        };
+        assert!(is_cap(push_node(&mut nodes, n, &mut budget)));
+    }
+
+    #[test]
+    fn work_cap_is_a_cap() {
+        let mut ops = MAX_OPS;
+        assert!(is_cap(tick(&mut ops)));
+        let mut ops = 0;
+        assert!(tick(&mut ops).is_ok());
+    }
+
+    #[test]
+    fn state_caps_are_caps() {
+        assert!(is_cap(state_room(MAX_STATES, 0, 1)));
+        assert!(is_cap(state_room(0, MAX_BLOCKS, 1)));
+        assert!(state_room(0, 0, MAX_BLOCKS).is_ok());
+    }
+
+    #[test]
+    fn budget_is_a_cap() {
+        let mut b = 3;
+        assert!(is_cap(spend(&mut b, 4)));
+        assert_eq!(b, 0);
+    }
+
+    #[test]
+    fn caps_are_reported_as_caps() {
+        let f = Unwalked::from;
+        let u = f(Fail::Cap("work cap reached"));
+        assert!(u.cap);
+        assert!(u.cap_detail().contains("packet structure not verified"));
+        assert!(!f(Fail::Unsupported("progression order above 4".into())).cap);
+    }
 }

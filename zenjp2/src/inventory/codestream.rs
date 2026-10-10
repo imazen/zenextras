@@ -33,11 +33,6 @@ const SOT: u8 = 0x90;
 const SOD: u8 = 0x93;
 const EOC: u8 = 0xD9;
 
-/// Detail on tile data (and packed headers) left unwalked when the file's
-/// packet-walk work budget runs out.
-const BUDGET_DETAIL: &str =
-    "work budget exhausted: packet structure not verified; decode reads these bytes as tile data";
-
 /// hayro's `BITPLANE_BIT_SIZE` (31): larger precisions fail the SIZ parse.
 const MAX_PRECISION: u8 = 31;
 
@@ -348,7 +343,7 @@ enum HdrUse {
     Read { end: u64, failed: bool },
     /// Not walked, with the reason (and whether the tile is past a
     /// decode-fatal point).
-    NotWalked { why: String, dead: bool },
+    NotWalked { why: packets::Unwalked, dead: bool },
 }
 
 /// State of one codestream walk.
@@ -1050,18 +1045,25 @@ impl Walker<'_> {
                     }
                 })
                 .collect();
-            let result: Result<Vec<packets::PartOut>, String> = if acc.parts.iter().any(|t| t.dead)
+            let result: Result<Vec<packets::PartOut>, packets::Unwalked> = if acc
+                .parts
+                .iter()
+                .any(|t| t.dead)
             {
-                Err("the decode fails earlier in the codestream".into())
+                Err(packets::Unwalked::other(
+                    "the decode fails earlier in the codestream",
+                ))
             } else if let (Some(geo), Some(cod)) = (&geo, &cod) {
                 match tile_cfg(geo, cod, &coc, &acc.ovr) {
                     Some(cfg) => {
                         packets::analyze(self.data, geo, &cfg, tile_idx, &ranges, &mut self.budget)
                     }
-                    None => Err("tile configuration does not fit the component count".into()),
+                    None => Err(packets::Unwalked::other(
+                        "tile configuration does not fit the component count",
+                    )),
                 }
             } else {
-                Err("no usable SIZ/COD".into())
+                Err(packets::Unwalked::other("no usable SIZ/COD"))
             };
             for (i, tp) in acc.parts.iter().enumerate() {
                 let out = result.as_ref().ok().map(|v| &v[i]);
@@ -1136,8 +1138,8 @@ impl Walker<'_> {
                     }
                 }
                 Some(HdrUse::NotWalked { why, dead }) => {
-                    let part = if why == packets::BUDGET_EXHAUSTED {
-                        field(s.clone(), Disposition::Malformed, BUDGET_DETAIL)
+                    let part = if why.cap {
+                        field(s.clone(), Disposition::Malformed, &why.cap_detail())
                     } else if *dead {
                         field(
                             s.clone(),
@@ -1148,7 +1150,10 @@ impl Walker<'_> {
                         field(
                             s.clone(),
                             Disposition::Structure,
-                            &format!("packet headers; unreferenced tail not detected: {why}"),
+                            &format!(
+                                "packet headers; unreferenced tail not detected: {}",
+                                why.why
+                            ),
                         )
                     };
                     self.push(id, part)?;
@@ -1229,14 +1234,16 @@ impl Walker<'_> {
         parent: Option<PartId>,
         tp: &Tp,
         out: Option<&packets::PartOut>,
-        why_not: Option<&String>,
+        why_not: Option<&packets::Unwalked>,
     ) -> Res {
         let Range { start, end } = tp.data.clone();
         match out {
             None => {
                 // Unreferenced tail not detected. For Psot = 0 the closing EOC
                 // is still split off, as a packet can't contain 0xFFD9.
-                let why = why_not.map_or("unknown", String::as_str);
+                let why = why_not
+                    .cloned()
+                    .unwrap_or_else(|| packets::Unwalked::other("unknown"));
                 let mut data_end = end;
                 let mut eoc = None;
                 if tp.psot0 {
@@ -1246,15 +1253,16 @@ impl Walker<'_> {
                         eoc = Some(data_end);
                     }
                 }
-                // Only adversarial input spends the file's work budget, and the
-                // budget is spent before a packet of these bytes is checked:
-                // report them as not consumed rather than vouch for them.
-                let (d, detail) = if why == packets::BUDGET_EXHAUSTED {
-                    (Disposition::Malformed, String::from(BUDGET_DETAIL))
+                // A cap or the work budget stopped the walk before any packet
+                // of these bytes was checked; only adversarial input gets there,
+                // so report them as unverified rather than vouch for them.
+                // Geometry hayro itself cannot handle keeps the old fallback.
+                let (d, detail) = if why.cap {
+                    (Disposition::Malformed, why.cap_detail())
                 } else {
                     (
                         Disposition::ImageData,
-                        format!("packet data; unreferenced tail not detected: {why}"),
+                        format!("packet data; unreferenced tail not detected: {}", why.why),
                     )
                 };
                 // An EOC at the very start of the data leaves nothing to push.
