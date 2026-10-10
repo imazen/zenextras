@@ -384,7 +384,7 @@ const SHALLOW: usize = 200;
 /// usvg rejects anything nested deeper than [`MAX_USVG_DEPTH`] in content
 /// it converts; deeper nesting inside content it skips would parse, but
 /// roxmltree recurses once per level, so the decoder's own parse
-/// overflows a normal thread stack long before this.
+/// overflows a normal thread stack long before this (zenextras#39).
 const MAX_PARSE_NESTING: usize = 8192;
 
 /// Stack for parsing documents nested deeper than [`SHALLOW`].
@@ -693,7 +693,7 @@ fn parse_prechecks(d: &[u8], bound: Option<usize>) -> Result<&str, String> {
             return Err(format!(
                 "elements nest {n} deep; usvg rejects nesting past {} levels in what it \
                  converts, and the decoder's parser recurses once per level (the inventory \
-                 does not parse it)",
+                 does not parse it; zenextras#39)",
                 MAX_USVG_DEPTH + 1
             ));
         }

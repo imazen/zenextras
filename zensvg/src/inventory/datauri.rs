@@ -153,8 +153,12 @@ fn body(v: &str) -> Option<(Range<usize>, bool)> {
     Some((comma + 1..end, base64))
 }
 
+/// Per decoded byte, its source characters (`None` when the payload is not
+/// valid base64); the fragment range; base64.
+type PositionMap = (Option<Vec<Range<usize>>>, Option<Range<usize>>, bool);
+
 /// Per decoded byte, its source characters; the fragment range; base64.
-fn position_map(v: &str) -> (Option<Vec<Range<usize>>>, Option<Range<usize>>, bool) {
+fn position_map(v: &str) -> PositionMap {
     let Some((body, base64)) = body(v) else {
         return (None, None, false);
     };

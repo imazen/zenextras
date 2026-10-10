@@ -606,7 +606,7 @@ fn a28_decoder_limits_reject_but_inventory_claims_consumed() {
     let limits = ResourceLimits::none().with_max_pixels(10_000);
     let job_inv = SvgDecoderConfig::new()
         .job()
-        .with_limits(limits.clone())
+        .with_limits(limits)
         .inventory(&d)
         .unwrap()
         .unwrap();
