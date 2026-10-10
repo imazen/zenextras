@@ -61,6 +61,7 @@ static DECODE_DESCRIPTORS: &[PixelDescriptor] = &[
 static JP2_DECODE_CAPS: DecodeCapabilities = DecodeCapabilities::new()
     .with_icc(true)
     .with_cheap_probe(true)
+    .with_inventory(true)
     .with_native_gray(true)
     .with_native_alpha(true)
     .with_enforces_max_pixels(true)
@@ -210,6 +211,17 @@ impl<'a> DecodeJob<'a> for Jp2DecodeJob {
         let mut info = image_to_info(&image);
         apply_policy_to_info(&mut info, self.policy.as_ref());
         Ok(info)
+    }
+
+    fn inventory(
+        &self,
+        data: &[u8],
+    ) -> core::result::Result<Option<zencodec::inventory::Inventory>, Self::Error> {
+        // Structural walk only; no pixels are decoded. The part cap is the
+        // only failure: malformed input becomes `Malformed` parts.
+        crate::inventory::inventory(data)
+            .map(Some)
+            .map_err(|e| Jp2Error::OutOfMemory(alloc::format!("inventory: {e}")).into())
     }
 
     fn output_info(&self, data: &[u8]) -> core::result::Result<OutputInfo, Self::Error> {
@@ -558,6 +570,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)] // ComputeEnvironment::new is deprecated on the zencodec feat/inventory branch
     fn estimate_decode_resources_scales_with_output() {
         use zencodec::estimate::{ComputeEnvironment, ImageCharacteristics, ThreadingInformation};
         let img = ImageCharacteristics::new(1000, 1000, PixelDescriptor::RGBA8_SRGB);

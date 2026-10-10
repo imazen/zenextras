@@ -86,3 +86,14 @@ arm-jp2-fixtures source destination:
         MAGICK_THREAD_LIMIT=4 nice -n 19 magick "{{destination}}/cid22-${side}.png" -alpha off -depth 8 "rgb:{{destination}}/cid22-${side}.rgb"
         nice -n 19 opj_compress -i "{{destination}}/cid22-${side}.png" -o "{{destination}}/cid22-${side}.jp2" -r 1 -threads 4
     done
+
+# zenjp2 inventory: corpus conformance plus the exiftool cross-check.
+# INVENTORY_ORACLE_DIR defaults to the OpenJPEG/serenity files listed in hayro-jpeg2000's
+# manifests (codec-corpus has no JPEG 2000 set). Fetch them with zenjp2/scripts/fetch-jp2-corpus.py.
+inventory-oracle dir="$HOME/tmp/jp2-corpus/hayro-assets":
+    INVENTORY_ORACLE_DIR="{{dir}}" INVENTORY_ORACLE_EXIFTOOL="$(command -v exiftool)" TMPDIR="$HOME/tmp" \
+        cargo test --release -p zenjp2 --test inventory_oracle -- --nocapture --test-threads=1
+
+# zenjp2 inventory fuzz target (libFuzzer; seconds default 600)
+fuzz-inventory seconds="600":
+    cd zenjp2 && cargo +nightly fuzz run inventory -- -max_total_time={{seconds}}

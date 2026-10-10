@@ -49,6 +49,15 @@ member entries here reference those files.
 
 #### Added
 
+- **`zenjp2`: structural inventory** (`DecodeJob::inventory`, `with_inventory(true)`;
+  zencodec `feat/inventory`, imazen/zencodec#133). Maps every byte of a JP2 file
+  or bare codestream: boxes (jp2h children, res, uinf, uuid, xml, asoc, free,
+  unknown) and codestream marker segments, tile-parts and EOC, with dispositions
+  taken from hayro-jpeg2000 0.3.5 behaviour (6fb2a8a6). Review round 1 (748ae720, 4507fab3, be3c4562, 3e077806): marker segments follow hayro's cursor instead of the length fields, a packet-header walk marks bytes after the last packet as unreferenced (not for packed PPM/PPT headers), colour boxes follow hayro's channel-count repair, and zenjp2's zencodec floor is 0.1.27. Review round 2 (032314ee, 2019c083, 94709a3c, e4e5822f): no empty data part when an unwalked tile-part starts with EOC, tag trees built without recursing into empty quadrants, one packet-walk work budget per file, and packed packet headers (PPM/PPT) are walked so body bytes after the last packet are unreferenced. Review round 3 (f5512247, 51dcec2a): tiles left unwalked once the work budget is spent are reported as unconsumed (Malformed) instead of image data, and PPM/PPT payload bytes after the last header bit hayro reads are unreferenced. Round 4 (4d3902e2): every walk cap (code-blocks, block state, progression elements, tag-tree nodes, work units, allocation failure) reports the tile's bytes as unverified (Malformed), not image data. `[patch.crates-io]`
+  points zencodec and zencodec-testkit at the branch; swap for the released
+  versions before merge. Cross-checked against `exiftool -v3` on 169 OpenJPEG and
+  serenity files (`just inventory-oracle`), libFuzzer target `zenjp2/fuzz` `inventory`.
+
 - **`zenexr`**: OpenEXR wrapper around the Rust `exr` crate, with zen pixel
   buffers, source metadata, limits and cancellation. See
   [crate history](zenexr/CHANGELOG.md) and
