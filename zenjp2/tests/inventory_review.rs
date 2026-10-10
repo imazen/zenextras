@@ -579,3 +579,23 @@ fn f5_second_tile_part_is_walked_when_the_first_is_fine() {
     assert_eq!(tail.disposition, Disposition::Unreferenced, "{i}");
     assert_eq!(tail.range.start, second_sot + 14, "{i}");
 }
+
+// ───────────────────────── review round 2 ─────────────────────────
+
+/// R2-1: with the walk skipped (PPM present, or an invalid SIZ), a Psot = 0
+/// tile-part whose data starts with EOC must not produce an empty part.
+#[test]
+fn r2_1_no_empty_part_when_the_data_starts_with_eoc() {
+    let sot = find(J2K, &[0xFF, 0x90]);
+    let mut f = J2K[..sot].to_vec();
+    f.extend(seg(0x60, &[0])); // empty PPM
+    f.extend_from_slice(&[0xFF, 0x90, 0x00, 0x0A, 0, 0, 0, 0, 0, 0, 0, 1]);
+    f.extend_from_slice(&[0xFF, 0xD9]);
+    let i = inv(&f);
+    assert!(i.parts().iter().all(|p| !p.is_empty()), "{i}");
+    assert_eq!(
+        parts_with(&i, PartTag::Marker(0xD9)).len(),
+        1,
+        "the EOC is still reported: {i}"
+    );
+}

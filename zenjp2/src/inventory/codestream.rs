@@ -1015,13 +1015,16 @@ impl Walker<'_> {
                         eoc = Some(data_end);
                     }
                 }
-                self.scan_part(
-                    parent,
-                    tp,
-                    start..data_end,
-                    Disposition::ImageData,
-                    format!("packet data; unreferenced tail not detected: {why}"),
-                )?;
+                // An EOC at the very start of the data leaves nothing to push.
+                if start < data_end {
+                    self.scan_part(
+                        parent,
+                        tp,
+                        start..data_end,
+                        Disposition::ImageData,
+                        format!("packet data; unreferenced tail not detected: {why}"),
+                    )?;
+                }
                 if let Some(e) = eoc {
                     self.eoc(parent, e)?;
                 }
