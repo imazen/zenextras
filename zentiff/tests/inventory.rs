@@ -2308,3 +2308,180 @@ fn values_past_the_overlap_cap_stay_unknown() {
         }
     }
 }
+
+/// Review round 4, probe AA: a SubIFD table the decoder skips lies inside
+/// the XMP value. The caller receives every XMP byte, so the XMP value
+/// keeps them all and the table is only noted.
+#[test]
+fn skipped_table_inside_xmp_leaves_the_xmp_whole() {
+    let mut w = W::new();
+    let strip = w.put(&[1, 2, 3, 4]);
+    let x = w.put(b"<x:xmpmeta>PII");
+    let table = w.pos();
+    w.b.extend_from_slice(&1u16.to_le_bytes());
+    w.b.extend_from_slice(&254u16.to_le_bytes());
+    w.b.extend_from_slice(&4u16.to_le_bytes());
+    w.b.extend_from_slice(&1u32.to_le_bytes());
+    w.b.extend_from_slice(b"PII!");
+    w.b.extend_from_slice(&0u32.to_le_bytes());
+    w.put(b"</x:xmpmeta><?xpacket end=\"w\"?>TAIL-AFTER-PACKET");
+    let xlen = w.pos() - x;
+    let mut e = page(strip);
+    e.push(long(330, table));
+    e.push(at(700, 7, xlen, x));
+    let ifd0 = w.ifd(&e, 0);
+    w.set_ifd0(ifd0);
+    let data = w.b;
+    let inv = inventory(&data);
+    inv.validate().unwrap();
+    let xr = u64::from(x)..u64::from(x + xlen);
+    let out = decode_summary(&data).unwrap().2[1].clone().unwrap();
+    assert_eq!(out, &data[xr.start as usize..xr.end as usize]);
+    let leaves = leaves_over(&inv, xr.clone());
+    assert!(
+        leaves
+            .iter()
+            .all(|p| p.disposition == Disposition::Metadata(MetadataKind::Xmp)),
+        "{inv}"
+    );
+    let xmp = inv
+        .parts()
+        .iter()
+        .find(|p| p.parent.is_none() && p.range.start == xr.start)
+        .unwrap();
+    assert_eq!(xmp.range, xr, "{inv}");
+    assert!(
+        xmp.detail
+            .as_deref()
+            .is_some_and(|d| d.contains(&format!("overlaps ifd {table}..{}", table + 18))),
+        "{inv}"
+    );
+}
+
+/// Review round 4, probe AB: an ASCII value's bytes after its NUL (which
+/// the decoder drops) cover the XMP value. The XMP keeps its bytes; the
+/// ASCII value's tail past it stays `Dropped`.
+#[test]
+fn ascii_nul_tail_over_xmp_leaves_the_xmp_whole() {
+    let mut w = W::new();
+    let strip = w.put(&[1, 2, 3, 4]);
+    let d = w.put(b"D\0");
+    let x = w.put(b"<x:xmpmeta>PII-UNDER-A-NUL-TAIL</x:xmpmeta>");
+    let xlen = w.pos() - x;
+    w.put(b"\0\0\0\0");
+    let mut e = page(strip);
+    e.push(at(270, 2, 2 + xlen + 4, d));
+    e.push(at(700, 7, xlen, x));
+    e.sort_by_key(|e| e.tag);
+    let ifd0 = w.ifd(&e, 0);
+    w.set_ifd0(ifd0);
+    let data = w.b;
+    let inv = inventory(&data);
+    inv.validate().unwrap();
+    let xr = u64::from(x)..u64::from(x + xlen);
+    let out = decode_summary(&data).unwrap().2[1].clone().unwrap();
+    assert!(contains(&out, b"PII-UNDER-A-NUL-TAIL"));
+    assert!(
+        leaves_over(&inv, xr.clone())
+            .iter()
+            .all(|p| p.disposition == Disposition::Metadata(MetadataKind::Xmp)),
+        "{inv}"
+    );
+    assert!(
+        leaves_over(&inv, xr.end..xr.end + 4)
+            .iter()
+            .all(|p| p.disposition == Disposition::Dropped),
+        "{inv}"
+    );
+    assert!(
+        leaves_over(&inv, u64::from(d)..u64::from(d) + 2)
+            .iter()
+            .all(|p| p.disposition == Disposition::Metadata(MetadataKind::Exif)),
+        "{inv}"
+    );
+}
+
+/// Review round 4, probe AD: a page chain longer than the IFD cap. The
+/// decoder counts every page, so the IFDs past the cap are `Unknown`, and
+/// the last walked IFD says why.
+#[test]
+fn page_chain_past_the_ifd_cap_is_unknown() {
+    let pages = 4100usize;
+    let mut w = W::new();
+    let ats: Vec<u32> = (0..pages).map(|_| w.ifd(&page(0), 0)).collect();
+    let strip = w.put(&[1, 2, 3, 4]);
+    for (k, &a) in ats.iter().enumerate() {
+        w.patch_entry(a, 5, strip);
+        if let Some(&next) = ats.get(k + 1) {
+            let f = a as usize + 2 + 12 * 9;
+            w.b[f..f + 4].copy_from_slice(&next.to_le_bytes());
+        }
+    }
+    w.set_ifd0(ats[0]);
+    let data = w.b;
+    let inv = inventory(&data);
+    inv.validate().unwrap();
+    let last = part(&inv, u64::from(ats[4095])..u64::from(ats[4095]) + 114);
+    assert!(
+        last.detail
+            .as_deref()
+            .is_some_and(|d| d.contains("next IFD: not walked: more than 4096 IFDs")),
+        "{last:?}"
+    );
+    for &a in &ats[4096..] {
+        let r = u64::from(a)..u64::from(a) + 114;
+        assert!(
+            leaves_over(&inv, r)
+                .iter()
+                .all(|p| p.disposition == Disposition::Unknown
+                    && p.detail.as_deref().is_some_and(|d| d.contains("may read"))),
+            "IFD at {a}"
+        );
+    }
+}
+
+/// Review round 4, R4-1: `n` SubIFDs entries each naming one shared array
+/// of `c` pointers. The walk reads only the pointers it can still queue, so
+/// the work is about `n + 4096`, not `n * c`.
+fn wide_pointer_arrays(n: u32, c: u32) -> Vec<u8> {
+    let ifd0_len = 2 + 12 * n + 4;
+    let arr = 8 + ifd0_len;
+    let target = arr + 4 * c;
+    let mut b = b"II\x2a\x00\x08\x00\x00\x00".to_vec();
+    b.extend_from_slice(&(n as u16).to_le_bytes());
+    for _ in 0..n {
+        b.extend_from_slice(&330u16.to_le_bytes());
+        b.extend_from_slice(&4u16.to_le_bytes());
+        b.extend_from_slice(&c.to_le_bytes());
+        b.extend_from_slice(&arr.to_le_bytes());
+    }
+    b.extend_from_slice(&0u32.to_le_bytes());
+    for _ in 0..c {
+        b.extend_from_slice(&target.to_le_bytes());
+    }
+    b.extend_from_slice(&[0; 6]);
+    b
+}
+
+#[test]
+fn wide_pointer_arrays_are_read_only_as_far_as_the_ifd_cap() {
+    // 1,048,588 bytes: before the fix, 43,690 x 131,072 pointer reads
+    // (4.2 s in a release build).
+    let data = wide_pointer_arrays(43_690, 131_072);
+    assert_eq!(data.len(), 1_048_588);
+    let t = std::time::Instant::now();
+    let inv = inventory(&data);
+    let took = t.elapsed();
+    inv.validate().unwrap();
+    assert!(took.as_secs_f64() < 10.0, "took {took:?}");
+    let noted = inv
+        .parts()
+        .iter()
+        .filter(|p| {
+            p.detail
+                .as_deref()
+                .is_some_and(|d| d.contains("pointers not walked: more than 4096 IFDs"))
+        })
+        .count();
+    assert!(noted > 0, "{inv}");
+}
