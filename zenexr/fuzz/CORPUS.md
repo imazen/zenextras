@@ -4,8 +4,7 @@ The working corpus is not committed. The repo keeps:
 
 - `fuzz_targets/*.rs`: the harnesses;
 - `exr.dict`: libFuzzer dictionary (attribute and type names, magic, version flags);
-- `regression/<target>/`: minimized inputs that once failed, replayed by
-  `tests/fuzz_regression.rs` on stable.
+- `regression/<target>/`: minimized inputs that once failed (none so far).
 
 ## Targets
 
@@ -19,7 +18,7 @@ Build under the shared build lock, run outside it, niced:
 
 ```bash
 cd zenexr/fuzz
-cargo +nightly fuzz build inventory
+cargo +nightly fuzz build --target x86_64-unknown-linux-gnu inventory
 nice -n 19 ./target/x86_64-unknown-linux-gnu/release/inventory corpus/inventory seeds \
     -max_total_time=600 -dict=exr.dict
 ```
