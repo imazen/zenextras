@@ -1093,6 +1093,14 @@ fn d03_svgz_past_inflate_cap() {
             p.detail
         );
     }
+    // Past the inventory's 128 MiB budget the inner document is not
+    // checked: the deflate stream must not be reported consumed.
+    let deflate = inv
+        .parts()
+        .iter()
+        .find(|p| p.tag == zencodec::inventory::PartTag::Name("deflate".into()))
+        .unwrap();
+    assert!(!deflate.disposition.is_consumed(), "{deflate:?}");
     if std::env::var_os("REVIEW_DECODE").is_some() {
         let t = std::time::Instant::now();
         println!("decode: {} in {:?}", painted(&render(&d)), t.elapsed());

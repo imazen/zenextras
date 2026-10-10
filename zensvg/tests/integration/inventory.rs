@@ -592,6 +592,14 @@ fn deeply_nested_documents_do_not_overflow() {
             d.contains("nest") || d.contains("nodes limit"),
             "{depth}: {rect:?}"
         );
+        // 5,000 levels parse and usvg rejects them; past the inventory's
+        // own budget of 8,192 nothing is verified, so it is `Unknown`.
+        let want = if depth > 8_192 {
+            Disposition::Unknown
+        } else {
+            Disposition::Dropped
+        };
+        assert_eq!(rect.disposition, want, "{depth}: {rect:?}");
     }
     // Nesting carried by an entity's replacement text counts too.
     let data = format!(
@@ -602,6 +610,50 @@ fn deeply_nested_documents_do_not_overflow() {
     .into_bytes();
     let inv = inventory(&data);
     assert!(inv.parts().iter().all(|p| !p.disposition.is_consumed()));
+}
+
+/// An image whose data URI holds an SVG whose image holds an SVG, six
+/// levels deep: past the inventory's budget of four nested documents the
+/// payload is not inventoried, so its href is `Unknown`, not consumed.
+#[test]
+fn nested_data_uri_svgs_past_the_budget_are_unknown() {
+    fn b64(data: &[u8]) -> String {
+        const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        let mut s = String::new();
+        for c in data.chunks(3) {
+            let n = (u32::from(c[0]) << 16)
+                | (u32::from(*c.get(1).unwrap_or(&0)) << 8)
+                | u32::from(*c.get(2).unwrap_or(&0));
+            for i in 0..4 {
+                s.push(if i <= c.len() {
+                    T[((n >> (18 - 6 * i)) & 63) as usize] as char
+                } else {
+                    '='
+                });
+            }
+        }
+        s
+    }
+    let mut doc = br#"<svg xmlns="http://www.w3.org/2000/svg" width="2" height="2"><rect width="2" height="2" fill="red"/></svg>"#.to_vec();
+    for _ in 0..6 {
+        doc = format!(
+            r#"<svg xmlns="http://www.w3.org/2000/svg" width="2" height="2"><image width="2" height="2" href="data:image/svg+xml;base64,{}"/></svg>"#,
+            b64(&doc)
+        )
+        .into_bytes();
+    }
+    let inv = inventory(&doc);
+    // The outer hrefs are drawn; the nested inventories map the innermost
+    // unverified href back to the characters that carry it, as a child
+    // part of the outermost href.
+    let unknown: Vec<&Part> = inv
+        .parts()
+        .iter()
+        .filter(|p| p.disposition == Disposition::Unknown)
+        .collect();
+    assert_eq!(unknown.len(), 1, "{inv}");
+    assert!(detail(unknown[0]).contains("not verified"), "{inv}");
+    assert_eq!(named(&inv, "href")[0].disposition, Disposition::ImageData);
 }
 
 /// One line per part: depth, kind, range, tag, disposition, label.

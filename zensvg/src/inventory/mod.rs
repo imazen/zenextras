@@ -715,7 +715,7 @@ fn walk_xml(
     let deep = bound.is_none_or(|b| b > SHALLOW);
     let parse = rejected.is_none();
     match deep_stack(deep && parse, || {
-        walk_parsed(d, &tree, bound, inv, rejected.clone(), job, nest)
+        walk_parsed(d, &tree, bound, inv, rejected.clone(), job, nest, false)
     }) {
         Some(r) => r,
         None => walk_parsed(
@@ -726,6 +726,7 @@ fn walk_xml(
             Some("nested too deeply for the inventory to parse on this thread".into()),
             job,
             nest,
+            true,
         ),
     }
 }
@@ -739,8 +740,14 @@ fn walk_parsed(
     rejected: Option<String>,
     job: &Job,
     nest: u32,
+    unverified: bool,
 ) -> Result<Walked, InvError> {
     let mut accepted: Result<(), String> = rejected.map_or(Ok(()), Err);
+    // Past the inventory's own nesting budget nothing is verified: report
+    // it `Unknown`, not `Dropped` (zencodec docs/inventory.md, "When a
+    // work budget runs out").
+    let unverified =
+        unverified || (accepted.is_ok() && bound.is_some_and(|b| b > MAX_PARSE_NESTING));
     // The decoder's own checks run first, before the walker's parse, so
     // their parse (usvg's roxmltree document and tree) is dropped before
     // the walker's is built: peak memory is one parse, not two. The
@@ -809,6 +816,7 @@ fn walk_parsed(
     };
     let ok = accepted.is_ok();
     let mut w = Walker::new(
+        unverified,
         d,
         tree,
         inv,
@@ -839,6 +847,8 @@ struct UriCache {
 #[derive(Debug)]
 struct UriInfo {
     drawn: bool,
+    /// Past the nesting budget: not inventoried, reported `Unknown`.
+    unverified: bool,
     detail: String,
     children: Vec<(Range<usize>, Disposition, String, String)>,
 }
@@ -865,6 +875,7 @@ fn analyze_uri(raw: &[u8], value: &str, job: &Job, nest: u32) -> UriInfo {
     let decoded = match datauri::decode(value, raw == value.as_bytes()) {
         None => {
             return UriInfo {
+                unverified: false,
                 drawn: false,
                 detail: "not a data URL".into(),
                 children: Vec::new(),
@@ -872,6 +883,7 @@ fn analyze_uri(raw: &[u8], value: &str, job: &Job, nest: u32) -> UriInfo {
         }
         Some(Err(why)) => {
             return UriInfo {
+                unverified: false,
                 drawn: false,
                 detail: format!("data URI; {why}, so usvg draws nothing"),
                 children: Vec::new(),
@@ -896,6 +908,7 @@ fn analyze_uri(raw: &[u8], value: &str, job: &Job, nest: u32) -> UriInfo {
     );
     let Some(kind) = datauri::kind(&decoded.mime, &decoded.data) else {
         return UriInfo {
+            unverified: false,
             drawn: false,
             detail: format!("{head}; usvg's default data resolver does not accept this type"),
             children,
@@ -977,6 +990,7 @@ fn analyze_uri(raw: &[u8], value: &str, job: &Job, nest: u32) -> UriInfo {
         }
         None if !units.is_empty() => {
             return UriInfo {
+                unverified: false,
                 drawn,
                 detail: format!(
                     "{head}; {summary}; positions inside the value are not mapped (entity or \
@@ -989,6 +1003,7 @@ fn analyze_uri(raw: &[u8], value: &str, job: &Job, nest: u32) -> UriInfo {
         None => {}
     }
     UriInfo {
+        unverified: kind == datauri::Kind::Svg && nest >= MAX_NEST,
         drawn,
         detail: format!("{head}; {summary}"),
         children: merge_children(children),
@@ -1090,6 +1105,9 @@ enum Frame {
 }
 
 struct Walker<'a, 'i, 'r> {
+    /// The disposition of what a rejected document would have consumed:
+    /// `Dropped`, or `Unknown` when the inventory gave up before verifying.
+    fail: Disposition,
     d: &'a [u8],
     tree: &'a XTree,
     inv: &'i mut Inventory,
@@ -1152,6 +1170,7 @@ fn entity_refs(v: &[u8]) -> impl Iterator<Item = &[u8]> {
 impl<'a, 'i, 'r> Walker<'a, 'i, 'r> {
     #[allow(clippy::too_many_arguments)]
     fn new(
+        unverified: bool,
         d: &'a [u8],
         tree: &'a XTree,
         inv: &'i mut Inventory,
@@ -1212,6 +1231,11 @@ impl<'a, 'i, 'r> Walker<'a, 'i, 'r> {
             }
         }
         Self {
+            fail: if unverified {
+                Disposition::Unknown
+            } else {
+                Disposition::Dropped
+            },
             d,
             tree,
             inv,
@@ -1260,6 +1284,9 @@ impl<'a, 'i, 'r> Walker<'a, 'i, 'r> {
     fn rejected_note(&self) -> String {
         match &self.accepted {
             Ok(()) => String::new(),
+            Err(why) if self.fail == Disposition::Unknown => {
+                format!("not verified ({why}); the inventory gave up, and the decoder may read it")
+            }
             Err(why) => format!("the decoder rejects the document ({why}); nothing is rendered"),
         }
     }
@@ -1395,7 +1422,8 @@ impl<'a, 'i, 'r> Walker<'a, 'i, 'r> {
         let d = self.d;
         let note = self.rejected_note();
         let ok = self.accepted.is_ok();
-        let or_dropped = |disp: Disposition| if ok { disp } else { Disposition::Dropped };
+        let fail = self.fail;
+        let or_dropped = |disp: Disposition| if ok { disp } else { fail };
         match &node.kind {
             XKind::Bom => {
                 self.push(
@@ -1636,15 +1664,11 @@ impl<'a, 'i, 'r> Walker<'a, 'i, 'r> {
                     "character data before the root element".to_string(),
                 )
             }
-        } else if let Err(why) = &self.accepted {
+        } else if self.accepted.is_err() {
             if ws {
                 (PartKind::Gap, Disposition::Padding, String::new())
             } else {
-                (
-                    PartKind::Chunk,
-                    Disposition::Dropped,
-                    format!("the decoder rejects the document ({why}); nothing is rendered"),
-                )
+                (PartKind::Chunk, self.fail, self.rejected_note())
             }
         } else if ctx.css {
             return self.css_chars(n, parent, rx_text, tag);
@@ -1924,11 +1948,8 @@ impl<'a, 'i, 'r> Walker<'a, 'i, 'r> {
                 | b"text"
                 | b"use"
         );
-        let (disposition, detail) = if let Err(why) = &self.accepted {
-            (
-                Disposition::Dropped,
-                format!("the decoder rejects the document ({why}); nothing is rendered"),
-            )
+        let (disposition, detail) = if self.accepted.is_err() {
+            (self.fail, self.rejected_note())
         } else if css {
             (
                 Disposition::Structure,
@@ -2144,7 +2165,7 @@ impl<'a, 'i, 'r> Walker<'a, 'i, 'r> {
                         None => format!("external reference: {excerpt}"),
                     };
                     if rejected {
-                        (Disposition::Dropped, target)
+                        (self.fail, target)
                     } else if !consumed && verdict.parsed {
                         (
                             Disposition::Dropped,
@@ -2162,7 +2183,15 @@ impl<'a, 'i, 'r> Walker<'a, 'i, 'r> {
                         )
                     } else if let Some(u) = uri_info {
                         children = u.children.clone();
-                        if u.drawn && verdict.drawn {
+                        if u.unverified && verdict.drawn {
+                            (
+                                Disposition::Unknown,
+                                format!(
+                                    "{target}; not verified past the inventory's nesting \
+                                     budget, and the decoder may read it"
+                                ),
+                            )
+                        } else if u.drawn && verdict.drawn {
                             (
                                 Disposition::ImageData,
                                 format!("{target}; usvg decodes it into the image"),
@@ -2243,11 +2272,7 @@ impl<'a, 'i, 'r> Walker<'a, 'i, 'r> {
                     (Disposition::Skipped, format!("{why}: {excerpt}"))
                 }
             };
-            let disposition = if rejected {
-                Disposition::Dropped
-            } else {
-                disposition
-            };
+            let disposition = if rejected { self.fail } else { disposition };
             let aid = self.push(
                 Some(parent),
                 PartKind::Attribute,
@@ -2650,7 +2675,12 @@ fn svgz(
         }
         (s, w)
     };
-    let deflate_disp = if gzip_ok && walked.accepted && header_reject.is_none() {
+    let deflate_disp = if !kept_all && gzip_ok && header_reject.is_none() {
+        // Past the inventory's budget the document is not checked: the
+        // decoder may draw it (zencodec docs/inventory.md, "When a work
+        // budget runs out").
+        Disposition::Unknown
+    } else if gzip_ok && walked.accepted && header_reject.is_none() {
         Disposition::ImageData
     } else {
         Disposition::Dropped
