@@ -53,7 +53,7 @@ member entries here reference those files.
   zencodec `feat/inventory`, imazen/zencodec#133). Maps every byte of a JP2 file
   or bare codestream: boxes (jp2h children, res, uinf, uuid, xml, asoc, free,
   unknown) and codestream marker segments, tile-parts and EOC, with dispositions
-  taken from hayro-jpeg2000 0.3.5 behaviour (6fb2a8a6). `[patch.crates-io]`
+  taken from hayro-jpeg2000 0.3.5 behaviour (6fb2a8a6). Review round 1 (748ae720, 4507fab3, be3c4562, 3e077806): marker segments follow hayro's cursor instead of the length fields, a packet-header walk marks bytes after the last packet as unreferenced (not for packed PPM/PPT headers), colour boxes follow hayro's channel-count repair, and zenjp2's zencodec floor is 0.1.27. `[patch.crates-io]`
   points zencodec and zencodec-testkit at the branch; swap for the released
   versions before merge. Cross-checked against `exiftool -v3` on 169 OpenJPEG and
   serenity files (`just inventory-oracle`), libFuzzer target `zenjp2/fuzz` `inventory`.
