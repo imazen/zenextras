@@ -403,6 +403,9 @@ const MAX_INFLATE: u64 = 512 << 20;
 /// The decoder's abort on resource cycles longer than two.
 const CYCLE_ISSUE: u32 = 41;
 
+/// The decoder's endless loop on `href` chains that loop past their origin.
+const HREF_LOOP_ISSUE: u32 = 42;
+
 /// Nested `data:` SVG documents inventoried inside each other.
 const MAX_NEST: u32 = 4;
 
@@ -811,6 +814,22 @@ fn walk_parsed(
                                     .collect::<Vec<_>>()
                                     .join(" → "),
                                 CYCLE_ISSUE
+                            ));
+                        } else if let Some(chain) = &m.href_loop {
+                            // The decoder hangs on this document: the same
+                            // treatment as a cycle.
+                            unverified = true;
+                            accepted = Err(format!(
+                                "an href chain that loops without returning to its start ({}); \
+                                 usvg's HrefIter stops only at a link back to the current \
+                                 element or the start, so the decoder loops forever \
+                                 (zenextras#{}). The inventory does not run usvg on it",
+                                chain
+                                    .iter()
+                                    .map(|i| format!("#{i}"))
+                                    .collect::<Vec<_>>()
+                                    .join(" → "),
+                                HREF_LOOP_ISSUE
                             ));
                         } else {
                             model = Some(m);

@@ -324,6 +324,11 @@ pub(crate) struct Model {
     /// so its converter recurses until the stack overflows and the process
     /// aborts. The model's own guard stops at the first repeat.
     pub cycle: Option<Vec<String>>,
+    /// A paint-server or filter `href` chain whose loop excludes its
+    /// origin (`#q1 → #q2 → #q3 → #q2`), reached while drawing, by id.
+    /// usvg's `HrefIter` stops only at a link back to the current node or
+    /// the origin, so its resolvers loop forever and the decoder hangs.
+    pub href_loop: Option<Vec<String>>,
     /// The document draws nothing at all (root not visible).
     pub nothing_drawn: Option<String>,
     /// Text whose drawing depends on the fonts found: (`<text>` roxmltree
@@ -374,6 +379,9 @@ struct Builder<'a, 'i> {
     used_decls: HashSet<usize>,
     /// (node, is fill) paints `fix_recursive_patterns` rewrote to none.
     none_paint: HashSet<(usize, bool)>,
+    /// An `href` chain usvg follows forever (a loop excluding its origin),
+    /// by id, found while resolving paint servers or filters.
+    href_loop: std::cell::RefCell<Option<Vec<String>>>,
     /// Per pattern: whether its content paints (one scan per pattern, not
     /// per shape painted with it).
     pattern_paints: std::cell::RefCell<HashMap<usize, bool>>,
@@ -399,6 +407,7 @@ pub(crate) fn build(doc: &rx::Document, env: &Env) -> Option<Model> {
         used_decls: HashSet::new(),
         none_paint: HashSet::new(),
         pattern_paints: std::cell::RefCell::new(HashMap::new()),
+        href_loop: std::cell::RefCell::new(None),
         steps: 0,
     };
     b.prepare();
@@ -1510,7 +1519,40 @@ impl<'a, 'i: 'a> Builder<'a, 'i> {
         let mut chain = vec![n];
         let mut cur = n;
         while let Some(l) = self.link(cur, "href") {
-            if l == cur || l == n || chain.contains(&l) {
+            // `HrefIter` stops only at a link to the current node or the
+            // origin.
+            if l == cur || l == n {
+                break;
+            }
+            if chain.contains(&l) {
+                // A loop that excludes the origin: every link so far is of
+                // the server's own kind, so usvg's resolvers keep reading
+                // and `HrefIter` never ends (review R4-S1). Except a
+                // gradient whose stops come from a member before the loop
+                // closes and number fewer than two: usvg turns it into a
+                // solid colour (`stops_to_color`) without resolving any
+                // other attribute through the chain.
+                let gradient = ok.contains(&"linearGradient");
+                let stops = |g: usize| {
+                    self.element_children(g)
+                        .filter(|&k| self.tag(k) == Some("stop"))
+                        .count()
+                };
+                let solid = gradient
+                    && chain
+                        .iter()
+                        .map(|&g| stops(g))
+                        .find(|&c| c > 0)
+                        .is_some_and(|c| c < 2);
+                let mut spin = self.href_loop.borrow_mut();
+                if spin.is_none() && !solid {
+                    let mut ids: Vec<String> = chain
+                        .iter()
+                        .map(|&i| self.attr(i, "id").unwrap_or("?").to_string())
+                        .collect();
+                    ids.push(self.attr(l, "id").unwrap_or("?").to_string());
+                    *spin = Some(ids);
+                }
                 break;
             }
             if !self.tag(l).is_some_and(|t| ok.contains(&t)) {
@@ -1779,6 +1821,8 @@ impl<'a, 'i: 'a> Builder<'a, 'i> {
         if !self.enter(f) {
             return;
         }
+        // `find_filter_with_primitives` walks the filter's href chain.
+        let _ = self.href_chain(f, &["filter"]);
         self.mark(f);
         let kids: Vec<usize> = self.element_children(f).collect();
         for k in kids {
@@ -1998,6 +2042,7 @@ impl<'a, 'i: 'a> Builder<'a, 'i> {
     }
 
     fn finish(&mut self) {
+        self.out.href_loop = self.href_loop.borrow_mut().take();
         for u in &self.used_decls {
             self.out.dropped_decls.remove(u);
         }

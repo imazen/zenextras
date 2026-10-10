@@ -1404,3 +1404,44 @@ fn r3_three_cycle_decode_aborts() {
     );
     println!("decode: {}", painted(&render(&d)));
 }
+
+// ── Round 4 (review-r4-svg.md: R4-S1) ───────────────────────────────────
+
+/// The decoder loops forever on a pattern href chain whose loop excludes
+/// its origin (zenextras#42). Runs only with `R4_HANGING=1`; it then
+/// reports whether a decode finished within 10 s. The inventory's side is
+/// pinned by `an_href_chain_looping_past_its_origin_does_not_hang`.
+#[test]
+fn r4_href_loop_decode_hangs() {
+    if std::env::var_os("R4_HANGING").is_none() {
+        return;
+    }
+    for (name, body) in [
+        (
+            "patterns",
+            r##"<pattern id="q1" width="4" height="4" patternUnits="userSpaceOnUse" href="#q2"/><pattern id="q2" width="4" height="4" patternUnits="userSpaceOnUse" href="#q3"/><pattern id="q3" width="4" height="4" patternUnits="userSpaceOnUse" href="#q2"><rect width="4" height="4" fill="#00f"/></pattern><rect width="20" height="20" fill="url(#q1)"/>"##,
+        ),
+        (
+            "gradients",
+            r##"<linearGradient id="g1" href="#g2"/><linearGradient id="g2" href="#g3"/><linearGradient id="g3" href="#g2"><stop offset="0" stop-color="#00f"/></linearGradient><rect width="20" height="20" fill="url(#g1)"/>"##,
+        ),
+        (
+            "gradients, two stops",
+            r##"<linearGradient id="g1" href="#g2"/><linearGradient id="g2" href="#g3"/><linearGradient id="g3" href="#g2"><stop offset="0" stop-color="#00f"/><stop offset="1" stop-color="#f00"/></linearGradient><rect width="20" height="20" fill="url(#g1)"/>"##,
+        ),
+        (
+            "filters",
+            r##"<filter id="f1" href="#f2"/><filter id="f2" href="#f3"/><filter id="f3" href="#f2"><feFlood flood-color="#00f"/></filter><rect width="20" height="20" fill="#0f0" filter="url(#f1)"/>"##,
+        ),
+    ] {
+        let d = svg(body);
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(painted(&render(&d)));
+        });
+        match rx.recv_timeout(std::time::Duration::from_secs(10)) {
+            Ok(r) => println!("R4 {name}: decode finished: {r}"),
+            Err(_) => println!("R4 {name}: decode did not finish within 10 s"),
+        }
+    }
+}

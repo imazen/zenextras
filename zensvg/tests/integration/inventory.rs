@@ -682,6 +682,85 @@ fn a_pattern_cycle_of_three_does_not_abort() {
     assert_eq!(blue.disposition, Disposition::ImageData, "{inv}");
 }
 
+/// Run `f` on its own thread and fail if it takes longer than `secs`: a
+/// regression into an endless loop fails instead of hanging the suite.
+fn within<T: Send + 'static>(secs: u64, f: impl FnOnce() -> T + Send + 'static) -> T {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(f());
+    });
+    rx.recv_timeout(std::time::Duration::from_secs(secs))
+        .unwrap_or_else(|_| panic!("did not finish within {secs} s"))
+}
+
+/// The review's 447-byte input (R4-S1): a pattern href chain whose loop
+/// excludes its origin. usvg's HrefIter stops only at a link back to the
+/// current element or the origin, so the decoder loops forever. The
+/// inventory finds the loop with its model before the decoder's gate runs
+/// usvg, returns, and reports the document `Unknown` with the chain named.
+/// Gradient and filter chains are checked the same way.
+#[test]
+fn an_href_chain_looping_past_its_origin_does_not_hang() {
+    let wrap = |body: &str| {
+        format!(
+            r#"<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="20" height="20">{body}</svg>"#
+        )
+        .into_bytes()
+    };
+    let patterns = wrap(
+        r##"<pattern id="q1" width="4" height="4" patternUnits="userSpaceOnUse" href="#q2"/><pattern id="q2" width="4" height="4" patternUnits="userSpaceOnUse" href="#q3"/><pattern id="q3" width="4" height="4" patternUnits="userSpaceOnUse" href="#q2"><rect width="4" height="4" fill="#00f"/></pattern><rect width="20" height="20" fill="url(#q1)"/>"##,
+    );
+    assert_eq!(patterns.len(), 447);
+    let gradients = wrap(
+        r##"<linearGradient id="g1" href="#g2"/><linearGradient id="g2" href="#g3"/><linearGradient id="g3" href="#g2"><stop offset="0" stop-color="#00f"/><stop offset="1" stop-color="#f00"/></linearGradient><rect width="20" height="20" fill="url(#g1)"/>"##,
+    );
+    let filters = wrap(
+        r##"<filter id="f1" href="#f2"/><filter id="f2" href="#f3"/><filter id="f3" href="#f2"><feFlood flood-color="#00f"/></filter><rect width="20" height="20" fill="#0f0" filter="url(#f1)"/>"##,
+    );
+    for (name, d, chain) in [
+        ("patterns", patterns, "#q1 → #q2 → #q3 → #q2"),
+        ("gradients", gradients, "#g1 → #g2 → #g3 → #g2"),
+        ("filters", filters, "#f1 → #f2 → #f3 → #f2"),
+    ] {
+        let inv = within(20, {
+            let d = d.clone();
+            move || inventory(&d)
+        });
+        assert!(
+            inv.parts().iter().all(|p| !p.disposition.is_consumed()),
+            "{name}\n{inv}"
+        );
+        let rect = leaf_at(&inv, find(&d, br#"<rect width="20" height="20""#) as u64);
+        assert_eq!(rect.disposition, Disposition::Unknown, "{name}\n{inv}");
+        assert!(detail(rect).contains(chain), "{name}: {rect:?}");
+        assert!(detail(rect).contains("zenextras#42"), "{name}: {rect:?}");
+    }
+    // A single-stop gradient is a solid colour: usvg resolves nothing else
+    // through the chain, finishes and draws it.
+    let solid = wrap(
+        r##"<linearGradient id="g1" href="#g2"/><linearGradient id="g2" href="#g3"/><linearGradient id="g3" href="#g2"><stop offset="0" stop-color="#00f"/></linearGradient><rect width="20" height="20" fill="url(#g1)"/>"##,
+    );
+    let inv = within(20, {
+        let d = solid.clone();
+        move || inventory(&d)
+    });
+    let rect = leaf_at(
+        &inv,
+        find(&solid, br#"<rect width="20" height="20""#) as u64,
+    );
+    assert_eq!(rect.disposition, Disposition::ImageData, "{inv}");
+    // A chain that ends, or loops back to its origin, is drawn as before.
+    let fine = wrap(
+        r##"<pattern id="q1" width="4" height="4" patternUnits="userSpaceOnUse" href="#q2"/><pattern id="q2" width="4" height="4" patternUnits="userSpaceOnUse" href="#q1"><rect width="4" height="4" fill="#00f"/></pattern><rect width="20" height="20" fill="url(#q1)"/>"##,
+    );
+    let inv = within(20, {
+        let d = fine.clone();
+        move || inventory(&d)
+    });
+    let rect = leaf_at(&inv, find(&fine, br#"<rect width="20" height="20""#) as u64);
+    assert_eq!(rect.disposition, Disposition::ImageData, "{inv}");
+}
+
 /// One line per part: depth, kind, range, tag, disposition, label.
 fn pinned_lines(inv: &Inventory) -> Vec<String> {
     inv.parts()
