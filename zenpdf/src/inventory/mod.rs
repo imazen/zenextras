@@ -771,6 +771,21 @@ fn first_filter(dict: &[u8]) -> Option<Vec<u8>> {
     Some(lex::unescape_name(name).into_owned())
 }
 
+/// `/EarlyChange` of the first filter's `/DecodeParms` (default 1).
+fn lzw_early_change(dict: &[u8]) -> bool {
+    use hayro_syntax::object::{Array, Dict, FromBytes};
+    let Some(d) = Dict::from_bytes(dict) else {
+        return true;
+    };
+    let params = d.get::<Dict<'_>>(b"DecodeParms").or_else(|| {
+        d.get::<Array<'_>>(b"DecodeParms")
+            .and_then(|a| a.flex_iter().next::<Dict<'_>>())
+    });
+    params
+        .and_then(|p| p.get::<i32>(b"EarlyChange"))
+        .is_none_or(|e| e != 0)
+}
+
 /// Geometry of an unfiltered image whose colour space gives its component
 /// count directly.
 fn image_geometry(dict: &[u8]) -> Option<ends::ImageGeometry> {
@@ -937,7 +952,12 @@ fn object_assign(
                 } else {
                     None
                 };
-                match ends::filter_end(filter.as_deref(), &data[sd.data.clone()], geometry) {
+                match ends::filter_end(
+                    filter.as_deref(),
+                    &data[sd.data.clone()],
+                    geometry,
+                    lzw_early_change(d),
+                ) {
                     ends::End::At(e) if sd.data.start + e < sd.data.end => {
                         let what = filter.as_deref().map_or_else(
                             || "declared image size".to_string(),

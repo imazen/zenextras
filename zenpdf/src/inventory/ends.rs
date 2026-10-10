@@ -22,7 +22,12 @@ const MAX_DECODED: u64 = 512 << 20;
 /// The internal end of `data` under `filter` (the first filter in the
 /// stream's `/Filter`, without its slash), or of unfiltered data with
 /// `image` geometry when given.
-pub(crate) fn filter_end(filter: Option<&[u8]>, data: &[u8], image: Option<ImageGeometry>) -> End {
+pub(crate) fn filter_end(
+    filter: Option<&[u8]>,
+    data: &[u8],
+    image: Option<ImageGeometry>,
+    lzw_early_change: bool,
+) -> End {
     match filter {
         Some(b"FlateDecode" | b"Fl") => flate_end(data),
         Some(b"ASCIIHexDecode" | b"AHx") => match data.iter().position(|&b| b == b'>') {
@@ -39,7 +44,7 @@ pub(crate) fn filter_end(filter: Option<&[u8]>, data: &[u8], image: Option<Image
             Some(e) => End::At(e),
             None => End::Unchecked("the JPEG data has no EOI the marker walk could reach"),
         },
-        Some(b"LZWDecode" | b"LZW") => End::Unchecked("LZW end-of-data is not located"),
+        Some(b"LZWDecode" | b"LZW") => lzw_end(data, lzw_early_change),
         Some(b"CCITTFaxDecode" | b"CCF") => End::Unchecked("CCITT end of data is not located"),
         Some(b"JBIG2Decode") => End::Unchecked("JBIG2 end of data is not located"),
         Some(b"JPXDecode") => End::Unchecked("JPEG 2000 codestream end is not located"),
@@ -131,6 +136,57 @@ fn inflate_end(data: &[u8], zlib: bool) -> Inflate {
     }
 }
 
+/// `lzw::decode_impl`, counting instead of decoding: the table only grows by
+/// `register` (capped at 4096 entries), and the code width follows its size
+/// (one code early with `/EarlyChange 1`, the default). Code 257 ends the
+/// data; running out of input reads everything; an invalid code makes hayro
+/// reject the stream.
+fn lzw_end(data: &[u8], early_change: bool) -> End {
+    const MAX_ENTRIES: usize = 4096;
+    let mut size = 258usize;
+    let mut prev = false;
+    let mut bit = 0usize;
+    let width = |size: usize| {
+        let adjusted = size + usize::from(early_change);
+        match adjusted {
+            2048.. => 12,
+            1024.. => 11,
+            512.. => 10,
+            _ => 9,
+        }
+    };
+    let mut w = width(size);
+    loop {
+        // Read `w` bits MSB first; a short read is hayro's premature EOF.
+        if bit + w > data.len() * 8 {
+            return End::Whole;
+        }
+        let mut code = 0usize;
+        for k in bit..bit + w {
+            code = code << 1 | usize::from(data[k / 8] >> (7 - k % 8) & 1);
+        }
+        bit += w;
+        match code {
+            256 => {
+                size = 258;
+                prev = false;
+            }
+            257 => return End::At(bit.div_ceil(8)),
+            c if c < size => {
+                if prev && size < MAX_ENTRIES {
+                    size += 1;
+                }
+                prev = true;
+            }
+            c if c == size && prev && size < MAX_ENTRIES => {
+                size += 1;
+            }
+            _ => return End::Unchecked("invalid LZW code; hayro rejects the stream"),
+        }
+        w = width(size);
+    }
+}
+
 /// `run_length::decode`: a length byte 128 ends the data.
 fn run_length_end(data: &[u8]) -> End {
     let mut i = 0usize;
@@ -202,28 +258,72 @@ mod tests {
         let mut with_tail = z.clone();
         with_tail.extend_from_slice(b"HIDDEN");
         assert_eq!(
-            filter_end(Some(b"FlateDecode"), &with_tail, None),
+            filter_end(Some(b"FlateDecode"), &with_tail, None, true),
             End::At(z.len())
         );
-        assert_eq!(filter_end(Some(b"Fl"), &z, None), End::At(z.len()));
+        assert_eq!(filter_end(Some(b"Fl"), &z, None, true), End::At(z.len()));
         // Truncated: hayro reads all of it.
         assert_eq!(
-            filter_end(Some(b"FlateDecode"), &z[..z.len() / 2], None),
+            filter_end(Some(b"FlateDecode"), &z[..z.len() / 2], None, true),
             End::Whole
         );
     }
 
     #[test]
     fn text_filters_and_run_length() {
-        assert_eq!(filter_end(Some(b"AHx"), b"414243>tail", None), End::At(7));
         assert_eq!(
-            filter_end(Some(b"A85"), b"87cURD]i,\"Ebo80~>tail", None),
+            filter_end(Some(b"AHx"), b"414243>tail", None, true),
+            End::At(7)
+        );
+        assert_eq!(
+            filter_end(Some(b"A85"), b"87cURD]i,\"Ebo80~>tail", None, true),
             End::At(16)
         );
         assert_eq!(
-            filter_end(Some(b"RL"), &[2, 1, 2, 3, 254, 9, 128, 7, 7], None),
+            filter_end(Some(b"RL"), &[2, 1, 2, 3, 254, 9, 128, 7, 7], None, true),
             End::At(7)
         );
+    }
+
+    /// Pack 9-bit codes MSB first.
+    fn lzw9(codes: &[u16]) -> Vec<u8> {
+        let mut bits: Vec<bool> = Vec::new();
+        for &c in codes {
+            for k in (0..9).rev() {
+                bits.push(c >> k & 1 == 1);
+            }
+        }
+        bits.chunks(8)
+            .map(|b| {
+                b.iter()
+                    .enumerate()
+                    .fold(0u8, |a, (i, &x)| a | u8::from(x) << (7 - i))
+            })
+            .collect()
+    }
+
+    #[test]
+    fn lzw_end_is_after_the_eod_code() {
+        // 256 (clear), 'A', 'B', 258 ('AB'), 257 (EOD): 45 bits, 6 bytes.
+        let mut d = lzw9(&[256, 65, 66, 258, 257]);
+        let n = d.len();
+        assert_eq!(n, 6);
+        d.extend_from_slice(b"TAIL");
+        assert_eq!(filter_end(Some(b"LZWDecode"), &d, None, true), End::At(n));
+        // Without EOD hayro reads to the end.
+        assert_eq!(
+            filter_end(Some(b"LZW"), &lzw9(&[256, 65, 66]), None, true),
+            End::Whole
+        );
+        // ISO 32000-1 7.4.4.2's example ("-----A---B", EarlyChange 1): eight
+        // 9-bit codes ending in EOD, nine bytes.
+        let spec = [0x80, 0x0B, 0x60, 0x50, 0x22, 0x0C, 0x0C, 0x85, 0x01, b'X', b'Y'];
+        assert_eq!(filter_end(Some(b"LZWDecode"), &spec, None, true), End::At(9));
+        // A code beyond the table: hayro rejects the stream.
+        assert!(matches!(
+            filter_end(Some(b"LZW"), &lzw9(&[256, 300]), None, true),
+            End::Unchecked(_)
+        ));
     }
 
     #[test]
@@ -243,7 +343,7 @@ mod tests {
             components: 1,
             bpc: 1,
         };
-        assert_eq!(filter_end(None, &[0; 5], Some(g)), End::At(2));
-        assert_eq!(filter_end(None, &[0; 2], Some(g)), End::Whole);
+        assert_eq!(filter_end(None, &[0; 5], Some(g), true), End::At(2));
+        assert_eq!(filter_end(None, &[0; 2], Some(g), true), End::Whole);
     }
 }
