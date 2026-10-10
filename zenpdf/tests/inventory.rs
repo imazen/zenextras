@@ -347,6 +347,49 @@ fn unused_resources_pdf() -> Vec<u8> {
     b.finish()
 }
 
+/// A hidden layer: an optional-content group that is off, an image drawn
+/// only inside it, an image whose own /OC is off, and a visible image.
+fn hidden_layer_pdf() -> Vec<u8> {
+    let mut b = PdfBuilder::new();
+    b.obj(
+        1,
+        "<< /Type /Catalog /Pages 2 0 R \
+         /OCProperties << /OCGs [10 0 R] /D << /OFF [10 0 R] >> >> >>",
+    )
+    .obj(2, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>")
+    .obj(
+        3,
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 4 4] /Contents 4 0 R \
+         /Resources << /Properties << /oc1 10 0 R >> \
+         /XObject << /ImOk 5 0 R /ImSecret 11 0 R /ImOwnOc 12 0 R >> >> >>",
+    )
+    .stream(
+        4,
+        "",
+        b"/OC /oc1 BDC q 4 0 0 4 0 0 cm /ImSecret Do Q EMC \
+          q 4 0 0 4 0 0 cm /ImOwnOc Do Q q 1 0 0 1 0 0 cm /ImOk Do Q",
+    )
+    .stream(
+        5,
+        "/Type /XObject /Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceGray /BitsPerComponent 8",
+        b"\x00",
+    )
+    .obj(10, "<< /Type /OCG /Name (Draft notes by Alice) >>")
+    .stream(
+        11,
+        "/Type /XObject /Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceGray /BitsPerComponent 8",
+        b"\x80",
+    )
+    .stream(
+        12,
+        "/Type /XObject /Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceGray \
+         /BitsPerComponent 8 /OC 10 0 R",
+        b"\x40",
+    );
+    b.end_revision("/Root 1 0 R");
+    b.finish()
+}
+
 // ── Helpers ─────────────────────────────────────────────────────────────
 
 fn inventory(data: &[u8]) -> Inventory {
@@ -424,6 +467,7 @@ fn testkit_check_inventory_on_every_fixture() {
         ("objstm", objstm_pdf()),
         ("hidden_bytes", hidden_bytes_pdf()),
         ("unused_resources", unused_resources_pdf()),
+        ("hidden_layer", hidden_layer_pdf()),
         ("fixtures/test.pdf", fixture),
     ] {
         zencodec_testkit::check_inventory(PdfDecoderConfig::new(), &bytes)
@@ -440,6 +484,7 @@ fn fixtures_render() {
         objstm_pdf(),
         hidden_bytes_pdf(),
         unused_resources_pdf(),
+        hidden_layer_pdf(),
     ] {
         zenpdf::render_page(&bytes, 0, &zenpdf::RenderBounds::Scale(1.0)).expect("fixture renders");
     }
@@ -718,6 +763,39 @@ fn resources_no_content_names_are_unused() {
         assert_eq!(p.disposition, Disposition::Skipped, "{p:?}\n{inv}");
         assert!(detail(p).contains("not read by the decoder"), "{p:?}");
     }
+}
+
+#[test]
+fn hidden_optional_content_is_not_drawn() {
+    let data = hidden_layer_pdf();
+    let inv = inventory(&data);
+    assert_eq!(
+        the_object(&inv, 5).disposition,
+        Disposition::ImageData,
+        "{inv}"
+    );
+    for n in [11, 12] {
+        let p = the_object(&inv, n);
+        assert_eq!(p.disposition, Disposition::Dropped, "obj {n}\n{inv}");
+        assert_eq!(label(p), "optional content off");
+    }
+    // The layer's name is read (the group is looked up), the hidden image's
+    // entry in the page is not drawn.
+    assert_eq!(the_object(&inv, 10).disposition, Disposition::Structure);
+    let entry = leaf_at(&inv, find(&data, b"/ImSecret 11") as u64);
+    assert_eq!(entry.disposition, Disposition::Dropped, "{inv}");
+    // The decoder agrees: the page is white except the visible black pixel.
+    let page = zenpdf::render_page(&data, 0, &zenpdf::RenderBounds::Scale(1.0)).unwrap();
+    let px = page.buffer.as_contiguous_bytes().unwrap().to_vec();
+    let gray_or_dark_grey = px
+        .chunks(4)
+        .filter(|p| p[0] == 0x80 || p[0] == 0x40)
+        .count();
+    assert_eq!(gray_or_dark_grey, 0, "hidden images were drawn");
+    assert!(
+        px.chunks(4).any(|p| p[0] == 0),
+        "the visible image is drawn"
+    );
 }
 
 #[test]

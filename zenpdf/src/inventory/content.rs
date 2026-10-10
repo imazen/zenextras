@@ -32,11 +32,40 @@ pub(crate) const CHECKED: &[&[u8]] = &[
 /// `(category, name)` pairs content names.
 pub(crate) type Used = BTreeSet<(&'static [u8], Vec<u8>)>;
 
+/// What content names, split by optional-content visibility.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct Usage {
+    /// Names used where content is visible, and every name whose lookup
+    /// hayro performs regardless of visibility (fonts, graphics states,
+    /// patterns, properties).
+    pub visible: Used,
+    /// XObject and shading names used inside optional content that is off:
+    /// hayro skips `Do` drawing and `sh` there (`ImageXObject::draw`,
+    /// `FormXObject::draw` and the shading branch check `is_visible`).
+    pub hidden: Used,
+}
+
+impl Usage {
+    /// Used anywhere.
+    pub(crate) fn contains(&self, k: &(&'static [u8], Vec<u8>)) -> bool {
+        self.visible.contains(k) || self.hidden.contains(k)
+    }
+
+    /// Used only inside optional content that is off.
+    pub(crate) fn hidden_only(&self, k: &(&'static [u8], Vec<u8>)) -> bool {
+        !self.visible.contains(k) && self.hidden.contains(k)
+    }
+}
+
 /// Add the resource names `content` uses to `used`. Returns `false` when the
 /// stream could not be tokenised to its end.
-pub(crate) fn scan(content: &[u8], used: &mut Used) -> bool {
+pub(crate) fn scan(content: &[u8], usage: &mut Usage, oc_hidden: &dyn Fn(&[u8]) -> bool) -> bool {
     let n = content.len();
     let mut operands: Vec<(Tok, usize, usize)> = Vec::new();
+    // `OcgState`'s visibility stack: BDC pushes (hidden when its properties
+    // name an optional-content group or membership that is off), BMC pushes
+    // the current state, EMC pops.
+    let mut hidden_stack: Vec<bool> = Vec::new();
     let mut i = 0usize;
     loop {
         i = lex::skip_ws_comments_in(content, i, n);
@@ -74,8 +103,24 @@ pub(crate) fn scan(content: &[u8], used: &mut Used) -> bool {
             b"BDC" | b"DP" => Some((b"Properties", last.and_then(name_at))),
             _ => None,
         };
+        let hidden_now = hidden_stack.last().copied().unwrap_or(false);
+        match op {
+            b"BDC" => {
+                let props_hidden = last.and_then(name_at).is_some_and(|name| oc_hidden(&name));
+                hidden_stack.push(hidden_now || props_hidden);
+            }
+            b"BMC" => hidden_stack.push(hidden_now),
+            b"EMC" => {
+                hidden_stack.pop();
+            }
+            _ => {}
+        }
         if let Some((cat, Some(name))) = hit {
-            used.insert((cat, name));
+            if hidden_now && matches!(op, b"Do" | b"sh") {
+                usage.hidden.insert((cat, name));
+            } else {
+                usage.visible.insert((cat, name));
+            }
         }
         operands.clear();
         i = end;
@@ -131,12 +176,16 @@ mod tests {
 
     #[test]
     fn collects_resource_names() {
-        let mut used = Used::new();
+        let mut usage = Usage::default();
         let c = b"q /GS1 gs BT /F1 12 Tf (a) Tj ET /Im1 Do /P#31 scn 0.5 g /Sh sh \
                   /OC /oc1 BDC EMC /Span <</MCID 0>> BDC EMC \
                   BI /W 1 /H 1 /CS /G /BPC 8 ID \x00\xff EI Q /Im2 Do";
-        assert!(scan(c, &mut used));
-        let got: Vec<(&[u8], &[u8])> = used.iter().map(|(c, n)| (*c, n.as_slice())).collect();
+        assert!(scan(c, &mut usage, &|_| false));
+        let got: Vec<(&[u8], &[u8])> = usage
+            .visible
+            .iter()
+            .map(|(c, n)| (*c, n.as_slice()))
+            .collect();
         assert_eq!(
             got,
             [
@@ -153,8 +202,26 @@ mod tests {
 
     #[test]
     fn an_unterminated_stream_abandons_the_scan() {
-        let mut used = Used::new();
-        assert!(!scan(b"(unterminated /Im1 Do", &mut used));
-        assert!(!scan(b"BI /W 1 ID \x00\x00", &mut used));
+        let mut usage = Usage::default();
+        assert!(!scan(b"(unterminated /Im1 Do", &mut usage, &|_| false));
+        assert!(!scan(b"BI /W 1 ID \x00\x00", &mut usage, &|_| false));
+    }
+
+    #[test]
+    fn draws_inside_hidden_optional_content_are_split_out() {
+        let mut usage = Usage::default();
+        let c = b"/OC /off BDC /Im1 Do /F1 9 Tf /Sh sh BMC /Im2 Do EMC EMC /Im3 Do \
+                  /OC /on BDC /Im4 Do EMC";
+        assert!(scan(c, &mut usage, &|n| n == b"off"));
+        let names = |s: &Used| -> Vec<Vec<u8>> { s.iter().map(|(_, n)| n.clone()).collect() };
+        assert_eq!(
+            names(&usage.hidden),
+            // Ordered by (category, name): Shading before XObject.
+            [b"Sh".to_vec(), b"Im1".to_vec(), b"Im2".to_vec()]
+        );
+        // The font is resolved by Tf even inside hidden content.
+        assert!(usage.visible.contains(&(&b"Font"[..], b"F1".to_vec())));
+        assert!(usage.visible.contains(&(&b"XObject"[..], b"Im3".to_vec())));
+        assert!(usage.visible.contains(&(&b"XObject"[..], b"Im4".to_vec())));
     }
 }

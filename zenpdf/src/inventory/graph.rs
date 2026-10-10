@@ -50,6 +50,10 @@ pub(crate) enum Ctx {
     /// The document information dictionary: hayro parses it into
     /// `Pdf::metadata()`, zenpdf never reports it.
     Info,
+    /// An XObject or shading the renderer parses but never draws, because it
+    /// is used only inside optional content that is off, or carries an
+    /// `/OC` that is off (`ImageXObject::draw`, `FormXObject::draw`).
+    OcHidden,
     /// Never read by the decoder.
     Skip,
 }
@@ -68,6 +72,7 @@ impl Ctx {
             | Ctx::Leaf
             | Ctx::OcProps
             | Ctx::Encrypt => 4,
+            Ctx::OcHidden => 3,
             Ctx::Info => 2,
             Ctx::Names | Ctx::Skip => 1,
         }
@@ -380,6 +385,9 @@ fn rule(ctx: Ctx, key: &[u8], render_annotations: bool) -> Rule {
     let other = || side_data(key).unwrap_or_else(|| skip_key(key));
     match ctx {
         Ctx::Info => Rule::Follow(Ctx::Info, None),
+        // What a parsed-but-undrawn XObject references may still be read
+        // while it is constructed (its colour space): count it as read.
+        Ctx::OcHidden => rule(Ctx::Render, key, render_annotations),
         Ctx::Encrypt => Rule::Follow(Ctx::Encrypt, None),
         Ctx::Leaf | Ctx::Annot => Rule::Ignore,
         Ctx::OcProps => match key {
@@ -453,6 +461,7 @@ pub(crate) fn unread_entry(
         }
         Ctx::Annot => matches!(key, b"F" | b"Rect" | b"AS") || (key == b"AP" && annot_drawn),
         Ctx::Render => RENDER_MAPS.contains(&key) || RENDER_KEYS.binary_search(&key).is_ok(),
+        Ctx::OcHidden => RENDER_MAPS.contains(&key) || RENDER_KEYS.binary_search(&key).is_ok(),
         Ctx::RenderMap | Ctx::Leaf | Ctx::OcProps | Ctx::Encrypt | Ctx::Info => true,
         Ctx::Names | Ctx::Skip => false,
     };
@@ -504,6 +513,9 @@ pub(crate) struct Walk {
     /// Streams the renderer interprets as content: page contents, form
     /// XObjects, annotation appearances, Type 3 glyphs, tiling patterns.
     pub content: BTreeSet<Id>,
+    /// Every `/Properties` resource name, with the objects it names in any
+    /// resource dictionary (pooled; see `content`).
+    pub properties: BTreeMap<Vec<u8>, BTreeSet<Id>>,
 }
 
 /// The walk reads dictionaries and arrays from their raw bytes with the
@@ -518,8 +530,11 @@ struct Walker<'p> {
     /// Resource names content uses; when given, entries of the checked
     /// resource categories that no content names are not followed as render
     /// objects.
-    used: Option<&'p super::content::Used>,
+    used: Option<&'p super::content::Usage>,
+    /// Optional-content groups that are off.
+    inactive: &'p BTreeSet<Id>,
     content: BTreeSet<Id>,
+    properties: BTreeMap<Vec<u8>, BTreeSet<Id>>,
     best: BTreeMap<Id, Reach>,
     seen: BTreeSet<(Id, Ctx)>,
     queue: VecDeque<(Id, Ctx, Cow<'static, str>)>,
@@ -555,13 +570,16 @@ pub(crate) fn walk<'p>(
     pdf: &'p Pdf,
     trailer: Option<&[u8]>,
     render_annotations: bool,
-    used: Option<&'p super::content::Used>,
+    used: Option<&'p super::content::Usage>,
+    inactive: &'p BTreeSet<Id>,
 ) -> Walk {
     let mut w = Walker {
         pdf,
         render_annotations,
         used,
+        inactive,
         content: BTreeSet::new(),
+        properties: BTreeMap::new(),
         best: BTreeMap::new(),
         seen: BTreeSet::new(),
         queue: VecDeque::new(),
@@ -593,6 +611,7 @@ pub(crate) fn walk<'p>(
         best: w.best,
         truncated: w.truncated,
         content: w.content,
+        properties: w.properties,
     }
 }
 
@@ -712,13 +731,47 @@ impl<'p> Walker<'p> {
                 return;
             }
             let key = super::lex::unescape_name(&d[e.key.clone()]);
-            if let Some((cat, used)) = unused_check
-                && !used.contains(&(cat, key.to_vec()))
+            if ctx == Ctx::RenderMap
+                && label == "Properties"
+                && let super::lex::ValueKind::Ref(n, g) =
+                    super::lex::value_kind(&d[e.value.clone()])
+            {
+                self.properties
+                    .entry(key.to_vec())
+                    .or_default()
+                    .insert((n, g));
+            }
+            if let Some((cat, used)) = unused_check {
+                let k = (cat, key.to_vec());
+                if !used.contains(&k) {
+                    self.edge(
+                        &d[e.value],
+                        Ctx::Skip,
+                        Cow::Borrowed("unused resource"),
+                        depth + 1,
+                    );
+                    continue;
+                }
+                if used.hidden_only(&k) {
+                    self.edge(
+                        &d[e.value],
+                        Ctx::OcHidden,
+                        Cow::Borrowed("optional content off"),
+                        depth + 1,
+                    );
+                    continue;
+                }
+            }
+            if ctx == Ctx::RenderMap
+                && label == "XObject"
+                && let super::lex::ValueKind::Ref(n, g) =
+                    super::lex::value_kind(&d[e.value.clone()])
+                && self.own_oc_hidden((n, g))
             {
                 self.edge(
                     &d[e.value],
-                    Ctx::Skip,
-                    Cow::Borrowed("unused resource"),
+                    Ctx::OcHidden,
+                    Cow::Borrowed("optional content off"),
                     depth + 1,
                 );
                 continue;
@@ -731,6 +784,21 @@ impl<'p> Walker<'p> {
                 }
             }
         }
+    }
+
+    /// An XObject whose own `/OC` names optional content that is off
+    /// (`xobject_oc`): hayro returns before drawing it.
+    fn own_oc_hidden(&self, id: Id) -> bool {
+        let Some(Raw::Dict(d, _)) = resolve(self.pdf, id) else {
+            return false;
+        };
+        super::lex::dict_entries(d, 0..d.len())
+            .into_iter()
+            .rfind(|e| &*super::lex::unescape_name(&d[e.key.clone()]) == b"OC")
+            .is_some_and(|e| match super::lex::value_kind(&d[e.value.clone()]) {
+                super::lex::ValueKind::Ref(n, g) => oc_hidden(self.pdf, (n, g), self.inactive),
+                _ => false,
+            })
     }
 
     /// `interpret_page` draws an annotation's normal appearance unless the
@@ -864,16 +932,142 @@ impl<'p> Walker<'p> {
     }
 }
 
+/// Whether a stream's filter chain uses only the general-purpose filters
+/// (Flate, LZW, ASCIIHex, ASCII85, RunLength), so asking hayro to decode it
+/// cannot reach its image decoders. hayro's CCITT decoder panics on some
+/// input; the inventory never runs image decoders itself.
+pub(crate) fn text_filters_only(dict: &[u8]) -> bool {
+    let Some(v) = entry(dict, b"Filter") else {
+        return true;
+    };
+    let ok = |name: &[u8]| {
+        matches!(
+            name,
+            b"/FlateDecode"
+                | b"/Fl"
+                | b"/LZWDecode"
+                | b"/LZW"
+                | b"/ASCIIHexDecode"
+                | b"/AHx"
+                | b"/ASCII85Decode"
+                | b"/A85"
+                | b"/RunLengthDecode"
+                | b"/RL"
+        )
+    };
+    match super::lex::value_kind(v) {
+        ValueKind::Array => super::lex::array_items(v).into_iter().all(|r| ok(&v[r])),
+        ValueKind::Other => ok(v),
+        _ => false,
+    }
+}
+
+/// Refs in a value: the reference itself, or the references in an array.
+fn refs_in(v: &[u8]) -> Vec<Id> {
+    match super::lex::value_kind(v) {
+        ValueKind::Ref(n, g) => alloc::vec![(n, g)],
+        ValueKind::Array => super::lex::array_items(v)
+            .into_iter()
+            .filter_map(|r| match super::lex::value_kind(&v[r]) {
+                ValueKind::Ref(n, g) => Some((n, g)),
+                _ => None,
+            })
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// A dictionary value: in place, or resolved.
+fn dict_of<'a>(pdf: &'a Pdf, v: &'a [u8]) -> Option<&'a [u8]> {
+    match super::lex::value_kind(v) {
+        ValueKind::Dict => Some(v),
+        ValueKind::Ref(n, g) => match resolve(pdf, (n, g))? {
+            Raw::Dict(d, _) => Some(d),
+            Raw::Array(_) => None,
+        },
+        _ => None,
+    }
+}
+
+fn entry<'a>(d: &'a [u8], key: &[u8]) -> Option<&'a [u8]> {
+    super::lex::dict_entries(d, 0..d.len())
+        .into_iter()
+        .rfind(|e| &*super::lex::unescape_name(&d[e.key.clone()]) == key)
+        .map(|e| &d[e.value])
+}
+
+/// The optional-content groups that are off, as `OcgState::from_catalog`
+/// computes them: the catalog's `/OCProperties /D` configuration, with
+/// `/BaseState /OFF` turning every `/OCGs` entry off, then `/ON` and `/OFF`.
+pub(crate) fn inactive_ocgs(pdf: &Pdf) -> BTreeSet<Id> {
+    let mut off = BTreeSet::new();
+    let root = pdf.xref().root_id();
+    let Some(Raw::Dict(catalog, _)) = resolve(pdf, (root.obj_number, root.gen_number)) else {
+        return off;
+    };
+    let Some(props) = entry(catalog, b"OCProperties").and_then(|v| dict_of(pdf, v)) else {
+        return off;
+    };
+    let Some(config) = entry(props, b"D").and_then(|v| dict_of(pdf, v)) else {
+        return off;
+    };
+    if entry(config, b"BaseState").is_some_and(|v| v == b"/OFF")
+        && let Some(v) = entry(props, b"OCGs")
+    {
+        off.extend(refs_in(v));
+    }
+    if let Some(v) = entry(config, b"ON") {
+        for id in refs_in(v) {
+            off.remove(&id);
+        }
+    }
+    if let Some(v) = entry(config, b"OFF") {
+        off.extend(refs_in(v));
+    }
+    off
+}
+
+/// Whether optional content naming `id` is hidden: an OCG that is off, or
+/// an OCMD whose `/P` policy over its `/OCGs` evaluates to off
+/// (`OcgState::begin_ocg`, `begin_ocmd`; `/VE` is not evaluated by hayro).
+pub(crate) fn oc_hidden(pdf: &Pdf, id: Id, inactive: &BTreeSet<Id>) -> bool {
+    let Some(Raw::Dict(d, _)) = resolve(pdf, id) else {
+        return false;
+    };
+    if super::lex::dict_type(d).as_deref() != Some(b"OCMD") {
+        return inactive.contains(&id);
+    }
+    let ocgs = entry(d, b"OCGs").map(refs_in).unwrap_or_default();
+    if ocgs.is_empty() {
+        return false;
+    }
+    let on = |g: &Id| !inactive.contains(g);
+    let visible = match entry(d, b"P") {
+        Some(b"/AllOn") => ocgs.iter().all(on),
+        Some(b"/AnyOff") => ocgs.iter().any(|g| !on(g)),
+        Some(b"/AllOff") => ocgs.iter().all(|g| !on(g)),
+        _ => ocgs.iter().any(on),
+    };
+    !visible
+}
+
 /// Resource names used by the walk's content streams, or `None` when a
 /// stream could not be decoded or tokenised (the check is then abandoned).
-pub(crate) fn content_usage(pdf: &Pdf, content: &BTreeSet<Id>) -> Option<super::content::Used> {
-    let mut used = super::content::Used::new();
+pub(crate) fn content_usage(
+    pdf: &Pdf,
+    content: &BTreeSet<Id>,
+    oc_name_hidden: &dyn Fn(&[u8]) -> bool,
+) -> Option<super::content::Usage> {
+    let mut used = super::content::Usage::default();
     let mut budget: u64 = 1 << 30;
     for &(n, g) in content {
         let stream = pdf.xref().get::<Stream<'_>>(ObjectIdentifier::new(n, g))?;
+        if !text_filters_only(stream.dict().data()) {
+            return None;
+        }
         let decoded = stream.decoded().ok()?;
         budget = budget.checked_sub(decoded.len() as u64)?;
-        if !super::content::scan(&decoded, &mut used) {
+        if !super::content::scan(&decoded, &mut used, oc_name_hidden) {
             return None;
         }
     }
@@ -883,6 +1077,9 @@ pub(crate) fn content_usage(pdf: &Pdf, content: &BTreeSet<Id>) -> Option<super::
 /// Object numbers an object stream declares, in order.
 pub(crate) fn objstm_numbers(bytes: &[u8]) -> Result<Vec<u32>, &'static str> {
     let stream = Stream::from_bytes(bytes).ok_or("unparseable stream")?;
+    if !text_filters_only(stream.dict().data()) {
+        return Err("filters the inventory does not decode");
+    }
     let n = stream.dict().get::<usize>(b"N").ok_or("no /N")?;
     let first = stream.dict().get::<usize>(b"First").ok_or("no /First")?;
     let data = stream

@@ -518,7 +518,7 @@ struct Semantics {
     /// The trailer names an encryption dictionary.
     encrypted: bool,
     /// Resource names content uses, when every content stream was scanned.
-    used: Option<content::Used>,
+    used: Option<content::Usage>,
 }
 
 fn semantics(
@@ -573,10 +573,18 @@ fn semantics(
     // First walk: everything a resource map lists counts as read. Its
     // content streams give the resource names actually used; the second
     // walk follows only those (when every stream could be scanned).
-    let first = graph::walk(pdf, trailer, render_annotations, None);
-    let used = graph::content_usage(pdf, &first.content);
+    let inactive = graph::inactive_ocgs(pdf);
+    let first = graph::walk(pdf, trailer, render_annotations, None, &inactive);
+    // A properties name hides content only when every object it names (in
+    // any resource dictionary) is optional content that is off.
+    let oc_name_hidden = |name: &[u8]| {
+        first.properties.get(name).is_some_and(|ids| {
+            !ids.is_empty() && ids.iter().all(|&id| graph::oc_hidden(pdf, id, &inactive))
+        })
+    };
+    let used = graph::content_usage(pdf, &first.content, &oc_name_hidden);
     let walk = match &used {
-        Some(u) => graph::walk(pdf, trailer, render_annotations, Some(u)),
+        Some(u) => graph::walk(pdf, trailer, render_annotations, Some(u), &inactive),
         None => first,
     };
 
@@ -732,7 +740,7 @@ fn unused_resource_children(
     data: &[u8],
     dict: Range<usize>,
     reach: &graph::Reach,
-    used: &content::Used,
+    used: &content::Usage,
 ) -> Vec<Child> {
     let category = |k: &[u8]| content::CHECKED.iter().find(|c| **c == k).copied();
     let is_dict = |r: &Range<usize>| data[r.clone()].starts_with(b"<<");
@@ -765,20 +773,33 @@ fn unused_resource_children(
     for (cat, map) in maps {
         for e in lex::dict_entries(data, map) {
             let name = lex::unescape_name(&data[e.key.clone()]);
-            if used.contains(&(cat, name.to_vec())) {
-                continue;
-            }
+            let k = (cat, name.to_vec());
             let shown = text(&name, 64);
+            let (disposition, why) = if !used.contains(&k) {
+                (
+                    Disposition::Skipped,
+                    format!(
+                        "unused {} resource: no content operator names /{shown}",
+                        text(cat, 16)
+                    ),
+                )
+            } else if used.hidden_only(&k) {
+                (
+                    Disposition::Dropped,
+                    format!(
+                        "{} resource drawn only inside optional content that is off",
+                        text(cat, 16)
+                    ),
+                )
+            } else {
+                continue;
+            };
             out.push(Child {
                 range: e.range.clone(),
                 kind: PartKind::Attribute,
                 tag: PartTag::Name(Cow::Owned(shown.clone())),
-                disposition: Disposition::Skipped,
-                detail: format!(
-                    "unused {} resource: no content operator names /{shown}; {}",
-                    text(cat, 16),
-                    text(&data[e.value.clone()], 64)
-                ),
+                disposition,
+                detail: format!("{why}; {}", text(&data[e.value.clone()], 64)),
                 label: Some(shown),
             });
         }
@@ -888,7 +909,7 @@ fn image_geometry(dict: &[u8]) -> Option<ends::ImageGeometry> {
 fn reach_disposition(ctx: Ctx, is_stream: bool) -> Disposition {
     match ctx {
         Ctx::Render | Ctx::RenderMap if is_stream => Disposition::ImageData,
-        Ctx::Info => Disposition::Dropped,
+        Ctx::Info | Ctx::OcHidden => Disposition::Dropped,
         Ctx::Names | Ctx::Skip => Disposition::Skipped,
         _ => Disposition::Structure,
     }
@@ -1084,12 +1105,16 @@ fn live_assign(i: usize, o: &lex::ObjUnit, s: &Semantics, dict: Option<&[u8]>) -
             let disposition = reach_disposition(r.ctx, o.stream.is_some());
             let why = match r.ctx {
                 Ctx::Info => "parsed by hayro into Pdf::metadata(); zenpdf never reports it",
+                Ctx::OcHidden => {
+                    "parsed but never drawn: used only inside optional content that is off, \
+                     or its own /OC is off"
+                }
                 Ctx::Names | Ctx::Skip => "not read by the decoder",
                 _ => "",
             };
             let mut a = Assign::new(disposition, why);
             a.label = match r.ctx {
-                Ctx::Info | Ctx::Names | Ctx::Skip => Some(r.label.to_string()),
+                Ctx::Info | Ctx::Names | Ctx::Skip | Ctx::OcHidden => Some(r.label.to_string()),
                 _ => dict
                     .and_then(graph::type_label)
                     .or_else(|| Some(r.label.to_string())),
