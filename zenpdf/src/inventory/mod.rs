@@ -84,6 +84,11 @@ struct Assign {
     /// Bytes inside this part the decoder does not read: unread dictionary
     /// entries, overwritten duplicate keys, comments.
     children: Vec<Child>,
+    /// The stream data part's detail (default "stream data").
+    data_detail: Option<String>,
+    /// Parts inside the stream data (JPEG segments, object-stream members),
+    /// each with its own children.
+    data_parts: Vec<(Child, Vec<Child>)>,
 }
 
 /// A child part inside a unit.
@@ -106,6 +111,8 @@ impl Assign {
             data: None,
             data_end: None,
             children: Vec::new(),
+            data_detail: None,
+            data_parts: Vec::new(),
         }
     }
 }
@@ -121,10 +128,40 @@ pub(crate) fn pdf_inventory(
     render_annotations: bool,
     start_frame: u32,
     rejected: Option<String>,
-) -> Result<Inventory, InventoryError> {
-    let units = lex::lex(data);
-    let assign = assign(data, &units, render_annotations, start_frame, rejected);
-    emit(data, format, &units, &assign)
+    stop: &dyn zencodec::enough::Stop,
+) -> Result<Inventory, InvError> {
+    let max_parts = zencodec::inventory::DEFAULT_MAX_PARTS;
+    let units = lex::lex(data, max_parts as usize, stop).map_err(|e| match e {
+        lex::LexStop::TooManyParts => {
+            InvError::Parts(InventoryError::TooManyParts { max: max_parts })
+        }
+        lex::LexStop::Stopped(r) => InvError::Stopped(r),
+    })?;
+    let assign = assign(
+        data,
+        &units,
+        render_annotations,
+        start_frame,
+        rejected,
+        stop,
+    )
+    .map_err(InvError::Stopped)?;
+    Ok(emit(data, format, &units, &assign)?)
+}
+
+/// Why no inventory was built.
+#[derive(Debug)]
+pub(crate) enum InvError {
+    /// The part cap.
+    Parts(InventoryError),
+    /// The caller's stop token.
+    Stopped(zencodec::enough::StopReason),
+}
+
+impl From<InventoryError> for InvError {
+    fn from(e: InventoryError) -> Self {
+        InvError::Parts(e)
+    }
 }
 
 /// `rev N`; `last` is the number of `%%EOF` markers in the file.
@@ -280,9 +317,17 @@ enum Outcome {
     In(usize),
     InObjStm,
     Missing,
-    /// hayro resolves it to bytes outside every unit with this id.
-    Elsewhere,
+    /// hayro resolves it to bytes inside this other unit (an xref offset
+    /// that points into a comment, or into another object).
+    Elsewhere(usize),
+    /// Not looked up: it is also stored in an object stream, and the
+    /// lookup budget ([`MAX_OBJSTM_LOOKUP_COST`]) is spent.
+    NotLookedUp,
 }
+
+/// Lookups of objects stored in object streams cost a parse of the stream's
+/// offset table each; this bounds the total, in table entries parsed.
+const MAX_OBJSTM_LOOKUP_COST: u64 = 1 << 23;
 
 fn assign(
     data: &[u8],
@@ -290,7 +335,8 @@ fn assign(
     render_annotations: bool,
     start_frame: u32,
     rejected: Option<String>,
-) -> Vec<Assign> {
+    stop: &dyn zencodec::enough::Stop,
+) -> Result<Vec<Assign>, zencodec::enough::StopReason> {
     let chain = chain(data, units);
     // Labels from every trailer in the file (any revision), for copies
     // that are no longer live.
@@ -325,10 +371,12 @@ fn assign(
                     render_annotations,
                     start_frame,
                     rejected.as_deref(),
+                    stop,
                 )
             }));
             match r {
-                Ok(s) => Ok(s),
+                Ok(Ok(s)) => Ok(s),
+                Ok(Err(stopped)) => return Err(stopped),
                 Err(_) => Err("hayro panicked while resolving objects".to_string()),
             }
         }
@@ -337,8 +385,20 @@ fn assign(
 
     let last_eof = units.iter().rposition(|u| matches!(u.kind, Kind::Eof));
     let eofs = units.iter().filter(|u| matches!(u.kind, Kind::Eof)).count() as u32;
+    // Units hayro reads an object from although they are not that object.
+    let mut hosts: BTreeMap<usize, Vec<Id>> = BTreeMap::new();
+    if let Ok(s) = &semantics {
+        for (id, o) in &s.outcome {
+            if let Outcome::Elsewhere(u) = o {
+                hosts.entry(*u).or_default().push(*id);
+            }
+        }
+    }
     let mut out = Vec::with_capacity(units.len());
     for (i, u) in units.iter().enumerate() {
+        if i % 4096 == 4095 {
+            stop.check()?;
+        }
         let rev = rev_text(eofs, u);
         let a = match &u.kind {
             Kind::LeadingJunk => Assign::new(
@@ -388,10 +448,27 @@ fn assign(
             }
             Kind::Whitespace => Assign::new(Disposition::Padding, rev),
             Kind::Comment => {
-                let mut a = Assign::new(
-                    Disposition::Skipped,
-                    format!("{rev}; comment, skipped by the parser"),
-                );
+                // An xref offset that points inside the comment: hayro reads
+                // the object from there.
+                let hosted: Vec<String> = hosts
+                    .get(&i)
+                    .map(|ids| ids.iter().map(|id| format!("{} {}", id.0, id.1)).collect())
+                    .unwrap_or_default();
+                let mut a = if hosted.is_empty() {
+                    Assign::new(
+                        Disposition::Skipped,
+                        format!("{rev}; comment, skipped by the parser"),
+                    )
+                } else {
+                    Assign::new(
+                        Disposition::Structure,
+                        format!(
+                            "{rev}; a comment to the lexer, but the xref points inside it and \
+                             hayro reads object {} from here",
+                            hosted.join(", ")
+                        ),
+                    )
+                };
                 a.label = Some(text(&data[u.range.start + 1..u.range.end], 64));
                 a
             }
@@ -525,7 +602,7 @@ fn assign(
         };
         out.push(a);
     }
-    out
+    Ok(out)
 }
 
 /// The semantic facts the object assignments need.
@@ -534,11 +611,12 @@ struct Semantics {
     walk: graph::Walk,
     /// Live object-stream units: their contained object numbers, or why they
     /// could not be listed.
-    objstm: BTreeMap<usize, Result<Vec<u32>, &'static str>>,
+    objstm: BTreeMap<usize, Result<graph::ObjStmMembers, &'static str>>,
     /// For objects resolved from an object stream: the unit that holds them.
     owner: BTreeMap<u32, usize>,
     /// Liveness of objects stored in object streams.
-    stm_live: BTreeMap<u32, Live>,
+    /// `None`: not looked up (budget).
+    stm_live: BTreeMap<u32, Option<Live>>,
     render_annotations: bool,
     /// The page the job decodes.
     sel: graph::Selection,
@@ -551,6 +629,7 @@ struct Semantics {
     used: Option<content::Usage>,
 }
 
+#[allow(clippy::too_many_arguments)]
 fn semantics(
     pdf: &Pdf,
     data: &[u8],
@@ -559,29 +638,14 @@ fn semantics(
     render_annotations: bool,
     start_frame: u32,
     rejected: Option<&str>,
-) -> Semantics {
+    stop: &dyn zencodec::enough::Stop,
+) -> Result<Semantics, zencodec::enough::StopReason> {
     let mut by_id: BTreeMap<Id, Vec<usize>> = BTreeMap::new();
     for (i, u) in units.iter().enumerate() {
         if let Some(o) = obj(u) {
             by_id.entry((o.num, o.gen_)).or_default().push(i);
         }
     }
-    let mut outcome = BTreeMap::new();
-    for (id, us) in &by_id {
-        let o = match graph::live(pdf, *id) {
-            Live::At(off) => match unit_containing(units, off) {
-                Some(u) if us.contains(&u) => Outcome::In(u),
-                _ => Outcome::Elsewhere,
-            },
-            Live::Elsewhere => Outcome::InObjStm,
-            Live::Missing => Outcome::Missing,
-            // A bare number or name: the last definition in file order is
-            // the one a well-formed xref names.
-            Live::Opaque => Outcome::In(*us.last().unwrap_or(&0)),
-        };
-        outcome.insert(*id, o);
-    }
-
     // The trailer hayro reads: the latest on the chain, or, when the chain
     // is broken, the last trailer dictionary with /Root (hayro's fallback
     // keeps the last valid one it scans).
@@ -602,6 +666,71 @@ fn semantics(
             .iter()
             .any(|e| &*lex::unescape_name(&t[e.key.clone()]) == b"Encrypt")
     });
+    let lookup = |id: Id, us: &[usize]| match graph::live(pdf, id) {
+        Live::At(off) => match unit_containing(units, off) {
+            Some(u) if us.contains(&u) => Outcome::In(u),
+            Some(u) => Outcome::Elsewhere(u),
+            None => Outcome::Missing,
+        },
+        Live::Elsewhere => Outcome::InObjStm,
+        Live::Missing => Outcome::Missing,
+        // A bare number or name: the last definition in file order is
+        // the one a well-formed xref names.
+        Live::Opaque => Outcome::In(*us.last().unwrap_or(&0)),
+    };
+    // Object streams first. Looking one up is cheap (an object stream is
+    // never stored in another), and their offset tables, parsed once here,
+    // tell which lookups below would make hayro re-parse a table: every
+    // lookup of an object stored in an object stream does
+    // (`ObjectStream::new` per `XRef::get`).
+    let mut outcome = BTreeMap::new();
+    let mut objstm: BTreeMap<usize, Result<graph::ObjStmMembers, &'static str>> = BTreeMap::new();
+    let mut listed: BTreeMap<u32, Vec<usize>> = BTreeMap::new();
+    for (id, us) in &by_id {
+        if !us.iter().any(|&u| is_type(data, &units[u], b"ObjStm")) {
+            continue;
+        }
+        stop.check()?;
+        let o = lookup(*id, us);
+        outcome.insert(*id, o);
+        if let Outcome::In(i) = o
+            && is_type(data, &units[i], b"ObjStm")
+        {
+            let m = graph::objstm_members(pdf, *id, encrypted);
+            if let Ok(m) = &m {
+                for &(n, _) in &m.members {
+                    listed.entry(n).or_default().push(i);
+                }
+            }
+            objstm.insert(i, m);
+        }
+    }
+    let widest = objstm
+        .values()
+        .filter_map(|m| m.as_ref().ok())
+        .map(|m| m.members.len() as u64)
+        .max()
+        .unwrap_or(0);
+    let mut lookup_cost = 0u64;
+    let affordable = |cost: &mut u64| {
+        *cost = cost.saturating_add(widest.max(1));
+        *cost <= MAX_OBJSTM_LOOKUP_COST
+    };
+    for (n, (id, us)) in by_id.iter().enumerate() {
+        if outcome.contains_key(id) {
+            continue;
+        }
+        if n % 1024 == 1023 {
+            stop.check()?;
+        }
+        let in_objstm = id.1 == 0 && u32::try_from(id.0).is_ok_and(|k| listed.contains_key(&k));
+        if in_objstm && !affordable(&mut lookup_cost) {
+            outcome.insert(*id, Outcome::NotLookedUp);
+            continue;
+        }
+        outcome.insert(*id, lookup(*id, us));
+    }
+
     // First walk: everything a resource map lists counts as read. Its
     // content streams give the resource names actually used; the second
     // walk follows only those (when every stream could be scanned).
@@ -611,7 +740,18 @@ fn semantics(
         Some(e) => format!("the decoder rejects this job before drawing any page ({e})"),
         None => format!("this job decodes page index {}", sel.index),
     };
-    let first = graph::walk(pdf, trailer, render_annotations, None, &inactive, &sel);
+    let first = graph::walk(
+        pdf,
+        trailer,
+        render_annotations,
+        None,
+        &inactive,
+        &sel,
+        stop,
+    );
+    if let Some(r) = first.stopped {
+        return Err(r);
+    }
     // A properties name hides content only when every object it names (in
     // any resource dictionary) is optional content that is off.
     let oc_name_hidden = |r: content::OcRef<'_>| match r {
@@ -620,39 +760,89 @@ fn semantics(
         }),
         content::OcRef::Ref(n, g) => graph::oc_hidden(pdf, (n, g), &inactive),
     };
-    let used = graph::content_usage(pdf, &first.content, &oc_name_hidden);
+    let used = graph::content_usage(pdf, &first.content, &oc_name_hidden, stop)?;
     let walk = match &used {
-        Some(u) => graph::walk(pdf, trailer, render_annotations, Some(u), &inactive, &sel),
+        Some(u) => graph::walk(
+            pdf,
+            trailer,
+            render_annotations,
+            Some(u),
+            &inactive,
+            &sel,
+            stop,
+        ),
         None => first,
     };
+    if let Some(r) = walk.stopped {
+        return Err(r);
+    }
+    // Objects the walk reached that no unit of their own holds and no
+    // object stream lists: hayro found them inside another unit (an xref
+    // offset pointing into a comment).
+    for (k, id) in walk.best.keys().enumerate() {
+        if k % 1024 == 1023 {
+            stop.check()?;
+        }
+        let listed_member = id.1 == 0 && u32::try_from(id.0).is_ok_and(|n| listed.contains_key(&n));
+        if by_id.contains_key(id) || listed_member {
+            continue;
+        }
+        if let Live::At(off) = graph::live(pdf, *id)
+            && let Some(u) = unit_containing(units, off)
+        {
+            outcome.insert(*id, Outcome::Elsewhere(u));
+        }
+    }
 
-    let mut objstm = BTreeMap::new();
+    // Which object stream holds the copy hayro reads. A member listed by one
+    // live object stream, with no top-level copy, needs no lookup: if hayro
+    // resolves it at all, it resolves it there. Others are looked up within
+    // the same budget.
     let mut owner = BTreeMap::new();
     let mut stm_live = BTreeMap::new();
-    for (i, u) in units.iter().enumerate() {
-        let Some(o) = obj(u) else {
-            continue;
-        };
-        if outcome.get(&(o.num, o.gen_)) != Some(&Outcome::In(i)) || !is_type(data, u, b"ObjStm") {
+    for (k, (&n, hosts)) in listed.iter().enumerate() {
+        if k % 1024 == 1023 {
+            stop.check()?;
+        }
+        let top = (n as i32, 0);
+        if hosts.len() == 1 && !by_id.contains_key(&top) {
+            owner.insert(n, hosts[0]);
             continue;
         }
-        let Some(dict) = &o.dict else {
+        if !affordable(&mut lookup_cost) {
+            stm_live.insert(n, None);
             continue;
-        };
-        let nums = graph::objstm_numbers(&data[dict.start..u.range.end]);
-        if let Ok(nums) = &nums {
-            for &n in nums {
-                let l = *stm_live
-                    .entry(n)
-                    .or_insert_with(|| graph::live(pdf, (n as i32, 0)));
-                if l == Live::Elsewhere {
-                    owner.insert(n, i);
-                }
+        }
+        let l = graph::live(pdf, top);
+        stm_live.insert(n, Some(l));
+        if l == Live::Elsewhere {
+            // The host whose member bytes are the ones hayro resolved; the
+            // last listing when none can be compared.
+            let resolved = graph::resolved_bytes(pdf, top);
+            let host = hosts
+                .iter()
+                .copied()
+                .find(|h| {
+                    let Some(Ok(m)) = objstm.get(h) else {
+                        return false;
+                    };
+                    let (Some(dec), Some(r)) = (&m.decoded, resolved) else {
+                        return false;
+                    };
+                    m.members.iter().any(|&(mn, off)| {
+                        mn == n && {
+                            let at = lex::skip_ws_comments_in(dec, off.min(dec.len()), dec.len());
+                            dec.get(at..at + r.len()) == Some(r)
+                        }
+                    })
+                })
+                .or_else(|| hosts.last().copied());
+            if let Some(h) = host {
+                owner.insert(n, h);
             }
         }
-        objstm.insert(i, nums);
     }
-    Semantics {
+    Ok(Semantics {
         outcome,
         walk,
         objstm,
@@ -663,7 +853,7 @@ fn semantics(
         not_drawn,
         encrypted,
         used,
-    }
+    })
 }
 
 /// Children for the dictionary at `dict`: entries an earlier duplicate key
@@ -720,10 +910,13 @@ fn dict_children(
 /// [`dict_children`] for a dictionary read in `ctx`, then the same for the
 /// direct dictionaries (and arrays of them) under the entries it reads, in
 /// the context the decoder reads those in, to depth 8.
+#[allow(clippy::too_many_arguments)]
 fn deep_children(
     data: &[u8],
     dict: Range<usize>,
     ctx: Ctx,
+    label: &str,
+    is_stream: bool,
     render_annotations: bool,
     sel: &graph::Selection,
     depth: u32,
@@ -732,8 +925,13 @@ fn deep_children(
     // here is a dictionary written directly inside the array.
     let ctx = graph::classify(ctx, None, &data[dict.clone()], sel);
     let drawn = ctx == Ctx::Annot && graph::annot_drawn(&data[dict.clone()]);
+    let kind = if matches!(ctx, Ctx::Render | Ctx::OcHidden) {
+        graph::render_kind(label, &data[dict.clone()], is_stream)
+    } else {
+        graph::RKind::Pooled
+    };
     let mut out = dict_children(data, dict.clone(), |k| {
-        graph::unread_entry(ctx, k, render_annotations, drawn)
+        graph::unread_entry(ctx, k, render_annotations, drawn, kind, is_stream)
     });
     if depth >= 8 {
         return out;
@@ -747,7 +945,7 @@ fn deep_children(
             continue;
         }
         let key = lex::unescape_name(&data[e.key.clone()]);
-        let Some(cc) = graph::child_ctx(ctx, &key, render_annotations) else {
+        let Some((cc, clabel)) = graph::child_ctx(ctx, &key, render_annotations, label) else {
             continue;
         };
         let v = e.value.clone();
@@ -757,6 +955,8 @@ fn deep_children(
                     data,
                     v,
                     cc,
+                    &clabel,
+                    false,
                     render_annotations,
                     sel,
                     depth + 1,
@@ -770,6 +970,8 @@ fn deep_children(
                             data,
                             abs,
                             cc,
+                            &clabel,
+                            false,
                             render_annotations,
                             sel,
                             depth + 1,
@@ -965,6 +1167,47 @@ fn image_geometry(dict: &[u8]) -> Option<ends::ImageGeometry> {
     })
 }
 
+/// Child parts for the JPEG segments the DCT decoder never hands on, at
+/// absolute offsets.
+fn jpeg_segment_parts(jpeg: &[u8], base: usize) -> Vec<(Child, Vec<Child>)> {
+    ends::jpeg_segments(jpeg)
+        .into_iter()
+        .map(|(m, r)| {
+            let body = &jpeg[(r.start + 4).min(r.end)..r.end];
+            let sig = body.split(|&b| b == 0).next().unwrap_or(&[]);
+            let (name, label, disposition, detail): (String, Option<String>, _, &str) = match m {
+                0xFE => (
+                    "COM".into(),
+                    Some(text(body, 64)),
+                    Disposition::Skipped,
+                    "JPEG comment; the DCT decoder skips it",
+                ),
+                0xE1 | 0xE2 => (
+                    format!("APP{}", m - 0xE0),
+                    Some(text(sig, 64)),
+                    Disposition::Dropped,
+                    "parsed by zune-jpeg (Exif, ICC); hayro never uses it",
+                ),
+                _ => (
+                    format!("APP{}", m - 0xE0),
+                    Some(text(sig, 64)),
+                    Disposition::Skipped,
+                    "application segment the DCT decoder skips; hayro uses only APP14",
+                ),
+            };
+            let child = Child {
+                range: base + r.start..base + r.end,
+                kind: PartKind::Chunk,
+                tag: PartTag::Name(Cow::Owned(name)),
+                label: label.filter(|l| !l.is_empty()),
+                disposition,
+                detail: detail.into(),
+            };
+            (child, Vec::new())
+        })
+        .collect()
+}
+
 fn reach_disposition(ctx: Ctx, is_stream: bool) -> Disposition {
     match ctx {
         Ctx::Render | Ctx::RenderMap if is_stream => Disposition::ImageData,
@@ -1031,6 +1274,8 @@ fn object_assign(
                     data,
                     range.clone(),
                     reach.ctx,
+                    &reach.label,
+                    o.stream.is_some(),
                     s.render_annotations,
                     &s.sel,
                     0,
@@ -1058,7 +1303,20 @@ fn object_assign(
             Disposition::Unreferenced,
             "superseded by a copy in an object stream",
         ),
-        Some(Outcome::Elsewhere) | Some(Outcome::Missing) | None => {
+        Some(Outcome::NotLookedUp) => Assign::new(
+            Disposition::Unknown,
+            "not looked up: the object is also stored in an object stream, and the budget for \
+             such lookups (each re-parses the stream's offset table) is spent",
+        ),
+        Some(Outcome::Elsewhere(host)) => Assign::new(
+            Disposition::Unreferenced,
+            format!(
+                "hayro reads object {} {} from inside unit {} at offset {} instead (the xref \
+                 offset points there)",
+                o.num, o.gen_, host, units[*host].range.start
+            ),
+        ),
+        Some(Outcome::Missing) | None => {
             if o.body_damaged || o.stream.as_ref().is_some_and(|s| !s.terminated) {
                 Assign::new(Disposition::Malformed, "unreferenced; could not be parsed")
             } else {
@@ -1069,6 +1327,22 @@ fn object_assign(
             }
         }
     };
+    if a.disposition.is_consumed()
+        && let Some(r) = o.after_value.clone()
+    {
+        a.children.push(Child {
+            label: Some(text(&data[r.clone()], 64)),
+            range: r,
+            kind: PartKind::Gap,
+            tag: PartTag::None,
+            disposition: Disposition::Unreferenced,
+            detail: "after the object's value; hayro's IndirectObject::read reads one value \
+                     and ignores everything before endobj"
+                .into(),
+        });
+    }
+    // `comment_children` searches the listed children by position.
+    a.children.sort_by_key(|c| c.range.start);
     if a.disposition.is_consumed() {
         // Comments inside the object, outside its stream data.
         let ranges = match &o.stream {
@@ -1083,11 +1357,23 @@ fn object_assign(
                 notes.push("encrypted document: bytes after the stream data's internal end are not distinguished".into());
             } else {
                 let filter = first_filter(d);
+                if matches!(filter.as_deref(), Some(b"DCTDecode" | b"DCT")) {
+                    a.data_parts
+                        .extend(jpeg_segment_parts(&data[sd.data.clone()], sd.data.start));
+                }
                 let geometry = if filter.is_none() {
                     image_geometry(d)
                 } else {
                     None
                 };
+                let is_image = graph::type_label(d).is_some_and(|t| t.ends_with("Image"));
+                if filter.is_none() && geometry.is_none() && is_image {
+                    notes.push(
+                        "bytes after the image data's internal end are not distinguished: the \
+                         colour space is not a device space the inventory resolves"
+                            .into(),
+                    );
+                }
                 match ends::filter_end(
                     filter.as_deref(),
                     &data[sd.data.clone()],
@@ -1163,7 +1449,7 @@ fn object_assign(
 fn live_assign(i: usize, o: &lex::ObjUnit, s: &Semantics, dict: Option<&[u8]>) -> Assign {
     let id = (o.num, o.gen_);
     if let Some(nums) = s.objstm.get(&i) {
-        return objstm_assign(nums, i, s);
+        return objstm_assign(nums, i, s, o.stream.as_ref().map(|sd| sd.data.start));
     }
     match s.walk.best.get(&id) {
         Some(r) => {
@@ -1174,8 +1460,15 @@ fn live_assign(i: usize, o: &lex::ObjUnit, s: &Semantics, dict: Option<&[u8]>) -
                 Ctx::OcHidden => "parsed but never drawn: used only inside optional content \
                                   that is off, or its own /OC is off"
                     .into(),
-                Ctx::Names | Ctx::Skip if r.label.ends_with("(page not decoded)") => {
-                    format!("not read by the decoder: {not_drawn}").into()
+                Ctx::Names | Ctx::Skip if r.label.ends_with("not decoded)") => {
+                    match graph::page_number_of(&r.label) {
+                        Some(n) => format!(
+                            "not read by the decoder: page {n} is rendered only with \
+                             with_start_frame_index({n}); {not_drawn}"
+                        )
+                        .into(),
+                        None => format!("not read by the decoder: {not_drawn}").into(),
+                    }
                 }
                 Ctx::Skip if r.label == "unused resource" => format!(
                     "not read by the decoder: no content operator on page index {} names it",
@@ -1183,11 +1476,18 @@ fn live_assign(i: usize, o: &lex::ObjUnit, s: &Semantics, dict: Option<&[u8]>) -
                 )
                 .into(),
                 Ctx::Names | Ctx::Skip => "not read by the decoder".into(),
-                Ctx::OtherPage => format!(
-                    "page not decoded: hayro reads its geometry and resource maps to build \
-                     the page list; {not_drawn}"
-                )
-                .into(),
+                Ctx::OtherPage => match s.sel.page_index.get(&id) {
+                    Some(n) => format!(
+                        "page {n}: rendered only with with_start_frame_index({n}); hayro reads \
+                         its geometry and resource maps to build the page list; {not_drawn}"
+                    )
+                    .into(),
+                    None => format!(
+                        "page not decoded: hayro reads its geometry and resource maps to build \
+                         the page list; {not_drawn}"
+                    )
+                    .into(),
+                },
                 Ctx::OtherTree => {
                     format!("page-tree node above pages not decoded; {not_drawn}").into()
                 }
@@ -1206,6 +1506,12 @@ fn live_assign(i: usize, o: &lex::ObjUnit, s: &Semantics, dict: Option<&[u8]>) -
             };
             if let (Ctx::Render | Ctx::RenderMap, Some(_)) = (r.ctx, &o.stream) {
                 a.data = Some(Disposition::ImageData);
+                let form = dict
+                    .and_then(graph::type_label)
+                    .is_some_and(|t| t.ends_with("Form"));
+                if form || matches!(&*r.label, "Contents" | "AP/N" | "CharProcs") {
+                    a.data_detail = Some(CONTENT_NOT_DISTINGUISHED.into());
+                }
             }
             a
         }
@@ -1252,24 +1558,43 @@ fn number_runs(nums: &[u32], max: usize) -> String {
 /// Most object numbers an object stream's detail lists.
 const MAX_LISTED: usize = 4096;
 
-fn objstm_assign(nums: &Result<Vec<u32>, &'static str>, i: usize, s: &Semantics) -> Assign {
-    let nums = match nums {
-        Ok(n) => n,
+/// The detail of a content stream's data part.
+const CONTENT_NOT_DISTINGUISHED: &str = "content stream; its operators are not inventoried: \
+     comments, marked-content property lists (/ActualText, /Alt), content inside optional \
+     content that is off, invisible text (3 Tr) and marks covered by later ones are not \
+     distinguished";
+
+/// Most members whose unread entries an object stream's detail lists.
+const MAX_MEMBER_NOTES: usize = 256;
+
+fn objstm_assign(
+    stm: &Result<graph::ObjStmMembers, &'static str>,
+    i: usize,
+    s: &Semantics,
+    data_start: Option<usize>,
+) -> Assign {
+    let m = match stm {
+        Ok(m) => m,
         Err(why) => {
-            return Assign {
-                disposition: Disposition::Structure,
-                label: Some("ObjStm".into()),
-                detail: format!("object stream; {why}, so its objects are not listed"),
-                data: Some(Disposition::Structure),
-                data_end: None,
-                children: Vec::new(),
-            };
+            let mut a = Assign::new(
+                Disposition::Structure,
+                format!("object stream; {why}, so its objects are not listed"),
+            );
+            a.label = Some("ObjStm".into());
+            a.data = Some(Disposition::Structure);
+            return a;
         }
     };
+    let nums: Vec<u32> = m.members.iter().map(|&(n, _)| n).collect();
     let mut best = 0u8;
     let mut unconsumed = String::new();
     let mut shown = 0usize;
-    for &n in nums {
+    let mut notes = String::new();
+    let mut noted = 0usize;
+    let mut parts: Vec<(Child, Vec<Child>)> = Vec::new();
+    // Member offsets are file offsets when the stream is stored as is.
+    let file_base = data_start.filter(|_| m.raw);
+    for (k, &(n, off)) in m.members.iter().enumerate() {
         let owned = s.owner.get(&n) == Some(&i);
         let reach = s.walk.best.get(&(n as i32, 0)).filter(|_| owned);
         let what: Option<Cow<'static, str>> = match reach {
@@ -1278,15 +1603,98 @@ fn objstm_assign(nums: &Result<Vec<u32>, &'static str>, i: usize, s: &Semantics)
                 match r.ctx {
                     Ctx::Info => Some("Info, dropped".into()),
                     Ctx::Names | Ctx::Skip => Some(format!("{}, skipped", r.label).into()),
+                    Ctx::OcHidden => Some("optional content off, dropped".into()),
                     _ => None,
                 }
             }
-            None if !owned && s.stm_live.get(&n).is_some_and(|l| *l != Live::Elsewhere) => {
+            None if !owned
+                && s.stm_live
+                    .get(&n)
+                    .is_some_and(|l| l.is_some_and(|l| l != Live::Elsewhere)) =>
+            {
                 Some("superseded".into())
+            }
+            None if !owned && s.stm_live.get(&n) == Some(&None) => {
+                Some("liveness not looked up (lookup budget)".into())
             }
             None if !owned => Some("superseded by a later object stream".into()),
             None => Some("unreferenced".into()),
         };
+        // The member's own bytes, and what inside it the decoder skips.
+        let next = m.members.get(k + 1).map(|&(_, o)| o);
+        let member = m.decoded.as_deref().and_then(|dec| {
+            let ext = lex::value_extent(dec, off.min(dec.len()))?;
+            // A member ends before the next one starts.
+            (next.is_none_or(|nx| ext.end <= nx)).then_some((dec, ext))
+        });
+        let mut inner: Vec<Child> = Vec::new();
+        if let (Some((dec, ext)), Some(r)) = (member.clone(), reach)
+            && dec[ext.clone()].starts_with(b"<<")
+        {
+            {
+                if r.ctx == Ctx::Info {
+                    if let Some(keys) = graph::key_list(&dec[ext.clone()], 24) {
+                        if noted < MAX_MEMBER_NOTES {
+                            notes.push_str(&format!("; {n} Info keys: {keys}"));
+                        }
+                        noted += 1;
+                    }
+                } else if r.ctx.rank() >= 4 {
+                    inner = deep_children(
+                        dec,
+                        ext.clone(),
+                        r.ctx,
+                        &r.label,
+                        false,
+                        s.render_annotations,
+                        &s.sel,
+                        0,
+                    );
+                    if !inner.is_empty() {
+                        let label = graph::type_label(&dec[ext.clone()])
+                            .unwrap_or_else(|| r.label.to_string());
+                        let keys: Vec<String> = inner
+                            .iter()
+                            .map(|c| c.label.clone().unwrap_or_default())
+                            .collect();
+                        if noted < MAX_MEMBER_NOTES {
+                            notes.push_str(&format!("; {n} {label}: {}", keys.join(", ")));
+                        }
+                        noted += 1;
+                    }
+                }
+            }
+        }
+        if let (Some(base), Some((dec, ext))) = (file_base, member) {
+            let disposition = match (reach, &what) {
+                (Some(r), _) => reach_disposition(r.ctx, false),
+                (None, _) => Disposition::Unreferenced,
+            };
+            let shift = |r: &Range<usize>| base + r.start..base + r.end;
+            let label =
+                graph::type_label(&dec[ext.clone()]).or_else(|| reach.map(|r| r.label.to_string()));
+            let child = Child {
+                range: shift(&ext),
+                kind: PartKind::Chunk,
+                tag: PartTag::Code(n),
+                label,
+                disposition,
+                detail: format!(
+                    "object {n} in this object stream{}",
+                    what.as_deref()
+                        .map(|w| format!(" ({w})"))
+                        .unwrap_or_default()
+                ),
+            };
+            let grand = inner
+                .iter()
+                .map(|c| Child {
+                    range: shift(&c.range),
+                    ..c.clone()
+                })
+                .collect();
+            parts.push((child, grand));
+        }
         if let Some(what) = what {
             if shown < MAX_LISTED {
                 if shown > 0 {
@@ -1300,7 +1708,10 @@ fn objstm_assign(nums: &Result<Vec<u32>, &'static str>, i: usize, s: &Semantics)
     if shown > MAX_LISTED {
         unconsumed.push_str(&format!(", … {} more", shown - MAX_LISTED));
     }
+    // An object stream is never demoted for listing nothing: hayro may
+    // still read members the inventory could not list.
     let disposition = match best {
+        _ if nums.is_empty() => Disposition::Structure,
         4.. => Disposition::Structure,
         2 | 3 => Disposition::Dropped,
         1 => Disposition::Skipped,
@@ -1309,20 +1720,35 @@ fn objstm_assign(nums: &Result<Vec<u32>, &'static str>, i: usize, s: &Semantics)
     let mut detail = format!(
         "object stream holding {} objects: {}",
         nums.len(),
-        number_runs(nums, MAX_LISTED)
+        number_runs(&nums, MAX_LISTED)
     );
+    if nums.is_empty() {
+        detail.push_str("; no member could be listed, so it is kept as structure");
+    }
     if !unconsumed.is_empty() {
         detail.push_str("; not consumed: ");
         detail.push_str(&unconsumed);
     }
-    Assign {
-        disposition,
-        label: Some("ObjStm".into()),
-        detail,
-        data: Some(disposition),
-        data_end: None,
-        children: Vec::new(),
+    if !notes.is_empty() {
+        detail.push_str("; entries the decoder does not read inside consumed members");
+        detail.push_str(&notes);
+        if noted > MAX_MEMBER_NOTES {
+            detail.push_str(&format!("; … {} more members", noted - MAX_MEMBER_NOTES));
+        }
     }
+    if m.decoded.is_none() {
+        detail.push_str(&format!(
+            "; decoded data over {} MiB, members not inspected",
+            graph::MAX_KEPT_OBJSTM >> 20
+        ));
+    } else if file_base.is_none() {
+        detail.push_str("; compressed or encrypted, so members have no file offsets");
+    }
+    let mut a = Assign::new(disposition, detail);
+    a.label = Some("ObjStm".into());
+    a.data = Some(disposition);
+    a.data_parts = parts;
+    a
 }
 
 fn emit(
@@ -1417,7 +1843,7 @@ fn emit(
                 Some((e, why)) if *e > sd.data.start && *e < sd.data.end => (*e, Some(why)),
                 _ => (sd.data.end, None),
             };
-            inv.push(
+            let extent = inv.push(
                 Some(id),
                 Part::new(
                     PartKind::Extent,
@@ -1425,8 +1851,37 @@ fn emit(
                     r64(&(sd.data.start..read_end)),
                     d,
                 )
-                .with_detail("stream data"),
+                .with_detail(
+                    a.data_detail
+                        .clone()
+                        .unwrap_or_else(|| "stream data".into()),
+                ),
             )?;
+            for (c, grand) in &a.data_parts {
+                if c.range.start >= c.range.end || c.range.end > read_end {
+                    continue;
+                }
+                let mut part = Part::new(c.kind, c.tag.clone(), r64(&c.range), c.disposition)
+                    .with_detail(c.detail.clone());
+                if let Some(l) = &c.label {
+                    part = part.with_label(l.clone());
+                }
+                let cid = inv.push(Some(extent), part)?;
+                for g in grand {
+                    if g.range.start >= g.range.end
+                        || g.range.start < c.range.start
+                        || g.range.end > c.range.end
+                    {
+                        continue;
+                    }
+                    let mut part = Part::new(g.kind, g.tag.clone(), r64(&g.range), g.disposition)
+                        .with_detail(g.detail.clone());
+                    if let Some(l) = &g.label {
+                        part = part.with_label(l.clone());
+                    }
+                    inv.push(Some(cid), part)?;
+                }
+            }
             if let Some(why) = tail {
                 inv.push(
                     Some(id),

@@ -61,8 +61,12 @@ pub(crate) enum Ctx {
     Leaf,
     /// Optional-content configuration (`OcgState::from_catalog`).
     OcProps,
-    /// The encryption dictionary.
+    /// `/OCProperties /D`: only `/BaseState`, `/ON` and `/OFF` are read.
+    OcConfig,
+    /// The encryption dictionary (and its crypt filter dictionaries).
     Encrypt,
+    /// `/Encrypt /CF`: crypt filters by name.
+    EncryptMap,
     /// The document information dictionary: hayro parses it into
     /// `Pdf::metadata()`, zenpdf never reports it.
     Info,
@@ -88,7 +92,9 @@ impl Ctx {
             | Ctx::Annot
             | Ctx::Leaf
             | Ctx::OcProps
-            | Ctx::Encrypt => 5,
+            | Ctx::OcConfig
+            | Ctx::Encrypt
+            | Ctx::EncryptMap => 5,
             // Parsed while hayro builds the page list, nothing more: an
             // object also reached for the decoded page takes that role.
             Ctx::OtherPage | Ctx::OtherTree | Ctx::OtherRes | Ctx::OtherMap => 4,
@@ -394,11 +400,261 @@ fn side_data(key: &[u8]) -> Option<Rule> {
 
 /// The context a read entry's direct value is read in, or `None` when the
 /// walk does not descend into it.
-pub(crate) fn child_ctx(ctx: Ctx, key: &[u8], render_annotations: bool) -> Option<Ctx> {
+pub(crate) fn child_ctx(
+    ctx: Ctx,
+    key: &[u8],
+    render_annotations: bool,
+    label: &str,
+) -> Option<(Ctx, Cow<'static, str>)> {
     match rule(ctx, key, render_annotations) {
-        Rule::Follow(c, _) if c.rank() >= 4 => Some(c),
+        Rule::Follow(c, l) if c.rank() >= 4 => {
+            Some((c, l.unwrap_or_else(|| Cow::Owned(label.into()))))
+        }
         _ => None,
     }
+}
+
+/// What kind of dictionary the renderer reads, so its reader's keys can be
+/// told from the rest. `Pooled` is a dictionary of no recognised kind: any
+/// key some renderer reader takes ([`RENDER_KEYS`]) counts as read.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RKind {
+    Image,
+    Form,
+    /// Content, glyph, font-file and CMap streams: only the stream keys.
+    StreamOnly,
+    Resources,
+    Font,
+    FontDescriptor,
+    Encoding,
+    CidSystemInfo,
+    ExtGState,
+    SoftMask,
+    Group,
+    Shading,
+    Pattern,
+    Function,
+    Icc,
+    CalSpace,
+    DecodeParms,
+    /// A `/Properties` value: hayro reads only `/Type` (an OCMD also `/P`
+    /// and `/OCGs`).
+    Properties,
+    Ocmd,
+    Pooled,
+}
+
+/// Keys every stream reader takes (`Stream::read`, the filters).
+const STREAM_KEYS: &[&[u8]] = &[b"Type", b"Length", b"Filter", b"DecodeParms", b"F", b"DP"];
+
+/// The keys hayro's reader for `kind` takes, from hayro-interpret 0.7.0
+/// (`x_object.rs`, `font/*`, `interpret/state.rs`, `soft_mask.rs`,
+/// `shading.rs`, `pattern.rs`, `function/*`, `color.rs`, `ocg.rs`) and the
+/// hayro-syntax filters. Streams add [`STREAM_KEYS`].
+fn kind_keys(kind: RKind) -> &'static [&'static [u8]] {
+    match kind {
+        RKind::Image => &[
+            b"Subtype",
+            b"Width",
+            b"W",
+            b"Height",
+            b"H",
+            b"BitsPerComponent",
+            b"BPC",
+            b"ColorSpace",
+            b"CS",
+            b"Decode",
+            b"D",
+            b"ImageMask",
+            b"IM",
+            b"Interpolate",
+            b"I",
+            b"Mask",
+            b"SMask",
+            b"SMaskInData",
+            b"Matte",
+            b"OC",
+        ],
+        RKind::Form => &[
+            b"Subtype",
+            b"BBox",
+            b"Matrix",
+            b"Resources",
+            b"Group",
+            b"OC",
+        ],
+        RKind::StreamOnly => &[],
+        RKind::Resources => PAGE_MAPS,
+        RKind::Font => &[
+            b"Subtype",
+            b"BaseFont",
+            b"FirstChar",
+            b"LastChar",
+            b"Widths",
+            b"FontDescriptor",
+            b"Encoding",
+            b"ToUnicode",
+            b"DescendantFonts",
+            b"CIDSystemInfo",
+            b"CIDToGIDMap",
+            b"DW",
+            b"W",
+            b"DW2",
+            b"W2",
+            b"FontBBox",
+            b"FontMatrix",
+            b"CharProcs",
+            b"Resources",
+            b"FontName",
+        ],
+        RKind::FontDescriptor => &[
+            b"FontFamily",
+            b"FontStretch",
+            b"FontWeight",
+            b"Flags",
+            b"ItalicAngle",
+            b"MissingWidth",
+            b"FontFile",
+            b"FontFile2",
+            b"FontFile3",
+        ],
+        RKind::Encoding => &[b"BaseEncoding", b"Differences"],
+        RKind::CidSystemInfo => &[b"Registry", b"Ordering", b"Supplement"],
+        RKind::ExtGState => &[
+            b"LW", b"LC", b"LJ", b"ML", b"CA", b"ca", b"TR", b"TR2", b"SMask", b"BM", b"Font", b"D",
+        ],
+        RKind::SoftMask => &[b"S", b"G", b"BC", b"TR"],
+        RKind::Group => &[b"S", b"CS"],
+        RKind::Shading => &[
+            b"ShadingType",
+            b"ColorSpace",
+            b"Background",
+            b"BBox",
+            b"Domain",
+            b"Coords",
+            b"Function",
+            b"Extend",
+            b"Matrix",
+            b"BitsPerCoordinate",
+            b"BitsPerComponent",
+            b"BitsPerFlag",
+            b"Decode",
+            b"VerticesPerRow",
+        ],
+        RKind::Pattern => &[
+            b"PatternType",
+            b"PaintType",
+            b"BBox",
+            b"XStep",
+            b"YStep",
+            b"Resources",
+            b"Matrix",
+            b"Shading",
+            b"ExtGState",
+        ],
+        RKind::Function => &[
+            b"FunctionType",
+            b"Domain",
+            b"Range",
+            b"Size",
+            b"BitsPerSample",
+            b"Encode",
+            b"Decode",
+            b"C0",
+            b"C1",
+            b"N",
+            b"Functions",
+            b"Bounds",
+        ],
+        RKind::Icc => &[b"N", b"Alternate", b"Range"],
+        RKind::CalSpace => &[b"WhitePoint", b"BlackPoint", b"Gamma", b"Matrix", b"Range"],
+        RKind::DecodeParms => &[
+            b"Predictor",
+            b"Colors",
+            b"BitsPerComponent",
+            b"Columns",
+            b"EarlyChange",
+            b"K",
+            b"EndOfLine",
+            b"EncodedByteAlign",
+            b"Rows",
+            b"EndOfBlock",
+            b"BlackIs1",
+            b"ColorTransform",
+            b"JBIG2Globals",
+        ],
+        RKind::Properties => &[],
+        RKind::Ocmd => &[b"P", b"OCGs"],
+        RKind::Pooled => &[],
+    }
+}
+
+/// The kind of a dictionary reached in a render context: by `/Type`,
+/// `/Subtype` and the keys that define it, then by the key it was reached
+/// through (`label`).
+pub(crate) fn render_kind(label: &str, d: &[u8], is_stream: bool) -> RKind {
+    let entries = super::lex::dict_entries(d, 0..d.len());
+    let has = |k: &[u8]| {
+        entries
+            .iter()
+            .any(|e| &*super::lex::unescape_name(&d[e.key.clone()]) == k)
+    };
+    let name = |k: &[u8]| {
+        entries
+            .iter()
+            .rfind(|e| &*super::lex::unescape_name(&d[e.key.clone()]) == k)
+            .and_then(|e| {
+                let v = &d[e.value.clone()];
+                v.strip_prefix(b"/")
+                    .map(|n| super::lex::unescape_name(n).into_owned())
+            })
+    };
+    let ty = name(b"Type");
+    let sub = name(b"Subtype");
+    match (ty.as_deref(), sub.as_deref()) {
+        (_, Some(b"Image")) => return RKind::Image,
+        (_, Some(b"Form")) => return RKind::Form,
+        (Some(b"Font"), _) => return RKind::Font,
+        (Some(b"FontDescriptor"), _) => return RKind::FontDescriptor,
+        (Some(b"ExtGState"), _) => return RKind::ExtGState,
+        (Some(b"OCMD"), _) => return RKind::Ocmd,
+        (Some(b"Encoding"), _) if !is_stream => return RKind::Encoding,
+        _ => {}
+    }
+    if has(b"ShadingType") {
+        return RKind::Shading;
+    }
+    if has(b"PatternType") {
+        return RKind::Pattern;
+    }
+    if has(b"FunctionType") {
+        return RKind::Function;
+    }
+    match label {
+        "Properties" => RKind::Properties,
+        "XObject" | "SMask" | "Mask" if is_stream && has(b"Width") => RKind::Image,
+        "SMask" if !is_stream => RKind::SoftMask,
+        "Group" => RKind::Group,
+        "Font" | "DescendantFonts" => RKind::Font,
+        "FontDescriptor" => RKind::FontDescriptor,
+        "Encoding" if !is_stream => RKind::Encoding,
+        "CIDSystemInfo" => RKind::CidSystemInfo,
+        "ExtGState" => RKind::ExtGState,
+        "Resources" => RKind::Resources,
+        "DecodeParms" | "DP" => RKind::DecodeParms,
+        "ColorSpace" | "CS" | "Alternate" if is_stream => RKind::Icc,
+        "ColorSpace" | "CS" | "Alternate" if has(b"WhitePoint") => RKind::CalSpace,
+        _ if is_stream => RKind::StreamOnly,
+        _ => RKind::Pooled,
+    }
+}
+
+/// Whether the renderer's reader for a dictionary of `kind` reads `key`.
+pub(crate) fn kind_reads(kind: RKind, key: &[u8], is_stream: bool) -> bool {
+    if kind == RKind::Pooled {
+        return RENDER_MAPS.contains(&key) || RENDER_KEYS.binary_search(&key).is_ok();
+    }
+    key == b"Type" || kind_keys(kind).contains(&key) || (is_stream && STREAM_KEYS.contains(&key))
 }
 
 fn rule(ctx: Ctx, key: &[u8], render_annotations: bool) -> Rule {
@@ -408,11 +664,25 @@ fn rule(ctx: Ctx, key: &[u8], render_annotations: bool) -> Rule {
         // What a parsed-but-undrawn XObject references may still be read
         // while it is constructed (its colour space): count it as read.
         Ctx::OcHidden => rule(Ctx::Render, key, render_annotations),
-        Ctx::Encrypt => Rule::Follow(Ctx::Encrypt, None),
+        // `get_decryptor` (hayro-syntax crypto) reads these keys.
+        Ctx::Encrypt => match key {
+            b"CF" => follow(Ctx::EncryptMap, "CF"),
+            k if ENCRYPT_KEYS.contains(&k) => Rule::Follow(Ctx::Encrypt, None),
+            _ => other(),
+        },
+        Ctx::EncryptMap => Rule::Follow(Ctx::Encrypt, None),
         Ctx::Leaf | Ctx::Annot => Rule::Ignore,
+        // `OcgState::from_catalog` reads `/OCGs` and `/D`'s `/BaseState`,
+        // `/ON` and `/OFF`, taking only the object numbers of the groups.
         Ctx::OcProps => match key {
-            b"Metadata" => skip("XMP"),
-            _ => Rule::Follow(Ctx::OcProps, None),
+            b"OCGs" => skip(OCG_BY_NUMBER),
+            b"D" => follow(Ctx::OcConfig, "D"),
+            _ => other(),
+        },
+        Ctx::OcConfig => match key {
+            b"ON" | b"OFF" => skip(OCG_BY_NUMBER),
+            b"BaseState" => Rule::Ignore,
+            _ => other(),
         },
         // hayro reads `/Pages` (via `TrailerData::pages_ref`), `/Version`
         // and `/OCProperties` from the catalog, nothing else.
@@ -488,7 +758,54 @@ const PAGE_MAPS: &[&[u8]] = &[
     b"XObject",
 ];
 
+/// Keys `get_decryptor` reads from the encryption dictionary and its crypt
+/// filter dictionaries.
+const ENCRYPT_KEYS: &[&[u8]] = &[
+    b"CFM",
+    b"EncryptMetadata",
+    b"Filter",
+    b"Length",
+    b"O",
+    b"OE",
+    b"P",
+    b"R",
+    b"StmF",
+    b"StrF",
+    b"U",
+    b"UE",
+    b"V",
+];
+
+/// Label of optional-content groups hayro reaches only by object number.
+const OCG_BY_NUMBER: &str = "OCG (only its object number is read)";
+
+/// Label of an `/AP /N` that holds appearance states.
+pub(crate) const APPEARANCE_STATES: &str =
+    "Appearance states (hayro-interpret 0.7.0 draws only a stream /N)";
+
 const NOT_DECODED_CONTENTS: &str = "Contents (page not decoded)";
+
+/// The suffix of labels of what pages the job does not decode lead to.
+const NOT_DECODED: &str = "(page not decoded)";
+
+/// `page N not decoded` inside a label, when it names the page.
+pub(crate) fn page_note_of(label: &str) -> Option<&str> {
+    let at = label.find("(page ")?;
+    let rest = &label[at + 1..];
+    let end = rest.find(')')?;
+    let note = &rest[..end];
+    (note != "page not decoded" && note.ends_with("not decoded")).then_some(note)
+}
+
+/// The page index in `page N not decoded`.
+pub(crate) fn page_number_of(label: &str) -> Option<usize> {
+    page_note_of(label)?
+        .strip_prefix("page ")?
+        .split(' ')
+        .next()?
+        .parse()
+        .ok()
+}
 
 /// The page the job decodes, and the page-tree nodes above it.
 #[derive(Clone, Debug, Default)]
@@ -506,6 +823,9 @@ pub(crate) struct Selection {
     /// to the decoded page (`resolve_pages`): the decoded page's lookups
     /// search their resources too (`Resources::parent`).
     pub ancestors: BTreeSet<Id>,
+    /// Every page's index in hayro's page list, by the object holding its
+    /// dictionary (the first index when a page appears twice).
+    pub page_index: BTreeMap<Id, usize>,
 }
 
 impl Selection {
@@ -517,9 +837,16 @@ impl Selection {
             return Self::default();
         }
         let index = (start_frame as usize).min(pages.len() - 1);
+        let mut page_index = BTreeMap::new();
+        for (k, p) in pages.iter().enumerate() {
+            if let Some(o) = p.raw().obj_id() {
+                page_index.entry((o.obj_number, o.gen_number)).or_insert(k);
+            }
+        }
         if rejected {
             return Self {
                 index,
+                page_index,
                 ..Self::default()
             };
         }
@@ -547,6 +874,7 @@ impl Selection {
             page_id,
             page_bytes: page_id.is_none().then(|| raw.data().to_vec()),
             ancestors,
+            page_index,
         }
     }
 }
@@ -629,6 +957,8 @@ pub(crate) fn unread_entry(
     key: &[u8],
     render_annotations: bool,
     annot_drawn: bool,
+    kind: RKind,
+    is_stream: bool,
 ) -> Option<Cow<'static, str>> {
     let read = match ctx {
         Ctx::Catalog => matches!(key, b"Pages" | b"OCProperties" | b"Version"),
@@ -648,10 +978,13 @@ pub(crate) fn unread_entry(
         ),
         Ctx::PageRes | Ctx::OtherRes => PAGE_MAPS.contains(&key),
         Ctx::OtherMap => false,
-        Ctx::Annot => matches!(key, b"F" | b"Rect" | b"AS") || (key == b"AP" && annot_drawn),
-        Ctx::Render => RENDER_MAPS.contains(&key) || RENDER_KEYS.binary_search(&key).is_ok(),
-        Ctx::OcHidden => RENDER_MAPS.contains(&key) || RENDER_KEYS.binary_search(&key).is_ok(),
-        Ctx::RenderMap | Ctx::Leaf | Ctx::OcProps | Ctx::Encrypt | Ctx::Info => true,
+        // `interpret_page` reads `/F`, `/Rect` and `/AP`; never `/AS`.
+        Ctx::Annot => matches!(key, b"F" | b"Rect") || (key == b"AP" && annot_drawn),
+        Ctx::Render | Ctx::OcHidden => kind_reads(kind, key, is_stream),
+        Ctx::OcProps => matches!(key, b"OCGs" | b"D"),
+        Ctx::OcConfig => matches!(key, b"BaseState" | b"ON" | b"OFF"),
+        Ctx::Encrypt => key == b"CF" || ENCRYPT_KEYS.contains(&key),
+        Ctx::RenderMap | Ctx::Leaf | Ctx::EncryptMap | Ctx::Info => true,
         Ctx::Names | Ctx::Skip => false,
     };
     if read {
@@ -703,6 +1036,8 @@ pub(crate) struct Walk {
     pub best: BTreeMap<Id, Reach>,
     /// The work limit stopped the walk early.
     pub truncated: bool,
+    /// The caller's stop token fired.
+    pub stopped: Option<zencodec::enough::StopReason>,
     /// Streams the renderer interprets as content: page contents, form
     /// XObjects, annotation appearances, Type 3 glyphs, tiling patterns.
     pub content: BTreeSet<Id>,
@@ -730,6 +1065,11 @@ struct Walker<'p> {
     sel: &'p Selection,
     /// The walk reached the decoded page through the page tree.
     found_page: bool,
+    stop: &'p dyn zencodec::enough::Stop,
+    stopped: Option<zencodec::enough::StopReason>,
+    /// The index of the page being visited when it is one the job does not
+    /// decode.
+    cur_page: Option<usize>,
     content: BTreeSet<Id>,
     properties: BTreeMap<Vec<u8>, BTreeSet<Id>>,
     best: BTreeMap<Id, Reach>,
@@ -770,6 +1110,7 @@ pub(crate) fn walk<'p>(
     used: Option<&'p super::content::Usage>,
     inactive: &'p BTreeSet<Id>,
     sel: &'p Selection,
+    stop: &'p dyn zencodec::enough::Stop,
 ) -> Walk {
     let mut w = Walker {
         pdf,
@@ -778,6 +1119,9 @@ pub(crate) fn walk<'p>(
         inactive,
         sel,
         found_page: false,
+        stop,
+        stopped: None,
+        cur_page: None,
         content: BTreeSet::new(),
         properties: BTreeMap::new(),
         best: BTreeMap::new(),
@@ -812,6 +1156,7 @@ pub(crate) fn walk<'p>(
     // only that way.
     if !w.found_page
         && !w.truncated
+        && w.stopped.is_none()
         && let Some(id) = sel.page_id
     {
         w.enqueue(
@@ -824,6 +1169,7 @@ pub(crate) fn walk<'p>(
     Walk {
         best: w.best,
         truncated: w.truncated,
+        stopped: w.stopped,
         content: w.content,
         properties: w.properties,
     }
@@ -885,16 +1231,30 @@ impl<'p> Walker<'p> {
 
     fn run(&mut self) {
         let pdf = self.pdf;
+        let mut steps = 0u32;
         while let Some((id, ctx, label)) = self.queue.pop_front() {
             if !self.spend() {
                 return;
             }
+            steps = steps.wrapping_add(1);
+            if steps.is_multiple_of(256)
+                && let Err(r) = self.stop.check()
+            {
+                self.stopped = Some(r);
+                self.queue.clear();
+                return;
+            }
+            self.cur_page = if ctx == Ctx::OtherPage {
+                self.sel.page_index.get(&id).copied()
+            } else {
+                None
+            };
             match resolve(pdf, id) {
                 Some(Raw::Dict(d, is_stream)) => {
                     if is_stream && ctx == Ctx::Render && is_content(d, &label) {
                         self.content.insert(id);
                     }
-                    self.visit_dict(d, ctx, label, 0)
+                    self.visit_dict(d, ctx, label, 0, is_stream)
                 }
                 Some(Raw::Array(a)) => self.visit_array(a, ctx, label, 0),
                 None => {}
@@ -907,7 +1267,7 @@ impl<'p> Walker<'p> {
     fn edge(&mut self, v: &[u8], ctx: Ctx, label: Cow<'static, str>, depth: u32) {
         match super::lex::value_kind(v) {
             ValueKind::Ref(n, g) => self.enqueue((n, g), ctx, label),
-            ValueKind::Dict => self.visit_dict(v, ctx, label, depth),
+            ValueKind::Dict => self.visit_dict(v, ctx, label, depth, false),
             ValueKind::Array => self.visit_array(v, ctx, label, depth),
             ValueKind::Other => {}
         }
@@ -925,7 +1285,14 @@ impl<'p> Walker<'p> {
         }
     }
 
-    fn visit_dict(&mut self, d: &[u8], ctx: Ctx, label: Cow<'static, str>, depth: u32) {
+    fn visit_dict(
+        &mut self,
+        d: &[u8],
+        ctx: Ctx,
+        label: Cow<'static, str>,
+        depth: u32,
+        is_stream: bool,
+    ) {
         if depth > MAX_DEPTH || !self.spend() {
             return;
         }
@@ -938,6 +1305,18 @@ impl<'p> Walker<'p> {
             self.visit_annot(d, depth);
             return;
         }
+        let kind = if matches!(ctx, Ctx::Render | Ctx::OcHidden) {
+            render_kind(&label, d, is_stream)
+        } else {
+            RKind::Pooled
+        };
+        // "page N not decoded", for the labels of what this dictionary leads
+        // to.
+        let page_note: Option<String> = match ctx {
+            Ctx::OtherPage => self.cur_page.map(|n| format!("page {n} not decoded")),
+            Ctx::OtherRes | Ctx::OtherMap => page_note_of(&label).map(str::to_string),
+            _ => None,
+        };
         // A resource map whose category content names by operator: entries
         // no content names are never looked up.
         let unused_check = match (ctx, self.used) {
@@ -997,10 +1376,29 @@ impl<'p> Walker<'p> {
                 );
                 continue;
             }
+            // A key this kind's reader never takes: followed as side data.
+            if matches!(ctx, Ctx::Render | Ctx::OcHidden) && !kind_reads(kind, &key, is_stream) {
+                if let Rule::Follow(c, Some(l)) = side_data(&key).unwrap_or_else(|| skip_key(&key))
+                {
+                    self.edge(&d[e.value], c, l, depth + 1);
+                }
+                continue;
+            }
             match rule(ctx, &key, self.render_annotations) {
                 Rule::Ignore => {}
                 Rule::Follow(c, l) => {
-                    let l = l.unwrap_or_else(|| label.clone());
+                    let mut l = l.unwrap_or_else(|| label.clone());
+                    // Name the page in what an undecoded page leads to.
+                    if let Some(note) = &page_note {
+                        if l.ends_with(NOT_DECODED) {
+                            l = Cow::Owned(format!(
+                                "{}({note})",
+                                &l[..l.len() - NOT_DECODED.len()]
+                            ));
+                        } else if c == Ctx::OtherRes {
+                            l = Cow::Owned(format!("{l} ({note})"));
+                        }
+                    }
                     self.edge(&d[e.value], c, l, depth + 1);
                 }
             }
@@ -1070,9 +1468,10 @@ impl<'p> Walker<'p> {
         }
     }
 
-    /// The `/AP` dictionary: only `/N` is drawn; when `/N` holds states, only
-    /// the one `/AS` names (or `/Off`) is.
-    fn appearance(&mut self, v: &[u8], state: Option<&[u8]>, depth: u32) {
+    /// The `/AP` dictionary: hayro-interpret 0.7.0 draws `/AP /N` only when
+    /// it is a stream (`ap.get::<Stream>(N)` in `interpret_page`) and never
+    /// reads `/AS`, so a `/N` holding appearance states draws nothing.
+    fn appearance(&mut self, v: &[u8], _state: Option<&[u8]>, depth: u32) {
         let pdf = self.pdf;
         let ap: &[u8] = match super::lex::value_kind(v) {
             ValueKind::Dict => v,
@@ -1103,51 +1502,14 @@ impl<'p> Walker<'p> {
                 );
                 continue;
             }
-            let states: Vec<u8> = match super::lex::value_kind(nv) {
-                ValueKind::Ref(n, g) => match resolve(pdf, (n, g)) {
-                    Some(Raw::Dict(_, true)) => {
-                        self.enqueue((n, g), Ctx::Render, Cow::Borrowed("AP/N"));
-                        continue;
-                    }
-                    Some(Raw::Dict(d, false)) => {
-                        self.enqueue((n, g), Ctx::Leaf, Cow::Borrowed("AP/N"));
-                        d.to_vec()
-                    }
-                    _ => continue,
-                },
-                ValueKind::Dict => nv.to_vec(),
-                _ => continue,
+            let is_stream = match super::lex::value_kind(nv) {
+                ValueKind::Ref(n, g) => matches!(resolve(pdf, (n, g)), Some(Raw::Dict(_, true))),
+                _ => false,
             };
-            let entries = super::lex::dict_entries(&states, 0..states.len());
-            // A state is drawable when it resolves to a stream (hayro's
-            // `states.get::<Stream>`).
-            let is_stream =
-                |r: &core::ops::Range<usize>| match super::lex::value_kind(&states[r.clone()]) {
-                    ValueKind::Ref(n, g) => {
-                        matches!(resolve(pdf, (n, g)), Some(Raw::Dict(_, true)))
-                    }
-                    _ => false,
-                };
-            let find = |name: &[u8]| {
-                entries
-                    .iter()
-                    .find(|e| &*super::lex::unescape_name(&states[e.key.clone()]) == name)
-                    .filter(|e| is_stream(&e.value))
-                    .map(|e| e.key.clone())
-            };
-            let selected = state.and_then(find).or_else(|| find(b"Off"));
-            for e in &entries {
-                let sv = &states[e.value.clone()];
-                if Some(&e.key) == selected.as_ref() {
-                    self.edge(sv, Ctx::Render, Cow::Borrowed("AP/N"), depth + 1);
-                } else {
-                    self.edge(
-                        sv,
-                        Ctx::Skip,
-                        Cow::Borrowed("Appearance state (not drawn)"),
-                        depth + 1,
-                    );
-                }
+            if is_stream {
+                self.edge(nv, Ctx::Render, Cow::Borrowed("AP/N"), depth + 1);
+            } else {
+                self.edge(nv, Ctx::Skip, Cow::Borrowed(APPEARANCE_STATES), depth + 1);
             }
         }
     }
@@ -1268,52 +1630,101 @@ pub(crate) fn content_usage(
     pdf: &Pdf,
     content: &BTreeSet<Id>,
     oc_name_hidden: &dyn Fn(super::content::OcRef<'_>) -> bool,
-) -> Option<super::content::Usage> {
+    stop: &dyn zencodec::enough::Stop,
+) -> Result<Option<super::content::Usage>, zencodec::enough::StopReason> {
     let mut used = super::content::Usage::default();
     let mut budget: u64 = 1 << 30;
     for &(n, g) in content {
-        let stream = pdf.xref().get::<Stream<'_>>(ObjectIdentifier::new(n, g))?;
-        if !text_filters_only(&stream) {
-            return None;
-        }
-        let decoded = stream.decoded().ok()?;
-        budget = budget.checked_sub(decoded.len() as u64)?;
-        if !super::content::scan(&decoded, &mut used, oc_name_hidden) {
-            return None;
+        stop.check()?;
+        let scanned = (|| {
+            let stream = pdf.xref().get::<Stream<'_>>(ObjectIdentifier::new(n, g))?;
+            if !text_filters_only(&stream) {
+                return None;
+            }
+            let decoded = stream.decoded().ok()?;
+            budget = budget.checked_sub(decoded.len() as u64)?;
+            super::content::scan(&decoded, &mut used, oc_name_hidden).then_some(())
+        })();
+        if scanned.is_none() {
+            return Ok(None);
         }
     }
-    Some(used)
+    Ok(Some(used))
 }
 
-/// Object numbers an object stream declares, in order.
-pub(crate) fn objstm_numbers(bytes: &[u8]) -> Result<Vec<u32>, &'static str> {
-    let stream = Stream::from_bytes(bytes).ok_or("unparseable stream")?;
+/// An object stream's members, read through hayro (so an encrypted
+/// document's stream is decrypted first).
+pub(crate) struct ObjStmMembers {
+    /// Each member's object number and the offset of its value in the
+    /// decoded data, as hayro's `ObjectStream::new` computes them
+    /// (`/First` plus the relative offset).
+    pub members: Vec<(u32, usize)>,
+    /// The decoded data, kept when it is at most [`MAX_KEPT_OBJSTM`] bytes.
+    pub decoded: Option<Vec<u8>>,
+    /// The decoded data is the stream's bytes as written (no filter, no
+    /// encryption): member offsets are file offsets from the data start.
+    pub raw: bool,
+}
+
+/// Largest decoded object stream whose members are inspected.
+pub(crate) const MAX_KEPT_OBJSTM: usize = 64 << 20;
+
+/// Object stream `id`'s offset table, parsed once.
+pub(crate) fn objstm_members(
+    pdf: &Pdf,
+    id: Id,
+    encrypted: bool,
+) -> Result<ObjStmMembers, &'static str> {
+    let stream = pdf
+        .xref()
+        .get::<Stream<'_>>(ObjectIdentifier::new(id.0, id.1))
+        .ok_or("hayro does not read it as a stream")?;
     if !text_filters_only(&stream) {
         return Err("filters the inventory does not decode");
     }
     let n = stream.dict().get::<usize>(b"N").ok_or("no /N")?;
     let first = stream.dict().get::<usize>(b"First").ok_or("no /First")?;
+    let raw = stream.filters().is_empty() && !encrypted;
     let data = stream
         .decoded()
         .map_err(|_| "contents could not be decoded")?;
     let header = &data[..first.min(data.len())];
-    let mut nums = Vec::new();
+    let mut members = Vec::new();
     let mut tokens = header
         .split(|&b| super::lex::is_ws(b))
         .filter(|t| !t.is_empty());
+    let num = |t: &[u8]| {
+        core::str::from_utf8(t)
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok())
+    };
     for _ in 0..n.min(header.len()) {
-        let (Some(num), Some(_off)) = (tokens.next(), tokens.next()) else {
+        let (Some(a), Some(b)) = (tokens.next(), tokens.next()) else {
             break;
         };
-        match core::str::from_utf8(num)
-            .ok()
-            .and_then(|s| s.parse::<u32>().ok())
-        {
-            Some(v) => nums.push(v),
-            None => break,
+        match (num(a), num(b)) {
+            (Some(obj), Some(off)) if obj <= u64::from(u32::MAX) => members.push((
+                obj as u32,
+                first.saturating_add(usize::try_from(off).unwrap_or(usize::MAX)),
+            )),
+            _ => break,
         }
     }
-    Ok(nums)
+    let decoded = (data.len() <= MAX_KEPT_OBJSTM).then(|| data.to_vec());
+    Ok(ObjStmMembers {
+        members,
+        decoded,
+        raw,
+    })
+}
+
+/// The bytes hayro resolves object `id` to, when it is a dictionary or an
+/// array (for telling which object stream a member came from).
+pub(crate) fn resolved_bytes(pdf: &Pdf, id: Id) -> Option<&[u8]> {
+    match resolve(pdf, id)? {
+        Raw::Dict(d, _) => Some(d),
+        Raw::Array(a) => Some(a),
+    }
 }
 
 /// `Type/Subtype` of a dictionary, as written in the file.

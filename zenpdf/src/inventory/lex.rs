@@ -6,6 +6,7 @@
 //! bounded by a budget linear in the input length; when the budget runs out,
 //! the rest of the input becomes one junk unit.
 
+use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 use core::ops::Range;
@@ -65,6 +66,10 @@ pub(crate) struct ObjUnit {
     /// The body could not be tokenised cleanly (unbalanced brackets,
     /// unterminated string).
     pub body_damaged: bool,
+    /// Bytes after the object's first value and before `endobj` or
+    /// `stream` that are not white space or comments. hayro's
+    /// `IndirectObject::read` reads one value and ignores the rest.
+    pub after_value: Option<Range<usize>>,
 }
 
 #[derive(Clone, Debug)]
@@ -79,7 +84,8 @@ pub(crate) enum Kind {
     Comment,
     /// `%%EOF`.
     Eof,
-    Object(ObjUnit),
+    /// Boxed: most units are white space and comments.
+    Object(Box<ObjUnit>),
     /// A cross-reference table, `xref` through its last entry.
     Xref {
         sections: u32,
@@ -108,9 +114,26 @@ pub(crate) struct Unit {
     pub rev: u32,
 }
 
-/// Lex `d` into units that tile it exactly.
-pub(crate) fn lex(d: &[u8]) -> Vec<Unit> {
-    let units = Lexer::new(d, &BTreeMap::new()).run();
+/// Why lexing stopped before the end of the input.
+#[derive(Debug)]
+pub(crate) enum LexStop {
+    /// More units than `max_parts` will become parts: the inventory cannot
+    /// fit under the part cap, so no assignment is built for them.
+    TooManyParts,
+    /// The caller's stop token fired.
+    Stopped(zencodec::enough::StopReason),
+}
+
+/// Lex `d` into units that tile it exactly. Stops once the units are sure to
+/// produce more than `max_parts` parts (every unit before the last `%%EOF`,
+/// and every object, xref, trailer and `startxref` unit, is a part of its
+/// own), or past four times that many units in all.
+pub(crate) fn lex(
+    d: &[u8],
+    max_parts: usize,
+    stop: &dyn zencodec::enough::Stop,
+) -> Result<Vec<Unit>, LexStop> {
+    let units = Lexer::new(d, &BTreeMap::new(), max_parts, stop).run()?;
     // Streams whose /Length is an indirect reference were split at the next
     // `endstream` on the first pass. If any resolved length disagrees, lex
     // again with the integer objects found on the first pass, as hayro
@@ -130,9 +153,9 @@ pub(crate) fn lex(d: &[u8]) -> Vec<Unit> {
         _ => false,
     });
     if needs_second_pass {
-        Lexer::new(d, &ints).run()
+        Lexer::new(d, &ints, max_parts, stop).run()
     } else {
-        units
+        Ok(units)
     }
 }
 
@@ -189,6 +212,12 @@ struct Lexer<'a> {
     rev: u32,
     /// Remaining byte-steps of work.
     budget: u64,
+    max_parts: usize,
+    stop: &'a dyn zencodec::enough::Stop,
+    /// Units that become parts of their own whatever follows: all units up
+    /// to the latest `%%EOF`, and object, xref, trailer and `startxref`
+    /// units after it.
+    sure_parts: usize,
 }
 
 /// A token-level failure while skipping an object body.
@@ -200,13 +229,21 @@ enum BodyEnd {
 }
 
 impl<'a> Lexer<'a> {
-    fn new(d: &'a [u8], ints: &'a BTreeMap<(i32, i32), u64>) -> Self {
+    fn new(
+        d: &'a [u8],
+        ints: &'a BTreeMap<(i32, i32), u64>,
+        max_parts: usize,
+        stop: &'a dyn zencodec::enough::Stop,
+    ) -> Self {
         Self {
             d,
             ints,
             units: Vec::new(),
             rev: 0,
             budget: (d.len() as u64).saturating_mul(24).saturating_add(1 << 16),
+            max_parts,
+            stop,
+            sure_parts: 0,
         }
     }
 
@@ -218,6 +255,14 @@ impl<'a> Lexer<'a> {
     fn push(&mut self, range: Range<usize>, kind: Kind) {
         if range.start < range.end {
             let rev = self.rev;
+            match kind {
+                Kind::Eof => self.sure_parts = self.units.len() + 1,
+                Kind::Object(_)
+                | Kind::Xref { .. }
+                | Kind::Trailer { .. }
+                | Kind::StartXref { .. } => self.sure_parts += 1,
+                _ => {}
+            }
             self.units.push(Unit { range, kind, rev });
         }
     }
@@ -449,16 +494,20 @@ impl<'a> Lexer<'a> {
             endobj: false,
             int_value,
             body_damaged: false,
+            after_value: None,
         };
         let mut i = match end {
             BodyEnd::Eof => {
                 obj.body_damaged = true;
                 let e = self.d.len();
-                self.push(start..e, Kind::Object(obj));
+                self.push(start..e, Kind::Object(Box::new(obj)));
                 return e;
             }
             BodyEnd::At(i, clean) => {
                 obj.body_damaged = !clean;
+                if clean {
+                    obj.after_value = after_first_value(&self.d[..i], after);
+                }
                 i
             }
         };
@@ -468,7 +517,7 @@ impl<'a> Lexer<'a> {
             obj.stream = Some(sd);
             i = after_stream;
             if !terminated {
-                self.push(start..i, Kind::Object(obj));
+                self.push(start..i, Kind::Object(Box::new(obj)));
                 return i;
             }
             let j = self.skip_ws_comments(i);
@@ -488,7 +537,7 @@ impl<'a> Lexer<'a> {
             }
         }
         let i = i.max(after);
-        self.push(start..i, Kind::Object(obj));
+        self.push(start..i, Kind::Object(Box::new(obj)));
         i
     }
 
@@ -646,7 +695,7 @@ impl<'a> Lexer<'a> {
         end
     }
 
-    fn run(mut self) -> Vec<Unit> {
+    fn run(mut self) -> Result<Vec<Unit>, LexStop> {
         let d = self.d;
         let n = d.len();
         let mut i = 0usize;
@@ -658,7 +707,15 @@ impl<'a> Lexer<'a> {
             }
             i = self.header(h);
         }
+        let mut steps = 0u32;
         while i < n {
+            steps = steps.wrapping_add(1);
+            if steps.is_multiple_of(4096) {
+                self.stop.check().map_err(LexStop::Stopped)?;
+            }
+            if self.sure_parts > self.max_parts || self.units.len() / 4 > self.max_parts {
+                return Err(LexStop::TooManyParts);
+            }
             if self.budget == 0 {
                 self.push(i..n, Kind::Junk { budget: true });
                 break;
@@ -697,8 +754,73 @@ impl<'a> Lexer<'a> {
             // Every branch consumes at least one byte.
             i = next.max(i + 1);
         }
-        self.units
+        if self.sure_parts > self.max_parts {
+            return Err(LexStop::TooManyParts);
+        }
+        Ok(self.units)
     }
+}
+
+/// The extent of the PDF value at the first token at or after `i` (white
+/// space and comments skipped): a dictionary or array with everything
+/// inside it, an indirect reference `N G R`, or one token. `None` when the
+/// value runs off the end of `d`.
+pub(crate) fn value_extent(d: &[u8], i: usize) -> Option<Range<usize>> {
+    let n = d.len();
+    let start = skip_ws_comments_in(d, i, n);
+    let (tok, end) = token(d, start)?;
+    let int = |r: Range<usize>| !d[r.clone()].is_empty() && d[r].iter().all(u8::is_ascii_digit);
+    match tok {
+        Tok::DictOpen | Tok::ArrOpen => {
+            let mut depth = 1u32;
+            let mut j = end;
+            loop {
+                j = skip_ws_comments_in(d, j, n);
+                let (t, e) = token(d, j)?;
+                match t {
+                    Tok::DictOpen | Tok::ArrOpen => depth = depth.saturating_add(1),
+                    Tok::DictClose | Tok::ArrClose => {
+                        depth -= 1;
+                        if depth == 0 {
+                            return Some(start..e);
+                        }
+                    }
+                    _ => {}
+                }
+                j = e;
+            }
+        }
+        Tok::Regular if int(start..end) => {
+            let j = skip_ws_comments_in(d, end, n);
+            if let Some((Tok::Regular, e2)) = token(d, j)
+                && int(j..e2)
+            {
+                let k = skip_ws_comments_in(d, e2, n);
+                if let Some((Tok::Regular, e3)) = token(d, k)
+                    && &d[k..e3] == b"R"
+                {
+                    return Some(start..e3);
+                }
+            }
+            Some(start..end)
+        }
+        _ => Some(start..end),
+    }
+}
+
+/// Non-blank bytes in `body[after..]` past its first value.
+fn after_first_value(body: &[u8], after: usize) -> Option<Range<usize>> {
+    let v = value_extent(body, after)?;
+    let n = body.len();
+    let from = skip_ws_comments_in(body, v.end, n);
+    if from >= n {
+        return None;
+    }
+    let mut to = n;
+    while to > from && is_ws(body[to - 1]) {
+        to -= 1;
+    }
+    Some(from..to)
 }
 
 /// One token at `i` (not white space). Returns its kind and end, or `None`
@@ -1027,7 +1149,8 @@ mod tests {
     use super::*;
 
     fn kinds(d: &[u8]) -> Vec<(Range<usize>, &'static str)> {
-        lex(d)
+        lex(d, usize::MAX, &zencodec::enough::Unstoppable)
+            .unwrap()
             .into_iter()
             .map(|u| {
                 let k = match u.kind {
@@ -1079,7 +1202,7 @@ mod tests {
     #[test]
     fn stream_length_and_fallback() {
         let d = b"1 0 obj <</Length 3>> stream\nabc\nendstream endobj 2 0 obj <</Length 99>> stream\r\nxy endstream\nendobj";
-        let units = lex(d);
+        let units = lex(d, usize::MAX, &zencodec::enough::Unstoppable).unwrap();
         let streams: Vec<_> = units
             .iter()
             .filter_map(|u| match &u.kind {
@@ -1099,7 +1222,7 @@ mod tests {
         // The data itself contains `endstream`; only the resolved /Length
         // (14) finds the real end.
         let d = b"1 0 obj <</Length 2 0 R>> stream\nab endstream x\nendstream\nendobj\n2 0 obj 14 endobj\n";
-        let units = lex(d);
+        let units = lex(d, usize::MAX, &zencodec::enough::Unstoppable).unwrap();
         let Kind::Object(o) = &units[0].kind else {
             panic!("{units:?}")
         };
@@ -1169,5 +1292,40 @@ mod tests {
         let ks = kinds(d);
         assert_eq!(ks.len(), 1);
         assert_eq!(ks[0], (0..d.len(), "obj"));
+    }
+
+    #[test]
+    fn the_lexer_stops_once_the_part_cap_cannot_hold() {
+        let mut d = b"%PDF-1.7\n".to_vec();
+        for _ in 0..40 {
+            d.extend_from_slice(b"%c\n");
+        }
+        d.extend_from_slice(b"%%EOF\n");
+        assert!(matches!(
+            lex(&d, 20, &zencodec::enough::Unstoppable),
+            Err(LexStop::TooManyParts)
+        ));
+        assert!(lex(&d, 200, &zencodec::enough::Unstoppable).is_ok());
+        // After the last %%EOF, comments merge into one trailing part.
+        let mut t = b"%PDF-1.7\n%%EOF\n".to_vec();
+        for _ in 0..10 {
+            t.extend_from_slice(b"%c\n");
+        }
+        assert!(lex(&t, 10, &zencodec::enough::Unstoppable).is_ok());
+    }
+
+    #[test]
+    fn the_lexer_honours_the_stop_token() {
+        struct Cancelled;
+        impl zencodec::enough::Stop for Cancelled {
+            fn check(&self) -> Result<(), zencodec::enough::StopReason> {
+                Err(zencodec::enough::StopReason::Cancelled)
+            }
+        }
+        let d = b"%PDF-1.7\n".repeat(10_000);
+        assert!(matches!(
+            lex(&d, usize::MAX, &Cancelled),
+            Err(LexStop::Stopped(_))
+        ));
     }
 }
