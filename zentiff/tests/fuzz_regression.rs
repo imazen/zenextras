@@ -35,13 +35,14 @@ use std::path::{Path, PathBuf};
 
 use regress::RegressionSuite;
 
-/// Number of seeds tracked under `fuzz/regression/` — 3 under `fuzz_decode/`
-/// and 1 under `fuzz_decode_limits/`. `README`-style meta files never count.
+/// Number of seeds tracked under `fuzz/regression/` — 3 under `fuzz_decode/`,
+/// 1 under `fuzz_decode_limits/` and 1 under `inventory/`. `README`-style meta
+/// files never count.
 ///
 /// Pinned, not a floor-of-convenience: if a seed is deleted or a per-target
 /// subdirectory stops being scanned, this test fails and says how many went
 /// missing. Bump it in the same commit that adds seeds.
-const TRACKED_SEEDS: usize = 4;
+const TRACKED_SEEDS: usize = 5;
 
 fn regression_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("fuzz/regression")

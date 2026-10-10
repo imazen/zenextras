@@ -360,8 +360,13 @@ impl Walk<'_> {
             .saturating_add(at)
             .saturating_add(self.lay.count_len() + self.lay.inline_cap())
             .min(self.limit());
+        // A table at or past the limit is never parsed (and `at + 1` could
+        // wrap): nothing to overlap.
+        if end <= at {
+            return None;
+        }
         self.tables
-            .range((Excluded(at), Excluded(end.max(at + 1))))
+            .range((Excluded(at), Excluded(end)))
             .next()
             .map(|(&s, _)| s)
     }
