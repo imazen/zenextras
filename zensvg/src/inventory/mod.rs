@@ -1092,8 +1092,28 @@ impl Walker<'_, '_> {
             disposition,
             pops,
         });
-        for &c in tree.nodes[n].children.iter().rev() {
-            stack.push(Frame::Node(c, Some(id), child_ctx));
+        // `resolve_css` reads `node.text()`, which is the style element's
+        // first child when that child is text (roxmltree `text_storage`),
+        // else nothing. roxmltree merges adjacent text and CDATA into one
+        // node, so the CSS is the run of character data that starts the
+        // element; anything after a comment or element inside it, and all of
+        // it when the style starts with one, is never read.
+        let kids = &tree.nodes[n].children;
+        let is_chars =
+            |c: usize| matches!(tree.nodes[c].kind, XKind::Text | XKind::CData | XKind::Ws);
+        let first = kids.first().filter(|&&c| is_chars(c)).map(|_| 0usize);
+        let run_end = first.map(|f| {
+            f + kids[f..]
+                .iter()
+                .position(|&c| !is_chars(c))
+                .unwrap_or(kids.len() - f)
+        });
+        for (k, &c) in kids.iter().enumerate().rev() {
+            let mut ctx = child_ctx;
+            if ctx.css && !(first.is_some_and(|f| k >= f) && run_end.is_some_and(|e| k < e)) {
+                ctx.css = false;
+            }
+            stack.push(Frame::Node(c, Some(id), ctx));
         }
         Ok(())
     }
@@ -1255,10 +1275,25 @@ fn svgz(
     let mtime = u32::from_le_bytes([d[4], d[5], d[6], d[7]]);
     let mut fields: Vec<(Range<usize>, &str, Disposition, String)> = Vec::new();
     fields.push((
-        0..10,
-        "fixed header",
+        0..4,
+        "ID CM FLG",
         Disposition::Structure,
-        format!("FLG {flg:#04x}, MTIME {mtime}, XFL {}, OS {}", d[8], d[9]),
+        format!("magic, deflate method, FLG {flg:#04x}"),
+    ));
+    fields.push((
+        4..8,
+        "MTIME",
+        Disposition::Dropped,
+        format!("modification time {mtime}; flate2 parses it, usvg discards it"),
+    ));
+    fields.push((
+        8..10,
+        "XFL OS",
+        Disposition::Dropped,
+        format!(
+            "XFL {}, OS {}; flate2 parses them, usvg discards them",
+            d[8], d[9]
+        ),
     ));
     let mut i = 10usize;
     let mut ok = true;

@@ -249,6 +249,7 @@ fn svgz_maps_the_gzip_framing() {
     let inv = inventory(&data);
     let header = named(&inv, "gzip")[0];
     assert_eq!(header.kind, PartKind::Header);
+    assert_eq!(named(&inv, "MTIME")[0].disposition, Disposition::Dropped);
     let fname = named(&inv, "FNAME")[0];
     assert_eq!(fname.disposition, Disposition::Dropped);
     assert!(detail(fname).contains("q3-salaries.svg"));
@@ -266,6 +267,29 @@ fn svgz_maps_the_gzip_framing() {
     let tail = &inv.parts()[inv.children(None).last().unwrap().index()];
     assert_eq!(tail.disposition, Disposition::Trailing);
     assert!(detail(tail).contains("another gzip member"));
+}
+
+#[test]
+fn only_the_first_text_of_a_style_is_css() {
+    let data = br#"<svg xmlns="http://www.w3.org/2000/svg" width="2" height="2"><style>rect { fill: red }<!--x--> HIDDEN-CSS </style><rect width="2" height="2"/></svg>"#;
+    let inv = inventory(data);
+    assert_eq!(
+        leaf_at(&inv, find(data, b"rect {") as u64).disposition,
+        Disposition::Structure
+    );
+    assert_eq!(
+        leaf_at(&inv, find(data, b"HIDDEN-CSS") as u64).disposition,
+        Disposition::Skipped,
+        "{inv}"
+    );
+    // A style that starts with a comment yields no text: nothing is CSS.
+    let data = br#"<svg xmlns="http://www.w3.org/2000/svg" width="2" height="2"><style><!--x-->rect { fill: red }</style><rect width="2" height="2"/></svg>"#;
+    let inv = inventory(data);
+    assert_eq!(
+        leaf_at(&inv, find(data, b"rect {") as u64).disposition,
+        Disposition::Skipped,
+        "{inv}"
+    );
 }
 
 #[test]
