@@ -1485,6 +1485,36 @@ fn exif_ifd_reached_by_another_path_is_still_re_serialized() {
         Disposition::Structure,
         "{inv}"
     );
+
+    // The EXIF IFD's table overlaps IFD0's (review round 2, probe V): IFD0
+    // starts in the EXIF IFD's next-IFD field, which image-tiff never reads
+    // for the EXIF IFD. The decoder still re-serializes the EXIF entries.
+    let mut w = W::new();
+    let strip = w.put(&[1, 2, 3, 4]);
+    let secret = w.put(b"SECRET-PRIVATE-4");
+    w.pad();
+    let exif_at = w.pos();
+    w.b.extend_from_slice(&1u16.to_le_bytes());
+    w.b.extend_from_slice(&65004u16.to_le_bytes());
+    w.b.extend_from_slice(&7u16.to_le_bytes());
+    w.b.extend_from_slice(&16u32.to_le_bytes());
+    w.b.extend_from_slice(&secret.to_le_bytes());
+    let mut e = page(strip);
+    e.push(long(34665, exif_at));
+    let ifd0 = w.ifd(&e, 0);
+    assert_eq!(ifd0, exif_at + 14);
+    w.set_ifd0(ifd0);
+    let data = w.b;
+    let inv = inventory(&data);
+    inv.validate().unwrap();
+    let exif = decode_summary(&data).unwrap().2[0].clone().unwrap();
+    assert!(contains(&exif, b"SECRET-PRIVATE-4"));
+    let v = part(&inv, u64::from(secret)..u64::from(secret) + 16);
+    assert_eq!(
+        v.disposition,
+        Disposition::Metadata(MetadataKind::Exif),
+        "{inv}"
+    );
 }
 
 /// image-tiff reads RowsPerStrip only for strips, TileWidth/TileLength only
