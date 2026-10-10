@@ -468,9 +468,9 @@ fn objects(inv: &Inventory, num: u32) -> Vec<&Part> {
     let mut v: Vec<&Part> = inv
         .parts()
         .iter()
-        .filter(|p| p.parent.is_none() && p.tag == PartTag::Code(num))
+        .filter(|p| p.parent().is_none() && *p.tag() == PartTag::Code(num))
         .collect();
-    v.sort_by_key(|p| p.range.start);
+    v.sort_by_key(|p| p.range().start);
     v
 }
 
@@ -484,7 +484,7 @@ fn id_of(inv: &Inventory, num: u32) -> zencodec::inventory::PartId {
     let ids: Vec<_> = inv
         .children(None)
         .into_iter()
-        .filter(|id| inv.parts()[id.index()].tag == PartTag::Code(num))
+        .filter(|id| *inv.parts()[id.index()].tag() == PartTag::Code(num))
         .collect();
     assert_eq!(ids.len(), 1, "object {num}\n{inv}");
     ids[0]
@@ -500,17 +500,17 @@ fn find(hay: &[u8], needle: &[u8]) -> usize {
 fn leaf_at(inv: &Inventory, at: u64) -> &Part {
     inv.parts()
         .iter()
-        .filter(|p| p.range.contains(&at))
+        .filter(|p| p.range().contains(&at))
         .min_by_key(|p| p.len())
         .expect("inventory covers every byte")
 }
 
 fn label(p: &Part) -> &str {
-    p.label.as_deref().unwrap_or("")
+    p.label().unwrap_or("")
 }
 
 fn detail(p: &Part) -> &str {
-    p.detail.as_deref().unwrap_or("")
+    p.detail().unwrap_or("")
 }
 
 // ── Conformance ─────────────────────────────────────────────────────────
@@ -561,30 +561,30 @@ fn superseded_objects_are_unreferenced_with_their_revision() {
     let inv = inventory(&data);
     let content = objects(&inv, 4);
     assert_eq!(content.len(), 2, "{inv}");
-    assert_eq!(content[0].disposition, Disposition::Unreferenced, "{inv}");
+    assert_eq!(content[0].disposition(), Disposition::Unreferenced, "{inv}");
     assert!(
         detail(content[0]).contains("superseded in revision 1"),
         "{inv}"
     );
-    assert_eq!(content[1].disposition, Disposition::ImageData, "{inv}");
+    assert_eq!(content[1].disposition(), Disposition::ImageData, "{inv}");
 
     let info = objects(&inv, 5);
     assert_eq!(info.len(), 2);
     // The old Info dictionary still carries /Author: unreferenced, labelled.
-    assert_eq!(info[0].disposition, Disposition::Unreferenced);
+    assert_eq!(info[0].disposition(), Disposition::Unreferenced);
     assert_eq!(label(info[0]), "Info");
     assert!(detail(info[0]).contains("Author"), "{}", detail(info[0]));
     // The live one is parsed by hayro but never reported.
-    assert_eq!(info[1].disposition, Disposition::Dropped);
+    assert_eq!(info[1].disposition(), Disposition::Dropped);
     assert_eq!(label(info[1]), "Info");
     assert!(!detail(info[1]).contains("Author"));
 
     // The removed author's name is still in the file, in an unconsumed part.
     let at = find(&data, b"Alice Example") as u64;
-    assert!(!leaf_at(&inv, at).disposition.is_consumed(), "{inv}");
+    assert!(!leaf_at(&inv, at).disposition().is_consumed(), "{inv}");
 
     let xmp = the_object(&inv, 7);
-    assert_eq!(xmp.disposition, Disposition::Skipped);
+    assert_eq!(xmp.disposition(), Disposition::Skipped);
     assert_eq!(label(xmp), "XMP");
 }
 
@@ -599,14 +599,14 @@ fn two_revision_inventory_is_pinned() {
         .map(|p| {
             let mut line = format!(
                 "{}{} {}..{} {} {}",
-                if p.parent.is_some() { "  " } else { "" },
-                p.kind.name(),
-                p.range.start,
-                p.range.end,
-                p.tag,
-                p.disposition,
+                if p.parent().is_some() { "  " } else { "" },
+                p.kind().name(),
+                p.range().start,
+                p.range().end,
+                p.tag(),
+                p.disposition(),
             );
-            if let Some(l) = &p.label {
+            if let Some(l) = &p.label() {
                 line.push_str(&format!(" {l:?}"));
             }
             line
@@ -666,39 +666,39 @@ fn leak_carriers_are_labelled_and_unconsumed() {
     let inv = inventory(&data);
 
     let lead = &inv.parts()[inv.children(None)[0].index()];
-    assert_eq!(lead.range, 0..13);
-    assert_eq!(lead.disposition, Disposition::Unknown);
+    assert_eq!(lead.range(), 0..13);
+    assert_eq!(lead.disposition(), Disposition::Unknown);
 
     // The comment's text is the label.
     let at = find(&data, b"/home/alice") as u64;
     let comment = leaf_at(&inv, at);
-    assert_eq!(comment.tag, PartTag::Name("%".into()));
+    assert_eq!(*comment.tag(), PartTag::Name("%".into()));
     assert!(label(comment).contains("/home/alice/reports"), "{inv}");
-    assert_eq!(comment.disposition, Disposition::Skipped);
+    assert_eq!(comment.disposition(), Disposition::Skipped);
 
     let filespec = the_object(&inv, 8);
-    assert_eq!(filespec.disposition, Disposition::Skipped, "{inv}");
+    assert_eq!(filespec.disposition(), Disposition::Skipped, "{inv}");
     assert_eq!(label(filespec), "EmbeddedFile");
     assert!(detail(filespec).contains("file name: secret.txt"), "{inv}");
 
     let file = the_object(&inv, 9);
-    assert_eq!(file.disposition, Disposition::Skipped);
+    assert_eq!(file.disposition(), Disposition::Skipped);
     assert!(detail(file).contains("14 bytes stored"), "{inv}");
     // Its data is a child extent with the same disposition.
     let kids = inv.children(Some(id_of(&inv, 9)));
     assert_eq!(kids.len(), 1);
     let extent = &inv.parts()[kids[0].index()];
-    assert_eq!(extent.kind, PartKind::Extent);
-    assert_eq!(extent.disposition, Disposition::Skipped);
+    assert_eq!(extent.kind(), PartKind::Extent);
+    assert_eq!(extent.disposition(), Disposition::Skipped);
     assert_eq!(
-        &data[extent.range.start as usize..extent.range.end as usize],
+        &data[extent.range().start as usize..extent.range().end as usize],
         b"salary: 123456"
     );
-    assert_eq!(the_object(&inv, 23).disposition, Disposition::Dropped);
+    assert_eq!(the_object(&inv, 23).disposition(), Disposition::Dropped);
     assert_eq!(label(the_object(&inv, 23)), "Info");
 
     assert_eq!(label(the_object(&inv, 13)), "Action");
-    assert_eq!(the_object(&inv, 13).disposition, Disposition::Skipped);
+    assert_eq!(the_object(&inv, 13).disposition(), Disposition::Skipped);
     assert_eq!(label(the_object(&inv, 12)), "JavaScript");
     assert_eq!(label(the_object(&inv, 11)), "Thumb");
     assert_eq!(label(the_object(&inv, 14)), "Outlines");
@@ -706,36 +706,36 @@ fn leak_carriers_are_labelled_and_unconsumed() {
     assert_eq!(label(the_object(&inv, 16)), "ACME:PrivateData");
     for n in [11, 12, 13, 14, 15, 16] {
         assert_eq!(
-            the_object(&inv, n).disposition,
+            the_object(&inv, n).disposition(),
             Disposition::Skipped,
             "obj {n}\n{inv}"
         );
     }
 
     // The drawn annotation's appearance renders; the hidden one's does not.
-    assert_eq!(the_object(&inv, 10).disposition, Disposition::Structure);
-    assert_eq!(the_object(&inv, 18).disposition, Disposition::ImageData);
+    assert_eq!(the_object(&inv, 10).disposition(), Disposition::Structure);
+    assert_eq!(the_object(&inv, 18).disposition(), Disposition::ImageData);
     assert_eq!(
-        the_object(&inv, 19).disposition,
+        the_object(&inv, 19).disposition(),
         Disposition::Skipped,
         "{inv}"
     );
 
     // The image's indirect /Length is structure; the image is image data.
-    assert_eq!(the_object(&inv, 6).disposition, Disposition::ImageData);
-    assert_eq!(the_object(&inv, 22).disposition, Disposition::Structure);
+    assert_eq!(the_object(&inv, 6).disposition(), Disposition::ImageData);
+    assert_eq!(the_object(&inv, 22).disposition(), Disposition::Structure);
 
     let orphan = the_object(&inv, 20);
-    assert_eq!(orphan.disposition, Disposition::Unreferenced);
+    assert_eq!(orphan.disposition(), Disposition::Unreferenced);
     assert!(detail(orphan).contains("nothing reachable"), "{inv}");
     let deleted = the_object(&inv, 21);
-    assert_eq!(deleted.disposition, Disposition::Unreferenced);
+    assert_eq!(deleted.disposition(), Disposition::Unreferenced);
     assert!(detail(deleted).contains("no xref entry"), "{inv}");
 
     let tail = &inv.parts()[inv.children(None).last().unwrap().index()];
-    assert_eq!(tail.kind, PartKind::Trailer);
-    assert_eq!(tail.disposition, Disposition::Trailing);
-    assert_eq!(tail.range.end, data.len() as u64);
+    assert_eq!(tail.kind(), PartKind::Trailer);
+    assert_eq!(tail.disposition(), Disposition::Trailing);
+    assert_eq!(tail.range().end, data.len() as u64);
 
     // Every secret marker sits in a part the decoder does not consume.
     for secret in [
@@ -750,7 +750,7 @@ fn leak_carriers_are_labelled_and_unconsumed() {
         let at = find(&data, secret) as u64;
         let p = leaf_at(&inv, at);
         assert!(
-            !p.disposition.is_consumed(),
+            !p.disposition().is_consumed(),
             "{:?} is in a consumed part: {p:?}\n{inv}",
             String::from_utf8_lossy(secret)
         );
@@ -769,7 +769,7 @@ fn no_hidden_bytes_inside_consumed_parts() {
     ] {
         let p = leaf_at(&inv, find(&data, marker) as u64);
         assert_eq!(
-            p.disposition,
+            p.disposition(),
             want,
             "{:?}: {p:?}\n{inv}",
             String::from_utf8_lossy(marker)
@@ -784,8 +784,8 @@ fn no_hidden_bytes_inside_consumed_parts() {
     let kids = inv.children(Some(id_of(&inv, 4)));
     let parts: Vec<&Part> = kids.iter().map(|k| &inv.parts()[k.index()]).collect();
     assert_eq!(parts.len(), 2, "{inv}");
-    assert_eq!(parts[0].disposition, Disposition::ImageData);
-    assert_eq!(parts[0].range.end, find(&data, b"HIDDEN-TAIL") as u64);
+    assert_eq!(parts[0].disposition(), Disposition::ImageData);
+    assert_eq!(parts[0].range().end, find(&data, b"HIDDEN-TAIL") as u64);
 }
 
 #[test]
@@ -795,14 +795,14 @@ fn resources_no_content_names_are_unused() {
     // Used: drawn image, form, the form's own graphics state, the font.
     for n in [5, 7] {
         assert_eq!(
-            the_object(&inv, n).disposition,
+            the_object(&inv, n).disposition(),
             Disposition::ImageData,
             "obj {n}\n{inv}"
         );
     }
     for n in [8, 10] {
         assert_eq!(
-            the_object(&inv, n).disposition,
+            the_object(&inv, n).disposition(),
             Disposition::Structure,
             "obj {n}\n{inv}"
         );
@@ -810,23 +810,23 @@ fn resources_no_content_names_are_unused() {
     // Listed but never named: skipped, as are their entries in the page.
     for n in [6, 9] {
         let p = the_object(&inv, n);
-        assert_eq!(p.disposition, Disposition::Skipped, "obj {n}\n{inv}");
+        assert_eq!(p.disposition(), Disposition::Skipped, "obj {n}\n{inv}");
         assert_eq!(label(p), "unused resource");
     }
     for name in [&b"/Im2"[..], b"/F2"] {
         let p = leaf_at(&inv, find(&data, name) as u64);
-        assert_eq!(p.disposition, Disposition::Skipped, "{inv}");
+        assert_eq!(p.disposition(), Disposition::Skipped, "{inv}");
         assert!(
             detail(p).contains("resource: no content operator on page index 0 names"),
             "{p:?}"
         );
     }
     let at = find(&data, b"REDACTED-IMAGE") as u64;
-    assert!(!leaf_at(&inv, at).disposition.is_consumed());
+    assert!(!leaf_at(&inv, at).disposition().is_consumed());
     // Unread entries inside direct dictionaries the decoder does read.
     for marker in [&b"/ProcSet"[..], b"HIDDEN-CHARSET"] {
         let p = leaf_at(&inv, find(&data, marker) as u64);
-        assert_eq!(p.disposition, Disposition::Skipped, "{p:?}\n{inv}");
+        assert_eq!(p.disposition(), Disposition::Skipped, "{p:?}\n{inv}");
         assert!(detail(p).contains("not read by the decoder"), "{p:?}");
     }
 }
@@ -836,20 +836,20 @@ fn hidden_optional_content_is_not_drawn() {
     let data = hidden_layer_pdf();
     let inv = inventory(&data);
     assert_eq!(
-        the_object(&inv, 5).disposition,
+        the_object(&inv, 5).disposition(),
         Disposition::ImageData,
         "{inv}"
     );
     for n in [11, 12] {
         let p = the_object(&inv, n);
-        assert_eq!(p.disposition, Disposition::Dropped, "obj {n}\n{inv}");
+        assert_eq!(p.disposition(), Disposition::Dropped, "obj {n}\n{inv}");
         assert_eq!(label(p), "optional content off");
     }
     // The layer's name is read (the group is looked up), the hidden image's
     // entry in the page is not drawn.
-    assert_eq!(the_object(&inv, 10).disposition, Disposition::Structure);
+    assert_eq!(the_object(&inv, 10).disposition(), Disposition::Structure);
     let entry = leaf_at(&inv, find(&data, b"/ImSecret 11") as u64);
-    assert_eq!(entry.disposition, Disposition::Dropped, "{inv}");
+    assert_eq!(entry.disposition(), Disposition::Dropped, "{inv}");
     // The decoder agrees: the page is white except the visible black pixel.
     let page = zenpdf::render_page(&data, 0, &zenpdf::RenderBounds::Scale(1.0)).unwrap();
     let px = page.buffer.as_contiguous_bytes().unwrap().to_vec();
@@ -878,7 +878,7 @@ fn only_the_decoded_page_is_drawn() {
     // (not a page-tree node) does.
     let not_decoded = |inv: &Inventory, n: u32, what: &str, page: Option<usize>| {
         let p = the_object(inv, n);
-        assert_eq!(p.disposition, Disposition::Skipped, "obj {n}\n{inv}");
+        assert_eq!(p.disposition(), Disposition::Skipped, "obj {n}\n{inv}");
         let want = match page {
             Some(k) => format!("{what} (page {k} not decoded)"),
             None => format!("{what} (page not decoded)"),
@@ -895,14 +895,14 @@ fn only_the_decoded_page_is_drawn() {
     let inv = inventory_of_page(&data, 0);
     for n in [4, 5, 9] {
         assert_eq!(
-            the_object(&inv, n).disposition,
+            the_object(&inv, n).disposition(),
             Disposition::ImageData,
             "obj {n}\n{inv}"
         );
     }
     for n in [3, 6, 2, 20] {
         assert_eq!(
-            the_object(&inv, n).disposition,
+            the_object(&inv, n).disposition(),
             Disposition::Structure,
             "obj {n}\n{inv}"
         );
@@ -925,7 +925,7 @@ fn only_the_decoded_page_is_drawn() {
         b"/Annots",
     ] {
         let p = leaf_at(&inv, find(&data, entry) as u64);
-        assert_eq!(p.disposition, Disposition::Skipped, "{p:?}\n{inv}");
+        assert_eq!(p.disposition(), Disposition::Skipped, "{p:?}\n{inv}");
         assert!(detail(p).contains("page not decoded"), "{p:?}");
     }
 
@@ -936,20 +936,20 @@ fn only_the_decoded_page_is_drawn() {
         let inv = inventory_of_page(&data, start);
         for n in [8, 11, 21, 13] {
             assert_eq!(
-                the_object(&inv, n).disposition,
+                the_object(&inv, n).disposition(),
                 Disposition::ImageData,
                 "obj {n}\n{inv}"
             );
         }
         assert_eq!(
-            the_object(&inv, 12).disposition,
+            the_object(&inv, 12).disposition(),
             Disposition::Structure,
             "{inv}"
         );
         not_decoded(&inv, 4, "Contents", Some(0));
         not_decoded(&inv, 5, "XObject", Some(0));
         let top = the_object(&inv, 9);
-        assert_eq!(top.disposition, Disposition::Skipped, "{inv}");
+        assert_eq!(top.disposition(), Disposition::Skipped, "{inv}");
         assert_eq!(label(top), "unused resource");
     }
 
@@ -995,7 +995,7 @@ fn a_job_the_decoder_rejects_draws_no_page() {
         (8, "Contents (page 1 not decoded)"),
     ] {
         let p = the_object(&inv, n);
-        assert_eq!(p.disposition, Disposition::Skipped, "obj {n}\n{inv}");
+        assert_eq!(p.disposition(), Disposition::Skipped, "obj {n}\n{inv}");
         assert_eq!(label(p), want, "obj {n}");
         assert!(detail(p).contains("rejects this job"), "{p:?}");
     }
@@ -1007,7 +1007,7 @@ fn a_job_the_decoder_rejects_draws_no_page() {
         .unwrap()
         .unwrap();
     assert_eq!(
-        the_object(&inv, 5).disposition,
+        the_object(&inv, 5).disposition(),
         Disposition::ImageData,
         "{inv}"
     );
@@ -1041,13 +1041,13 @@ fn a_page_hayro_finds_by_scanning_is_drawn() {
     );
     let inv = inventory(&data);
     assert_eq!(
-        the_object(&inv, 3).disposition,
+        the_object(&inv, 3).disposition(),
         Disposition::Structure,
         "{inv}"
     );
     for n in [4, 5] {
         assert_eq!(
-            the_object(&inv, n).disposition,
+            the_object(&inv, n).disposition(),
             Disposition::ImageData,
             "obj {n}\n{inv}"
         );
@@ -1061,15 +1061,15 @@ fn object_streams_list_their_objects() {
     let inv = inventory(&data);
     let stm = the_object(&inv, 10);
     assert_eq!(label(stm), "ObjStm");
-    assert_eq!(stm.disposition, Disposition::Structure);
+    assert_eq!(stm.disposition(), Disposition::Structure);
     let d = detail(stm);
     assert!(d.contains("holding 4 objects: 1-3, 5;"), "{d}");
     assert!(d.contains("not consumed: 5 (Info, dropped)"), "{d}");
     assert_eq!(objstm_members(d), vec![1, 2, 3, 5]);
     let xref = the_object(&inv, 11);
     assert_eq!(label(xref), "XRef");
-    assert_eq!(xref.disposition, Disposition::Structure);
-    assert_eq!(the_object(&inv, 4).disposition, Disposition::ImageData);
+    assert_eq!(xref.disposition(), Disposition::Structure);
+    assert_eq!(the_object(&inv, 4).disposition(), Disposition::ImageData);
 }
 
 #[test]
@@ -1084,7 +1084,7 @@ fn annotations_off_skips_appearances() {
     inv.validate().unwrap();
     for n in [10, 17, 18] {
         assert_eq!(
-            the_object(&inv, n).disposition,
+            the_object(&inv, n).disposition(),
             Disposition::Skipped,
             "{inv}"
         );
@@ -1175,7 +1175,7 @@ fn oracle_mutool_exiftool() {
             match f[2] {
                 "n" => {
                     n_total += 1;
-                    let starts = objects(&inv, num).iter().any(|p| p.range.start == a);
+                    let starts = objects(&inv, num).iter().any(|p| p.range().start == a);
                     if starts {
                         n_ok += 1;
                     } else {
@@ -1196,7 +1196,7 @@ fn oracle_mutool_exiftool() {
                     // names every live member it holds as not consumed: it is
                     // never demoted while the decode reads a member.
                     let stm = objects(&inv, a as u32);
-                    if !stm.iter().any(|p| p.disposition.is_consumed())
+                    if !stm.iter().any(|p| p.disposition().is_consumed())
                         && !stm.iter().any(|p| detail(p).contains(&format!(" {num} (")))
                     {
                         mism.push(format!(
@@ -1270,14 +1270,14 @@ fn oracle_mutool_exiftool() {
                 };
                 let Some(obj) = objects(&inv, num)
                     .into_iter()
-                    .find(|p| p.disposition.is_consumed())
+                    .find(|p| p.disposition().is_consumed())
                 else {
                     continue;
                 };
                 let id = inv
                     .children(None)
                     .into_iter()
-                    .find(|id| inv.parts()[id.index()].range == obj.range);
+                    .find(|id| inv.parts()[id.index()].range() == obj.range());
                 let Some(id) = id else {
                     continue;
                 };
@@ -1286,13 +1286,13 @@ fn oracle_mutool_exiftool() {
                     .into_iter()
                     .map(|c| &inv.parts()[c.index()])
                     .collect();
-                let Some(ext) = kids.iter().find(|k| k.kind == PartKind::Extent) else {
+                let Some(ext) = kids.iter().find(|k| k.kind() == PartKind::Extent) else {
                     continue;
                 };
                 s_total += 1;
                 let tail = kids
                     .iter()
-                    .find(|k| k.range.start == ext.range.end && k.kind == PartKind::Gap)
+                    .find(|k| k.range().start == ext.range().end && k.kind() == PartKind::Gap)
                     .map_or(0, |k| k.len());
                 if ext.len() + tail != length {
                     mism.push(format!(
@@ -1344,7 +1344,7 @@ fn oracle_mutool_exiftool() {
                     if objects(&inv, n).iter().any(|p| label(p) == "XMP")
                         || objects(&inv, n)
                             .iter()
-                            .any(|p| p.disposition == Disposition::Unreferenced)
+                            .any(|p| p.disposition() == Disposition::Unreferenced)
                     {
                         good += 1;
                     } else {
@@ -1514,7 +1514,7 @@ fn assert_unconsumed(data: &[u8], inv: &Inventory, marker: &[u8]) {
     let at = find(data, marker);
     let p = leaf_at(inv, at as u64);
     assert!(
-        !p.disposition.is_consumed(),
+        !p.disposition().is_consumed(),
         "{}: {p:?}\n{inv}",
         String::from_utf8_lossy(marker)
     );
@@ -1565,7 +1565,7 @@ fn p12_bytes_after_an_objects_value_are_unreferenced() {
     for m in [&b"SECRET-AFTER-VALUE"[..], b"SECRETNAME"] {
         assert_unconsumed(&data, &inv, m);
         let p = leaf_at(&inv, find(&data, m) as u64);
-        assert_eq!(p.disposition, Disposition::Unreferenced, "{p:?}");
+        assert_eq!(p.disposition(), Disposition::Unreferenced, "{p:?}");
     }
 }
 
@@ -1594,7 +1594,7 @@ fn p10_keys_an_image_reader_never_takes_are_skipped() {
     }
     // The keys the image reader does take stay consumed.
     let w = leaf_at(&inv, find(&data, b"/Width 1") as u64);
-    assert!(w.disposition.is_consumed(), "{w:?}");
+    assert!(w.disposition().is_consumed(), "{w:?}");
 }
 
 #[test]
@@ -1654,7 +1654,7 @@ fn p8_appearance_states_are_never_drawn() {
     assert_unconsumed(&data, &inv, b"SECRET-ON-STATE");
     // `/AS` is never read.
     let as_ = leaf_at(&inv, find(&data, b"/AS /On") as u64);
-    assert!(!as_.disposition.is_consumed(), "{as_:?}");
+    assert!(!as_.disposition().is_consumed(), "{as_:?}");
 }
 
 /// An 8×8 grey baseline JPEG.
@@ -1696,7 +1696,7 @@ fn p2_jpeg_segments_the_dct_decoder_skips_are_unconsumed() {
         assert_unconsumed(&data, &inv, m);
     }
     let exif = leaf_at(&inv, find(&data, b"SECRET-EXIF") as u64);
-    assert_eq!(exif.label.as_deref(), Some("Exif"), "{exif:?}");
+    assert_eq!(exif.label(), Some("Exif"), "{exif:?}");
     // The scan data is read: changing it changes the pixels.
     let mut scan = data.clone();
     let eoi = find(&data, b"\xFF\xD9");
@@ -1759,7 +1759,7 @@ fn p1_object_stream_members_unread_entries() {
     let stm = inv
         .parts()
         .iter()
-        .find(|p| p.parent.is_none() && p.label.as_deref() == Some("ObjStm"))
+        .find(|p| p.parent().is_none() && p.label() == Some("ObjStm"))
         .expect("ObjStm part");
     let d = detail(stm);
     assert!(d.contains("1 Catalog: Type, OpenAction"), "{d}");
@@ -1806,7 +1806,7 @@ fn p4_object_stream_members_need_no_per_member_lookup() {
     let stm = inv
         .parts()
         .iter()
-        .find(|p| p.label.as_deref() == Some("ObjStm"))
+        .find(|p| p.label() == Some("ObjStm"))
         .unwrap();
     assert!(
         detail(stm).contains(&format!("holding {n} objects")),
@@ -1864,7 +1864,7 @@ fn p16_an_object_read_from_inside_a_comment_is_consumed() {
     let data = b.finish();
     let inv = inventory(&data);
     let p = leaf_at(&inv, find(&data, b"17 17") as u64);
-    assert_eq!(p.disposition, Disposition::Structure, "{p:?}\n{inv}");
+    assert_eq!(p.disposition(), Disposition::Structure, "{p:?}\n{inv}");
     assert!(
         detail(p).contains("hayro reads object 2 0 from here"),
         "{p:?}"
@@ -1902,7 +1902,7 @@ fn p13_p15_details_name_what_is_not_distinguished() {
     assert!(
         inv.parts()
             .iter()
-            .any(|q| q.range.contains(&at) && detail(q).contains("not distinguished")),
+            .any(|q| q.range().contains(&at) && detail(q).contains("not distinguished")),
         "{inv}"
     );
 }
@@ -1945,7 +1945,7 @@ fn r2_1_an_abandoned_unused_resource_check_never_claims_read() {
     let ctl = unused_image_pdf(&[]);
     let inv = inventory(&ctl);
     assert_eq!(
-        the_object(&inv, 7).disposition,
+        the_object(&inv, 7).disposition(),
         Disposition::Skipped,
         "{inv}"
     );
@@ -1954,7 +1954,7 @@ fn r2_1_an_abandoned_unused_resource_check_never_claims_read() {
     let data = unused_image_pdf(&[b"("]);
     let inv = inventory(&data);
     let img = the_object(&inv, 7);
-    assert_eq!(img.disposition, Disposition::Unknown, "{inv}");
+    assert_eq!(img.disposition(), Disposition::Unknown, "{inv}");
     assert!(
         detail(img).contains(
             "unused-resource check abandoned (a content stream the scan cannot tokenise)"
@@ -1962,10 +1962,10 @@ fn r2_1_an_abandoned_unused_resource_check_never_claims_read() {
         "{img:?}"
     );
     let entry = leaf_at(&inv, find(&data, b"/ImSecret 7 0 R") as u64);
-    assert_eq!(entry.disposition, Disposition::Unknown, "{entry:?}");
+    assert_eq!(entry.disposition(), Disposition::Unknown, "{entry:?}");
     assert_unconsumed(&data, &inv, b"SECRET-UNUSED-IMAGE");
     let at = find(&data, b"\x40\nendstream");
-    assert!(!leaf_at(&inv, at as u64).disposition.is_consumed());
+    assert!(!leaf_at(&inv, at as u64).disposition().is_consumed());
     let mut changed = data.clone();
     changed[at] = 0x80;
     assert_eq!(render0(&changed), render0(&data), "the image is not drawn");
@@ -2009,14 +2009,14 @@ fn r2_2_a_form_without_bbox_is_not_drawn() {
         let with = form_pdf(annotation, "/BBox [0 0 10 10]");
         let inv = inventory(&with);
         let p = leaf_at(&inv, find(&with, b"1 0 0 rg") as u64);
-        assert_eq!(p.disposition, Disposition::ImageData, "{inv}");
+        assert_eq!(p.disposition(), Disposition::ImageData, "{inv}");
         // hayro draws the form only with /BBox.
         assert_ne!(render0(&with), render0(&form_pdf(annotation, "")));
 
         let without = form_pdf(annotation, "");
         let inv = inventory(&without);
         let form = the_object(&inv, 10);
-        assert_eq!(form.disposition, Disposition::Dropped, "{inv}");
+        assert_eq!(form.disposition(), Disposition::Dropped, "{inv}");
         assert!(
             detail(form).contains("hayro-interpret's FormXObject::new needs /BBox; not drawn"),
             "{form:?}"

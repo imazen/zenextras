@@ -2030,18 +2030,18 @@ mod tests {
             let at = lex::find(&d, b"7 0 obj").unwrap() as u64;
             inv.parts()
                 .iter()
-                .find(|p| p.parent.is_none() && p.range.start == at)
+                .find(|p| p.parent().is_none() && p.range().start == at)
                 .unwrap()
                 .clone()
         };
         // Enough budget: the image is ruled unused.
         let p = image(&run(10_000));
-        assert_eq!(p.disposition, Disposition::Skipped, "{p:?}");
+        assert_eq!(p.disposition(), Disposition::Skipped, "{p:?}");
         // Two extra streams fit, the third does not.
         let p = image(&run(900));
-        assert_eq!(p.disposition, Disposition::Unknown, "{p:?}");
+        assert_eq!(p.disposition(), Disposition::Unknown, "{p:?}");
         assert!(
-            p.detail
+            p.detail()
                 .as_deref()
                 .unwrap_or("")
                 .contains("abandoned (the decoded-content budget is spent)"),

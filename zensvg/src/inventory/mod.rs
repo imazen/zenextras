@@ -1104,23 +1104,23 @@ fn unconsumed_units(inv: &Inventory) -> Vec<datauri::Unit> {
     parts
         .iter()
         .filter(|p| {
-            !p.disposition.is_consumed()
-                && !matches!(p.disposition, Disposition::Padding)
-                && p.parent
-                    .is_none_or(|q| parts[q.index()].disposition.is_consumed())
+            !p.disposition().is_consumed()
+                && !matches!(p.disposition(), Disposition::Padding)
+                && p.parent()
+                    .is_none_or(|q| parts[q.index()].disposition().is_consumed())
         })
         .map(|p| {
-            let label = match (&p.tag, &p.label) {
-                (PartTag::Name(n), Some(l)) if n.as_ref() != l.as_ref() => format!("{n} {l}"),
+            let label = match (p.tag(), p.label()) {
+                (PartTag::Name(n), Some(l)) if n.as_ref() != l => format!("{n} {l}"),
                 (PartTag::Name(n), _) => n.to_string(),
                 (_, Some(l)) => l.to_string(),
-                _ => p.kind.name().to_string(),
+                _ => p.kind().name().to_string(),
             };
             (
-                p.range.start as usize..p.range.end as usize,
-                p.disposition,
+                p.range().start as usize..p.range().end as usize,
+                p.disposition(),
                 label,
-                p.detail.clone().unwrap_or_default(),
+                p.detail().unwrap_or_default().to_owned(),
             )
         })
         .collect()
@@ -1461,7 +1461,7 @@ impl<'a, 'i, 'r> Walker<'a, 'i, 'r> {
     fn parent_elem_at(&self, parent: Option<PartId>) -> Option<usize> {
         let p = parent?;
         let part = self.inv.get(p)?;
-        Some(part.range.start as usize)
+        Some(part.range().start as usize)
     }
 
     fn node(
@@ -2441,7 +2441,8 @@ impl<'a, 'i, 'r> Walker<'a, 'i, 'r> {
                         .into_iter()
                         .filter_map(|c| self.inv.get(c))
                         .any(|p| {
-                            p.range.start == a.range.start as u64 && !p.disposition.is_consumed()
+                            p.range().start == a.range.start as u64
+                                && !p.disposition().is_consumed()
                         });
                     if !split {
                         self.note_refs(raw);
@@ -2901,23 +2902,23 @@ fn summary(inv: &Inventory, w: &Walked, what: &str) -> String {
     let mut by: Vec<(&'static str, usize)> = Vec::new();
     let mut notable: Vec<String> = Vec::new();
     for p in inv.parts() {
-        let name = p.disposition.name();
+        let name = p.disposition().name();
         match by.iter_mut().find(|(n, _)| *n == name) {
             Some((_, c)) => *c += 1,
             None => by.push((name, 1)),
         }
-        if !p.disposition.is_consumed()
+        if !p.disposition().is_consumed()
             && !matches!(
-                p.disposition,
+                p.disposition(),
                 Disposition::Padding | Disposition::Unreferenced
             )
             && notable.len() < 12
         {
-            let what = match (&p.tag, &p.label) {
-                (PartTag::Name(n), Some(l)) if n.as_ref() != l.as_ref() => format!("{n} {l:?}"),
+            let what = match (p.tag(), p.label()) {
+                (PartTag::Name(n), Some(l)) if n.as_ref() != l => format!("{n} {l:?}"),
                 (PartTag::Name(n), _) => n.to_string(),
                 (_, Some(l)) => format!("{l:?}"),
-                _ => p.kind.name().to_string(),
+                _ => p.kind().name().to_string(),
             };
             notable.push(what);
         }

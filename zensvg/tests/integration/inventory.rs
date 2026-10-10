@@ -134,7 +134,7 @@ fn find(hay: &[u8], needle: &[u8]) -> usize {
 fn leaf_at(inv: &Inventory, at: u64) -> &Part {
     inv.parts()
         .iter()
-        .filter(|p| p.range.contains(&at))
+        .filter(|p| p.range().contains(&at))
         .min_by_key(|p| p.len())
         .expect("inventory covers every byte")
 }
@@ -144,14 +144,14 @@ fn named<'a>(inv: &'a Inventory, name: &str) -> Vec<&'a Part> {
     let mut v: Vec<&Part> = inv
         .parts()
         .iter()
-        .filter(|p| p.tag == PartTag::Name(name.to_string().into()))
+        .filter(|p| *p.tag() == PartTag::Name(name.to_string().into()))
         .collect();
-    v.sort_by_key(|p| p.range.start);
+    v.sort_by_key(|p| p.range().start);
     v
 }
 
 fn detail(p: &Part) -> &str {
-    p.detail.as_deref().unwrap_or("")
+    p.detail().unwrap_or("")
 }
 
 #[test]
@@ -197,8 +197,8 @@ fn inkscape_leak_carriers_are_labelled_and_unconsumed() {
         ("mix-blend-mode", "multiply"),
     ] {
         let p = attr(name);
-        assert_eq!(p.kind, PartKind::Attribute);
-        assert_eq!(p.disposition, Disposition::Skipped, "{name}\n{inv}");
+        assert_eq!(p.kind(), PartKind::Attribute);
+        assert_eq!(p.disposition(), Disposition::Skipped, "{name}\n{inv}");
         assert!(detail(p).contains(value), "{name}: {p:?}");
     }
 
@@ -209,9 +209,9 @@ fn inkscape_leak_carriers_are_labelled_and_unconsumed() {
     let xlinks = named(&inv, "xlink:href");
     assert_eq!(hrefs.len(), 3, "{inv}");
     assert_eq!(xlinks.len(), 2, "{inv}");
-    assert_eq!(xlinks[0].disposition, Disposition::ImageData);
+    assert_eq!(xlinks[0].disposition(), Disposition::ImageData);
     assert!(detail(xlinks[0]).contains("data URI: image/png"), "{inv}");
-    assert_eq!(hrefs[0].disposition, Disposition::Structure);
+    assert_eq!(hrefs[0].disposition(), Disposition::Structure);
     assert!(
         detail(hrefs[0]).contains("file:///home/alice/photo.png"),
         "{inv}"
@@ -219,9 +219,9 @@ fn inkscape_leak_carriers_are_labelled_and_unconsumed() {
     assert!(detail(hrefs[0]).contains("local file system"));
     // An external `use`: usvg parses the element, resolves nothing and
     // draws nothing from it.
-    assert_eq!(hrefs[1].disposition, Disposition::Dropped);
-    assert_eq!(hrefs[2].disposition, Disposition::Dropped);
-    assert_eq!(xlinks[1].disposition, Disposition::Dropped);
+    assert_eq!(hrefs[1].disposition(), Disposition::Dropped);
+    assert_eq!(hrefs[2].disposition(), Disposition::Dropped);
+    assert_eq!(xlinks[1].disposition(), Disposition::Dropped);
     assert!(detail(xlinks[1]).contains("overridden"));
 
     for el in [
@@ -234,13 +234,19 @@ fn inkscape_leak_carriers_are_labelled_and_unconsumed() {
         "unknownElement",
     ] {
         let v = named(&inv, el);
-        assert_eq!(v[0].kind, PartKind::Chunk, "{el}");
-        assert_eq!(v[0].disposition, Disposition::Skipped, "{el}\n{inv}");
+        assert_eq!(v[0].kind(), PartKind::Chunk, "{el}");
+        assert_eq!(v[0].disposition(), Disposition::Skipped, "{el}\n{inv}");
     }
-    assert_eq!(named(&inv, "style")[0].disposition, Disposition::Structure);
-    assert_eq!(named(&inv, "#cdata")[0].disposition, Disposition::Structure);
-    assert_eq!(named(&inv, "rect")[0].disposition, Disposition::ImageData);
-    assert_eq!(named(&inv, "g")[0].disposition, Disposition::Structure);
+    assert_eq!(
+        named(&inv, "style")[0].disposition(),
+        Disposition::Structure
+    );
+    assert_eq!(
+        named(&inv, "#cdata")[0].disposition(),
+        Disposition::Structure
+    );
+    assert_eq!(named(&inv, "rect")[0].disposition(), Disposition::ImageData);
+    assert_eq!(named(&inv, "g")[0].disposition(), Disposition::Structure);
     // The text has no font-family: usvg asks for its default family (Times
     // New Roman), then serif. Whether it is drawn depends on the host's
     // fonts, so check both directions against the decoder.
@@ -251,7 +257,7 @@ fn inkscape_leak_carriers_are_labelled_and_unconsumed() {
         other[at..at + word.len()].copy_from_slice(&b"XXXXX"[..word.len()]);
         let changes = render_bytes(&data) != render_bytes(&other);
         assert_eq!(
-            p.disposition.is_consumed(),
+            p.disposition().is_consumed(),
             changes,
             "{:?}: {p:?}",
             String::from_utf8_lossy(word)
@@ -259,13 +265,13 @@ fn inkscape_leak_carriers_are_labelled_and_unconsumed() {
     }
 
     let doctype = named(&inv, "!DOCTYPE")[0];
-    assert_eq!(doctype.disposition, Disposition::Structure);
+    assert_eq!(doctype.disposition(), Disposition::Structure);
     let entities = named(&inv, "!ENTITY");
     assert_eq!(entities.len(), 2);
-    assert_eq!(entities[0].disposition, Disposition::Structure);
-    assert_eq!(entities[1].disposition, Disposition::Dropped);
+    assert_eq!(entities[0].disposition(), Disposition::Structure);
+    assert_eq!(entities[1].disposition(), Disposition::Dropped);
     assert_eq!(
-        named(&inv, "declaration")[0].disposition,
+        named(&inv, "declaration")[0].disposition(),
         Disposition::Skipped
     );
 
@@ -287,7 +293,7 @@ fn inkscape_leak_carriers_are_labelled_and_unconsumed() {
     ] {
         let p = leaf_at(&inv, find(&data, secret) as u64);
         assert!(
-            !p.disposition.is_consumed(),
+            !p.disposition().is_consumed(),
             "{:?} is in a consumed part: {p:?}\n{inv}",
             String::from_utf8_lossy(secret)
         );
@@ -299,24 +305,24 @@ fn svgz_maps_the_gzip_framing() {
     let data = inkscape_svgz();
     let inv = inventory(&data);
     let header = named(&inv, "gzip")[0];
-    assert_eq!(header.kind, PartKind::Header);
-    assert_eq!(named(&inv, "MTIME")[0].disposition, Disposition::Dropped);
+    assert_eq!(header.kind(), PartKind::Header);
+    assert_eq!(named(&inv, "MTIME")[0].disposition(), Disposition::Dropped);
     let fname = named(&inv, "FNAME")[0];
-    assert_eq!(fname.disposition, Disposition::Dropped);
+    assert_eq!(fname.disposition(), Disposition::Dropped);
     assert!(detail(fname).contains("q3-salaries.svg"));
     let fcomment = named(&inv, "FCOMMENT")[0];
     assert!(detail(fcomment).contains("exported by alice"));
     let deflate = named(&inv, "deflate")[0];
-    assert_eq!(deflate.disposition, Disposition::ImageData, "{inv}");
+    assert_eq!(deflate.disposition(), Disposition::ImageData, "{inv}");
     assert!(
         detail(deflate).contains("sodipodi:docname"),
         "{}",
         detail(deflate)
     );
     let trailer = named(&inv, "gzip trailer")[0];
-    assert_eq!(trailer.disposition, Disposition::Structure);
+    assert_eq!(trailer.disposition(), Disposition::Structure);
     let tail = &inv.parts()[inv.children(None).last().unwrap().index()];
-    assert_eq!(tail.disposition, Disposition::Trailing);
+    assert_eq!(tail.disposition(), Disposition::Trailing);
     assert!(detail(tail).contains("another gzip member"));
 }
 
@@ -325,11 +331,11 @@ fn only_the_first_text_of_a_style_is_css() {
     let data = br#"<svg xmlns="http://www.w3.org/2000/svg" width="2" height="2"><style>rect { fill: red }<!--x--> HIDDEN-CSS </style><rect width="2" height="2"/></svg>"#;
     let inv = inventory(data);
     assert_eq!(
-        leaf_at(&inv, find(data, b"rect {") as u64).disposition,
+        leaf_at(&inv, find(data, b"rect {") as u64).disposition(),
         Disposition::Structure
     );
     assert_eq!(
-        leaf_at(&inv, find(data, b"HIDDEN-CSS") as u64).disposition,
+        leaf_at(&inv, find(data, b"HIDDEN-CSS") as u64).disposition(),
         Disposition::Skipped,
         "{inv}"
     );
@@ -337,7 +343,7 @@ fn only_the_first_text_of_a_style_is_css() {
     let data = br#"<svg xmlns="http://www.w3.org/2000/svg" width="2" height="2"><style><!--x-->rect { fill: red }</style><rect width="2" height="2"/></svg>"#;
     let inv = inventory(data);
     assert_eq!(
-        leaf_at(&inv, find(data, b"rect {") as u64).disposition,
+        leaf_at(&inv, find(data, b"rect {") as u64).disposition(),
         Disposition::Skipped,
         "{inv}"
     );
@@ -356,10 +362,10 @@ fn svgz_header_fields_and_header_checks() {
         ("FCOMMENT", Disposition::Dropped),
         ("FHCRC", Disposition::Structure),
     ] {
-        assert_eq!(named(&inv, name)[0].disposition, want, "{name}\n{inv}");
+        assert_eq!(named(&inv, name)[0].disposition(), want, "{name}\n{inv}");
     }
     assert_eq!(
-        named(&inv, "deflate")[0].disposition,
+        named(&inv, "deflate")[0].disposition(),
         Disposition::ImageData
     );
     // A wrong header CRC or reserved flag bits: flate2 rejects the file.
@@ -369,12 +375,12 @@ fn svgz_header_fields_and_header_checks() {
     ] {
         let inv = inventory(&data);
         assert_eq!(
-            named(&inv, field)[0].disposition,
+            named(&inv, field)[0].disposition(),
             Disposition::Malformed,
             "{inv}"
         );
         assert_eq!(
-            named(&inv, "deflate")[0].disposition,
+            named(&inv, "deflate")[0].disposition(),
             Disposition::Dropped,
             "{inv}"
         );
@@ -399,10 +405,10 @@ fn a_bom_is_structure() {
     let inv = inventory(&data);
     let bom = named(&inv, "BOM")[0];
     assert_eq!(
-        (bom.range.clone(), bom.disposition),
+        (bom.range(), bom.disposition()),
         (0..3, Disposition::Structure)
     );
-    assert_eq!(named(&inv, "rect")[0].disposition, Disposition::ImageData);
+    assert_eq!(named(&inv, "rect")[0].disposition(), Disposition::ImageData);
 }
 
 #[test]
@@ -429,20 +435,20 @@ fn unreferenced_defs_draw_nothing() {
     let by_id = |id: &str| -> &Part {
         inv.parts()
             .iter()
-            .find(|p| p.label.as_deref() == Some(id) && p.kind == PartKind::Chunk)
+            .find(|p| p.label() == Some(id) && p.kind() == PartKind::Chunk)
             .unwrap_or_else(|| panic!("{id}\n{inv}"))
     };
-    assert_eq!(by_id("used").disposition, Disposition::Structure, "{inv}");
-    assert_eq!(by_id("css").disposition, Disposition::Structure, "{inv}");
-    assert_eq!(by_id("s1").disposition, Disposition::Structure, "{inv}");
+    assert_eq!(by_id("used").disposition(), Disposition::Structure, "{inv}");
+    assert_eq!(by_id("css").disposition(), Disposition::Structure, "{inv}");
+    assert_eq!(by_id("s1").disposition(), Disposition::Structure, "{inv}");
     for id in ["unused", "old-photo", "s2", "outside-defs"] {
-        assert_eq!(by_id(id).disposition, Disposition::Dropped, "{id}\n{inv}");
+        assert_eq!(by_id(id).disposition(), Disposition::Dropped, "{id}\n{inv}");
     }
     // The embedded photo and the symbol's text are not consumed.
     let photo = leaf_at(&inv, find(&data, b"data:image/png") as u64);
-    assert_eq!(photo.disposition, Disposition::Dropped, "{inv}");
+    assert_eq!(photo.disposition(), Disposition::Dropped, "{inv}");
     let text = leaf_at(&inv, find(&data, b"HIDDEN-SYMBOL-TEXT") as u64);
-    assert!(!text.disposition.is_consumed(), "{inv}");
+    assert!(!text.disposition().is_consumed(), "{inv}");
 }
 
 #[test]
@@ -460,11 +466,11 @@ fn elements_usvg_never_draws_are_dropped() {
     let by_id = |id: &str| -> &Part {
         inv.parts()
             .iter()
-            .find(|p| p.label.as_deref() == Some(id) && p.kind == PartKind::Chunk)
+            .find(|p| p.label() == Some(id) && p.kind() == PartKind::Chunk)
             .unwrap_or_else(|| panic!("{id}\n{inv}"))
     };
     for id in ["shown", "lang-ok", "sw-pick"] {
-        assert!(by_id(id).disposition.is_consumed(), "{id}\n{inv}");
+        assert!(by_id(id).disposition().is_consumed(), "{id}\n{inv}");
     }
     for id in [
         "attr-none",
@@ -474,7 +480,7 @@ fn elements_usvg_never_draws_are_dropped() {
         "sw-skip",
         "sw-later",
     ] {
-        assert_eq!(by_id(id).disposition, Disposition::Dropped, "{id}\n{inv}");
+        assert_eq!(by_id(id).disposition(), Disposition::Dropped, "{id}\n{inv}");
     }
     // The decoder agrees: none of the red full-canvas shapes is drawn.
     use zencodec::decode::Decode;
@@ -491,12 +497,8 @@ fn elements_usvg_never_draws_are_dropped() {
     // CSS that mentions display could override the attribute: not dropped.
     let css = br#"<svg xmlns="http://www.w3.org/2000/svg" width="2" height="2"><style>rect { display: inline }</style><rect id="r" display="none" width="2" height="2"/></svg>"#;
     let inv = inventory(css);
-    let r = inv
-        .parts()
-        .iter()
-        .find(|p| p.label.as_deref() == Some("r"))
-        .unwrap();
-    assert!(r.disposition.is_consumed(), "{inv}");
+    let r = inv.parts().iter().find(|p| p.label() == Some("r")).unwrap();
+    assert!(r.disposition().is_consumed(), "{inv}");
 }
 
 #[test]
@@ -506,11 +508,11 @@ fn rejected_documents_consume_nothing() {
     data.extend_from_slice(b"\nTRAILING-JUNK");
     let inv = inventory(&data);
     assert!(
-        inv.parts().iter().all(|p| !p.disposition.is_consumed()),
+        inv.parts().iter().all(|p| !p.disposition().is_consumed()),
         "{inv}"
     );
     let tail = &inv.parts()[inv.children(None).last().unwrap().index()];
-    assert_eq!(tail.disposition, Disposition::Trailing);
+    assert_eq!(tail.disposition(), Disposition::Trailing);
 }
 
 #[test]
@@ -532,7 +534,10 @@ fn documents_the_decoder_refuses_to_draw_consume_nothing() {
             .is_err()
     );
     assert!(
-        refused.parts().iter().all(|p| !p.disposition.is_consumed()),
+        refused
+            .parts()
+            .iter()
+            .all(|p| !p.disposition().is_consumed()),
         "{refused}"
     );
     let rect = named(&refused, "rect")[0];
@@ -542,7 +547,7 @@ fn documents_the_decoder_refuses_to_draw_consume_nothing() {
     );
     let drawn = job(16).inventory(SMALL).unwrap().unwrap();
     assert_eq!(
-        named(&drawn, "rect")[0].disposition,
+        named(&drawn, "rect")[0].disposition(),
         Disposition::ImageData,
         "{drawn}"
     );
@@ -552,7 +557,7 @@ fn documents_the_decoder_refuses_to_draw_consume_nothing() {
     assert!(SvgDecoderConfig::new().job().output_info(zero).is_err());
     let inv = inventory(zero);
     assert!(
-        inv.parts().iter().all(|p| !p.disposition.is_consumed()),
+        inv.parts().iter().all(|p| !p.disposition().is_consumed()),
         "{inv}"
     );
 }
@@ -588,7 +593,7 @@ fn deeply_nested_documents_do_not_overflow() {
         .into_bytes();
         let inv = inventory(&data);
         assert!(
-            inv.parts().iter().all(|p| !p.disposition.is_consumed()),
+            inv.parts().iter().all(|p| !p.disposition().is_consumed()),
             "{depth}"
         );
         let rect = named(&inv, "rect")[0];
@@ -604,7 +609,7 @@ fn deeply_nested_documents_do_not_overflow() {
         } else {
             Disposition::Dropped
         };
-        assert_eq!(rect.disposition, want, "{depth}: {rect:?}");
+        assert_eq!(rect.disposition(), want, "{depth}: {rect:?}");
     }
     // Nesting carried by an entity's replacement text counts too.
     let data = format!(
@@ -614,7 +619,7 @@ fn deeply_nested_documents_do_not_overflow() {
     )
     .into_bytes();
     let inv = inventory(&data);
-    assert!(inv.parts().iter().all(|p| !p.disposition.is_consumed()));
+    assert!(inv.parts().iter().all(|p| !p.disposition().is_consumed()));
 }
 
 /// An image whose data URI holds an SVG whose image holds an SVG, six
@@ -654,11 +659,11 @@ fn nested_data_uri_svgs_past_the_budget_are_unknown() {
     let unknown: Vec<&Part> = inv
         .parts()
         .iter()
-        .filter(|p| p.disposition == Disposition::Unknown)
+        .filter(|p| p.disposition() == Disposition::Unknown)
         .collect();
     assert_eq!(unknown.len(), 1, "{inv}");
     assert!(detail(unknown[0]).contains("not verified"), "{inv}");
-    assert_eq!(named(&inv, "href")[0].disposition, Disposition::ImageData);
+    assert_eq!(named(&inv, "href")[0].disposition(), Disposition::ImageData);
 }
 
 /// The review's 524-byte pattern cycle of three (R3-S1): usvg breaks only
@@ -672,11 +677,11 @@ fn a_pattern_cycle_of_three_does_not_abort() {
     assert_eq!(d.len(), 524);
     let inv = inventory(d);
     assert!(
-        inv.parts().iter().all(|p| !p.disposition.is_consumed()),
+        inv.parts().iter().all(|p| !p.disposition().is_consumed()),
         "{inv}"
     );
     let rect = leaf_at(&inv, find(d, br#"<rect width="20" height="20""#) as u64);
-    assert_eq!(rect.disposition, Disposition::Unknown, "{inv}");
+    assert_eq!(rect.disposition(), Disposition::Unknown, "{inv}");
     assert!(detail(rect).contains("#p1 → #p2 → #p3 → #p1"), "{rect:?}");
     assert!(detail(rect).contains("zenextras#41"), "{rect:?}");
     // A cycle of two is broken by usvg (fix_recursive_patterns) and drawn
@@ -684,7 +689,7 @@ fn a_pattern_cycle_of_three_does_not_abort() {
     let two = br##"<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20"><pattern id="p1" width="4" height="4" patternUnits="userSpaceOnUse"><rect width="4" height="4" fill="url(#p2)"/></pattern><pattern id="p2" width="4" height="4" patternUnits="userSpaceOnUse"><rect width="4" height="4" fill="url(#p1)"/></pattern><rect width="20" height="20" fill="url(#p1)"/><rect width="5" height="5" fill="#00f"/></svg>"##;
     let inv = inventory(two);
     let blue = leaf_at(&inv, find(two, b"#00f") as u64);
-    assert_eq!(blue.disposition, Disposition::ImageData, "{inv}");
+    assert_eq!(blue.disposition(), Disposition::ImageData, "{inv}");
 }
 
 /// Run `f` on its own thread and fail if it takes longer than `secs`: a
@@ -732,11 +737,11 @@ fn an_href_chain_looping_past_its_origin_does_not_hang() {
             move || inventory(&d)
         });
         assert!(
-            inv.parts().iter().all(|p| !p.disposition.is_consumed()),
+            inv.parts().iter().all(|p| !p.disposition().is_consumed()),
             "{name}\n{inv}"
         );
         let rect = leaf_at(&inv, find(&d, br#"<rect width="20" height="20""#) as u64);
-        assert_eq!(rect.disposition, Disposition::Unknown, "{name}\n{inv}");
+        assert_eq!(rect.disposition(), Disposition::Unknown, "{name}\n{inv}");
         assert!(detail(rect).contains(chain), "{name}: {rect:?}");
         assert!(detail(rect).contains("zenextras#42"), "{name}: {rect:?}");
     }
@@ -753,7 +758,7 @@ fn an_href_chain_looping_past_its_origin_does_not_hang() {
         &inv,
         find(&solid, br#"<rect width="20" height="20""#) as u64,
     );
-    assert_eq!(rect.disposition, Disposition::ImageData, "{inv}");
+    assert_eq!(rect.disposition(), Disposition::ImageData, "{inv}");
     // A chain that ends, or loops back to its origin, is drawn as before.
     let fine = wrap(
         r##"<pattern id="q1" width="4" height="4" patternUnits="userSpaceOnUse" href="#q2"/><pattern id="q2" width="4" height="4" patternUnits="userSpaceOnUse" href="#q1"><rect width="4" height="4" fill="#00f"/></pattern><rect width="20" height="20" fill="url(#q1)"/>"##,
@@ -763,7 +768,7 @@ fn an_href_chain_looping_past_its_origin_does_not_hang() {
         move || inventory(&d)
     });
     let rect = leaf_at(&inv, find(&fine, br#"<rect width="20" height="20""#) as u64);
-    assert_eq!(rect.disposition, Disposition::ImageData, "{inv}");
+    assert_eq!(rect.disposition(), Disposition::ImageData, "{inv}");
 }
 
 /// One line per part: depth, kind, range, tag, disposition, label.
@@ -772,17 +777,17 @@ fn pinned_lines(inv: &Inventory) -> Vec<String> {
         .iter()
         .map(|p| {
             let depth =
-                std::iter::successors(p.parent, |id| inv.parts()[id.index()].parent).count();
+                std::iter::successors(p.parent(), |id| inv.parts()[id.index()].parent()).count();
             let mut line = format!(
                 "{}{} {}..{} {} {}",
                 "  ".repeat(depth),
-                p.kind.name(),
-                p.range.start,
-                p.range.end,
-                p.tag,
-                p.disposition,
+                p.kind().name(),
+                p.range().start,
+                p.range().end,
+                p.tag(),
+                p.disposition(),
             );
-            if let Some(l) = &p.label {
+            if let Some(l) = &p.label() {
                 line.push_str(&format!(" {l:?}"));
             }
             line
@@ -1008,7 +1013,7 @@ fn oracle_xmllint() {
         let drawable = inv
             .parts()
             .iter()
-            .any(|p| p.disposition == Disposition::ImageData);
+            .any(|p| p.disposition() == Disposition::ImageData);
         let conformance = if drawable {
             zencodec_testkit::check_inventory(SvgDecoderConfig::new(), &data)
                 .map_err(|e| format!("{e:?}"))
@@ -1116,13 +1121,13 @@ fn structural_checks(data: &[u8]) -> Result<(), String> {
         let leaf = !inv
             .parts()
             .iter()
-            .any(|q| q.parent.is_some_and(|id| &inv.parts()[id.index()] == p));
+            .any(|q| q.parent().is_some_and(|id| &inv.parts()[id.index()] == p));
         if leaf
-            && p.range.start < tail.end
-            && p.range.end > tail.start
-            && p.disposition.is_consumed()
+            && p.range().start < tail.end
+            && p.range().end > tail.start
+            && p.disposition().is_consumed()
         {
-            return Err(format!("appended junk reported as {}", p.disposition));
+            return Err(format!("appended junk reported as {}", p.disposition()));
         }
     }
     let n = data.len();
@@ -1224,7 +1229,7 @@ struct Ours {
 impl Ours {
     fn from(inv: &Inventory) -> Self {
         let mut parts: Vec<(usize, &Part)> = inv.parts().iter().enumerate().collect();
-        parts.sort_by_key(|(i, p)| (p.range.start, std::cmp::Reverse(p.range.end), *i));
+        parts.sort_by_key(|(i, p)| (p.range().start, std::cmp::Reverse(p.range().end), *i));
         let mut o = Ours {
             elements: Vec::new(),
             comments: 0,
@@ -1232,13 +1237,13 @@ impl Ours {
             cdata: 0,
         };
         let in_doctype = |p: &Part| {
-            std::iter::successors(p.parent, |id| inv.parts()[id.index()].parent)
-                .any(|id| inv.parts()[id.index()].tag == PartTag::Name("!DOCTYPE".into()))
+            std::iter::successors(p.parent(), |id| inv.parts()[id.index()].parent())
+                .any(|id| *inv.parts()[id.index()].tag() == PartTag::Name("!DOCTYPE".into()))
         };
         let mut element_of: std::collections::HashMap<usize, usize> = Default::default();
         for (i, p) in parts {
-            let PartTag::Name(n) = &p.tag else { continue };
-            match (p.kind, n.as_ref()) {
+            let PartTag::Name(n) = &p.tag() else { continue };
+            match (p.kind(), n.as_ref()) {
                 (PartKind::Chunk, "#comment") if !in_doctype(p) => o.comments += 1,
                 (PartKind::Chunk, "#cdata") => o.cdata += 1,
                 (PartKind::Chunk, t) if t.starts_with('?') => o.pis.push(t[1..].to_string()),
@@ -1254,13 +1259,13 @@ impl Ours {
                 (PartKind::Attribute, a) => {
                     // The attribute's element: its parent (self-closing) or
                     // its parent's parent (start tag).
-                    let mut id = p.parent;
+                    let mut id = p.parent();
                     while let Some(x) = id {
                         if let Some(&e) = element_of.get(&x.index()) {
                             o.elements[e].1.push(a.to_string());
                             break;
                         }
-                        id = inv.parts()[x.index()].parent;
+                        id = inv.parts()[x.index()].parent();
                     }
                 }
                 _ => {}

@@ -58,7 +58,7 @@ fn render(d: &[u8]) -> Result<Vec<u8>, String> {
 fn leaf_at(inv: &Inventory, at: u64) -> &Part {
     inv.parts()
         .iter()
-        .filter(|p| p.range.contains(&at))
+        .filter(|p| p.range().contains(&at))
         .min_by_key(|p| p.len())
         .expect("inventory covers every byte")
 }
@@ -108,7 +108,7 @@ fn probe_pair_with(name: &str, cfg: SvgDecoderConfig, a: &[u8], b: &[u8]) -> Ver
     let ra = render_with(cfg.clone(), a);
     let rb = render_with(cfg, b);
     let changed = ra != rb;
-    let consumed = p.disposition.is_consumed();
+    let consumed = p.disposition().is_consumed();
     let verdict = match (consumed, changed) {
         (true, false) => Verdict::OverClaim,
         (false, true) => Verdict::UnderClaim,
@@ -117,13 +117,13 @@ fn probe_pair_with(name: &str, cfg: SvgDecoderConfig, a: &[u8], b: &[u8]) -> Ver
     println!(
         "PROBE {name}: byte {at} in {} {} {}..{} disposition={} label={:?} detail={:?}\n      \
          decode A: {}; decode B: {}; output changed: {changed} => {verdict:?}",
-        p.kind.name(),
-        p.tag,
-        p.range.start,
-        p.range.end,
-        p.disposition,
-        p.label,
-        p.detail,
+        p.kind().name(),
+        p.tag(),
+        p.range().start,
+        p.range().end,
+        p.disposition(),
+        p.label(),
+        p.detail(),
         painted(&ra),
         painted(&rb),
     );
@@ -574,15 +574,15 @@ fn a27_svgz_fname_longer_than_flate2_allows() {
     let inv = inventory(&d);
     let r = render(&d);
     for p in inv.parts() {
-        if p.parent.is_none() {
+        if p.parent().is_none() {
             println!(
                 "  top {} {:?} {}..{} {} {:?}",
-                p.kind.name(),
-                p.tag,
-                p.range.start,
-                p.range.end,
-                p.disposition,
-                p.detail.as_deref().map(|s| &s[..s.len().min(90)])
+                p.kind().name(),
+                p.tag(),
+                p.range().start,
+                p.range().end,
+                p.disposition(),
+                p.detail().map(|s| &s[..s.len().min(90)])
             );
         }
     }
@@ -590,12 +590,12 @@ fn a27_svgz_fname_longer_than_flate2_allows() {
     let deflate = inv
         .parts()
         .iter()
-        .find(|p| p.tag == zencodec::inventory::PartTag::Name("deflate".into()))
+        .find(|p| *p.tag() == zencodec::inventory::PartTag::Name("deflate".into()))
         .unwrap();
     assert!(
-        r.is_ok() || !deflate.disposition.is_consumed(),
+        r.is_ok() || !deflate.disposition().is_consumed(),
         "deflate reported {} but decode fails: {:?}",
-        deflate.disposition,
+        deflate.disposition(),
         r.err()
     );
 }
@@ -619,10 +619,10 @@ fn a28_decoder_limits_reject_but_inventory_claims_consumed() {
     println!(
         "limits: decode {:?}; rect leaf {} detail {:?}",
         dec.as_ref().err().map(|e| format!("{e}")),
-        rect.disposition,
-        rect.detail
+        rect.disposition(),
+        rect.detail()
     );
-    assert!(dec.is_ok() || !rect.disposition.is_consumed());
+    assert!(dec.is_ok() || !rect.disposition().is_consumed());
 }
 
 #[test]
@@ -810,11 +810,11 @@ fn b12_whitespace_between_tspans_is_not_padding() {
     let changed = render(&a) != render(&b);
     println!(
         "PROBE ws-between-tspans: {} {} {:?}; removing it changes output: {changed}",
-        p.kind.name(),
-        p.disposition,
-        p.range
+        p.kind().name(),
+        p.disposition(),
+        p.range()
     );
-    assert!(p.disposition.is_consumed() || !changed);
+    assert!(p.disposition().is_consumed() || !changed);
 }
 
 #[test]
@@ -947,13 +947,13 @@ fn c05_svgz_variants() {
             .iter()
             .enumerate()
             .filter(|(i, p)| {
-                p.disposition.is_consumed()
+                p.disposition().is_consumed()
                     && !inv
                         .parts()
                         .iter()
-                        .any(|q| q.parent.map(|x| x.index()) == Some(*i))
+                        .any(|q| q.parent().map(|x| x.index()) == Some(*i))
             })
-            .map(|(_, p)| format!("{}", p.tag))
+            .map(|(_, p)| format!("{}", p.tag()))
             .collect();
         println!(
             "SVGZ {name}: decode {}; consumed leaves {:?}",
@@ -1082,15 +1082,15 @@ fn d03_svgz_past_inflate_cap() {
     let t = std::time::Instant::now();
     let inv = inventory(&d);
     println!("inventory in {:?}", t.elapsed());
-    for p in inv.parts().iter().filter(|p| p.parent.is_none()) {
+    for p in inv.parts().iter().filter(|p| p.parent().is_none()) {
         println!(
             "  top {} {} {}..{} {} {:?}",
-            p.kind.name(),
-            p.tag,
-            p.range.start,
-            p.range.end,
-            p.disposition,
-            p.detail
+            p.kind().name(),
+            p.tag(),
+            p.range().start,
+            p.range().end,
+            p.disposition(),
+            p.detail()
         );
     }
     // Past the inventory's 128 MiB budget the inner document is not
@@ -1098,9 +1098,9 @@ fn d03_svgz_past_inflate_cap() {
     let deflate = inv
         .parts()
         .iter()
-        .find(|p| p.tag == zencodec::inventory::PartTag::Name("deflate".into()))
+        .find(|p| *p.tag() == zencodec::inventory::PartTag::Name("deflate".into()))
         .unwrap();
-    assert!(!deflate.disposition.is_consumed(), "{deflate:?}");
+    assert!(!deflate.disposition().is_consumed(), "{deflate:?}");
     if std::env::var_os("REVIEW_DECODE").is_some() {
         let t = std::time::Instant::now();
         println!("decode: {} in {:?}", painted(&render(&d)), t.elapsed());
@@ -1349,9 +1349,9 @@ fn r2_s8_unknown_property_in_applied_rule() {
     let p = leaf_at(&inv, find(&d, b"SECRETALICE") as u64);
     println!(
         "rule-set unknown property: {} {} {:?}",
-        p.kind.name(),
-        p.disposition,
-        p.detail
+        p.kind().name(),
+        p.disposition(),
+        p.detail()
     );
     assert_eq!(
         probe(
@@ -1373,9 +1373,9 @@ fn r2_s9_unknown_property_in_style_attribute() {
     let p = leaf_at(&inv, find(&d, b"SECRETALICE") as u64);
     println!(
         "style-attribute unknown property: {} {} {:?}",
-        p.kind.name(),
-        p.disposition,
-        p.detail
+        p.kind().name(),
+        p.disposition(),
+        p.detail()
     );
     assert_eq!(
         probe(
