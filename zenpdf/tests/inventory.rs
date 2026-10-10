@@ -722,6 +722,12 @@ fn oracle_mutool_exiftool() {
     for f in &files {
         let data = std::fs::read(f).unwrap();
         let inv = inventory(&data);
+        // Conformance on the real file too (empty files have no image data).
+        if !data.is_empty()
+            && let Err(e) = zencodec_testkit::check_inventory(PdfDecoderConfig::new(), &data)
+        {
+            failures.push(format!("{}: check_inventory: {e:?}", f.display()));
+        }
         let out = std::process::Command::new(&mutool)
             .arg("show")
             .arg(f)

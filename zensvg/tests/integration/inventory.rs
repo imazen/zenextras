@@ -74,6 +74,30 @@ fn inkscape_svgz() -> Vec<u8> {
     out
 }
 
+/// A gzip member written by hand with every optional header field: FEXTRA,
+/// FNAME, FCOMMENT and a header CRC-16 (`fhcrc` adds `crc_delta` to it).
+fn svgz_all_fields(crc_delta: u16, flg_extra_bits: u8) -> Vec<u8> {
+    let svg = SMALL;
+    let mut h = vec![0x1f, 0x8b, 8, 0x02 | 0x04 | 0x08 | 0x10 | flg_extra_bits];
+    h.extend_from_slice(&1_700_000_000u32.to_le_bytes());
+    h.extend_from_slice(&[0, 3]);
+    h.extend_from_slice(&5u16.to_le_bytes());
+    h.extend_from_slice(b"AB\x01\x00Z");
+    h.extend_from_slice(b"secret-name.svg\0");
+    h.extend_from_slice(b"comment by alice\0");
+    let mut c = flate2::Crc::new();
+    c.update(&h);
+    h.extend_from_slice(&((c.sum() as u16).wrapping_add(crc_delta)).to_le_bytes());
+    let mut e = flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::default());
+    e.write_all(svg).unwrap();
+    h.extend(e.finish().unwrap());
+    let mut body = flate2::Crc::new();
+    body.update(svg);
+    h.extend_from_slice(&body.sum().to_le_bytes());
+    h.extend_from_slice(&(svg.len() as u32).to_le_bytes());
+    h
+}
+
 const SMALL: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4" data-x="1"><!--c--><rect width="4" height="4"/></svg>"#;
 
 fn inventory(data: &[u8]) -> Inventory {
@@ -121,6 +145,8 @@ fn testkit_check_inventory_on_every_fixture() {
         ("inkscape", inkscape_svg()),
         ("inkscape.svgz", inkscape_svgz()),
         ("small", SMALL.to_vec()),
+        ("bom", [&b"\xEF\xBB\xBF"[..], SMALL].concat()),
+        ("svgz-all-fields", svgz_all_fields(0, 0)),
     ] {
         zencodec_testkit::check_inventory(SvgDecoderConfig::new(), &bytes)
             .unwrap_or_else(|e| panic!("{name}: {e:?}"));
@@ -293,6 +319,68 @@ fn only_the_first_text_of_a_style_is_css() {
 }
 
 #[test]
+fn svgz_header_fields_and_header_checks() {
+    let data = svgz_all_fields(0, 0);
+    let inv = inventory(&data);
+    for (name, want) in [
+        ("ID CM FLG", Disposition::Structure),
+        ("MTIME", Disposition::Dropped),
+        ("XFL OS", Disposition::Dropped),
+        ("FEXTRA", Disposition::Dropped),
+        ("FNAME", Disposition::Dropped),
+        ("FCOMMENT", Disposition::Dropped),
+        ("FHCRC", Disposition::Structure),
+    ] {
+        assert_eq!(named(&inv, name)[0].disposition, want, "{name}\n{inv}");
+    }
+    assert_eq!(
+        named(&inv, "deflate")[0].disposition,
+        Disposition::ImageData
+    );
+    // A wrong header CRC or reserved flag bits: flate2 rejects the file.
+    for (data, field) in [
+        (svgz_all_fields(1, 0), "FHCRC"),
+        (svgz_all_fields(0, 0x20), "ID CM FLG"),
+    ] {
+        let inv = inventory(&data);
+        assert_eq!(
+            named(&inv, field)[0].disposition,
+            Disposition::Malformed,
+            "{inv}"
+        );
+        assert_eq!(
+            named(&inv, "deflate")[0].disposition,
+            Disposition::Dropped,
+            "{inv}"
+        );
+    }
+    // The decoder agrees: the good file renders, the bad ones do not.
+    use zencodec::decode::Decode;
+    let render = |d: &[u8]| {
+        SvgDecoderConfig::new()
+            .job()
+            .decoder(std::borrow::Cow::Borrowed(d), &[])
+            .and_then(|x| x.decode())
+            .is_ok()
+    };
+    assert!(render(&svgz_all_fields(0, 0)));
+    assert!(!render(&svgz_all_fields(1, 0)));
+    assert!(!render(&svgz_all_fields(0, 0x20)));
+}
+
+#[test]
+fn a_bom_is_structure() {
+    let data = [&b"\xEF\xBB\xBF"[..], SMALL].concat();
+    let inv = inventory(&data);
+    let bom = named(&inv, "BOM")[0];
+    assert_eq!(
+        (bom.range.clone(), bom.disposition),
+        (0..3, Disposition::Structure)
+    );
+    assert_eq!(named(&inv, "rect")[0].disposition, Disposition::ImageData);
+}
+
+#[test]
 fn rejected_documents_consume_nothing() {
     // Trailing junk after the root element: roxmltree rejects the document.
     let mut data = SMALL.to_vec();
@@ -382,12 +470,29 @@ fn oracle_xmllint() {
     collect(std::path::Path::new(&dir), &mut files);
     files.sort();
     assert!(!files.is_empty(), "no SVG files under {dir:?}");
-    let mut table =
-        String::from("file\tbytes\telements\tcomments\tpis\tcdata\tattr_parts\tmismatches\n");
+    let mut table = String::from(
+        "file\tbytes\telements\tcomments\tpis\tcdata\tattr_parts\tdrawable\tmismatches\n",
+    );
     let mut failures = Vec::new();
     for f in &files {
         let data = std::fs::read(f).unwrap();
         let inv = inventory(&data);
+        // check_inventory requires image data in a valid file. A file usvg
+        // draws nothing from (an SVG font) truthfully has none, so for it run
+        // the same truncation and appended-junk checks without that rule.
+        let drawable = inv
+            .parts()
+            .iter()
+            .any(|p| p.disposition == Disposition::ImageData);
+        let conformance = if drawable {
+            zencodec_testkit::check_inventory(SvgDecoderConfig::new(), &data)
+                .map_err(|e| format!("{e:?}"))
+        } else {
+            structural_checks(&data)
+        };
+        if let Err(e) = conformance {
+            failures.push(format!("{}: check_inventory: {e}", f.display()));
+        }
         let out = std::process::Command::new(&xmllint)
             .arg("--debug")
             .arg(f)
@@ -460,7 +565,7 @@ fn oracle_xmllint() {
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default();
         table.push_str(&format!(
-            "{name}\t{}\t{elements}\t{comments}\t{pis}\t{cdata}\t{attrs}\t{}\n",
+            "{name}\t{}\t{elements}\t{comments}\t{pis}\t{cdata}\t{attrs}\t{drawable}\t{}\n",
             data.len(),
             mism.len()
         ));
@@ -473,6 +578,51 @@ fn oracle_xmllint() {
         std::fs::write(path, &table).unwrap();
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// check_inventory's truncation and appended-junk checks, without its
+/// image-data requirement.
+fn structural_checks(data: &[u8]) -> Result<(), String> {
+    let mut junked = data.to_vec();
+    junked.extend((0..37u8).map(|i| i.wrapping_mul(97) ^ 0x5A));
+    let inv = inventory(&junked);
+    let tail = data.len() as u64..junked.len() as u64;
+    for p in inv.parts() {
+        let leaf = !inv
+            .parts()
+            .iter()
+            .any(|q| q.parent.is_some_and(|id| &inv.parts()[id.index()] == p));
+        if leaf
+            && p.range.start < tail.end
+            && p.range.end > tail.start
+            && p.disposition.is_consumed()
+        {
+            return Err(format!("appended junk reported as {}", p.disposition));
+        }
+    }
+    let n = data.len();
+    for len in [
+        0,
+        1,
+        2,
+        3,
+        4,
+        8,
+        16,
+        n / 8,
+        n / 4,
+        n * 3 / 8,
+        n / 2,
+        n * 5 / 8,
+        n * 3 / 4,
+        n * 7 / 8,
+        n.saturating_sub(1),
+    ] {
+        if len < n {
+            inventory(&data[..len]);
+        }
+    }
+    Ok(())
 }
 
 /// The element count in an SVGZ deflate part's summary (`elements: N`).

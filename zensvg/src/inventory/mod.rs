@@ -1273,13 +1273,26 @@ fn svgz(
     }
     let flg = d[3];
     let mtime = u32::from_le_bytes([d[4], d[5], d[6], d[7]]);
+    // flate2's header parser rejects reserved FLG bits and a wrong header
+    // CRC-16; usvg then fails with MalformedGZip.
+    let mut header_reject: Option<&'static str> = None;
     let mut fields: Vec<(Range<usize>, &str, Disposition, String)> = Vec::new();
-    fields.push((
-        0..4,
-        "ID CM FLG",
-        Disposition::Structure,
-        format!("magic, deflate method, FLG {flg:#04x}"),
-    ));
+    if flg & 0xE0 != 0 {
+        header_reject = Some("reserved FLG bits are set; flate2 rejects the header");
+        fields.push((
+            0..4,
+            "ID CM FLG",
+            Disposition::Malformed,
+            format!("FLG {flg:#04x} sets reserved bits; flate2 rejects the header"),
+        ));
+    } else {
+        fields.push((
+            0..4,
+            "ID CM FLG",
+            Disposition::Structure,
+            format!("magic, deflate method, FLG {flg:#04x}"),
+        ));
+    }
     fields.push((
         4..8,
         "MTIME",
@@ -1340,12 +1353,28 @@ fn svgz(
     }
     if ok && flg & 2 != 0 {
         if i + 2 <= d.len() {
-            fields.push((
-                i..i + 2,
-                "FHCRC",
-                Disposition::Structure,
-                "header CRC-16; flate2 verifies it".into(),
-            ));
+            let mut c = flate2::Crc::new();
+            c.update(&d[..i]);
+            let stored = u16::from_le_bytes([d[i], d[i + 1]]);
+            if stored == c.sum() as u16 {
+                fields.push((
+                    i..i + 2,
+                    "FHCRC",
+                    Disposition::Structure,
+                    "header CRC-16; flate2 verifies it".into(),
+                ));
+            } else {
+                header_reject.get_or_insert("the header CRC-16 does not match; flate2 rejects it");
+                fields.push((
+                    i..i + 2,
+                    "FHCRC",
+                    Disposition::Malformed,
+                    format!(
+                        "header CRC-16 {stored:#06x} does not match {:#06x}; flate2 rejects it",
+                        c.sum() as u16
+                    ),
+                ));
+            }
             i += 2;
         } else {
             ok = false;
@@ -1450,12 +1479,15 @@ fn svgz(
         )
     } else {
         let mut inner_inv = Inventory::new(format, inner.len() as u64);
-        let reason = (!gzip_ok).then(|| "the gzip trailer does not verify".to_string());
+        let reason = match header_reject {
+            Some(why) => Some(why.to_string()),
+            None => (!gzip_ok).then(|| "the gzip trailer does not verify".to_string()),
+        };
         let (accepted, elements) = walk_xml(&inner, &mut inner_inv, reason, stop)?;
         inner_inv.fill_gaps(None, Disposition::Trailing)?;
         (summary(&inner_inv, accepted, elements), accepted)
     };
-    let deflate_disp = if gzip_ok && inner_accepted {
+    let deflate_disp = if gzip_ok && inner_accepted && header_reject.is_none() {
         Disposition::ImageData
     } else {
         Disposition::Dropped
