@@ -662,6 +662,24 @@ fn deep_stack<R: Send>(deep: bool, f: impl FnOnce() -> R + Send) -> Option<R> {
 /// Parse with roxmltree as `usvg::Tree::from_str` does, once the nesting
 /// is known to be safe.
 fn parse_doc(d: &[u8], bound: Option<usize>) -> Result<rx::Document<'_>, String> {
+    let s = parse_prechecks(d, bound)?;
+    let opt = rx::ParsingOptions {
+        allow_dtd: true,
+        ..Default::default()
+    };
+    let doc = rx::Document::parse_with_options(s, opt)
+        .map_err(|e| format!("roxmltree rejects it: {e}"))?;
+    let root = doc.root_element();
+    if root.tag_name().name() != "svg"
+        || !matches!(root.tag_name().namespace(), None | Some(model::SVG_NS))
+    {
+        return Err("the root element is not <svg> (usvg: NoRootNode)".into());
+    }
+    Ok(doc)
+}
+
+/// UTF-8 and a nesting bound roxmltree's recursion survives.
+fn parse_prechecks(d: &[u8], bound: Option<usize>) -> Result<&str, String> {
     let s = std::str::from_utf8(d).map_err(|_| "not UTF-8 (usvg requires UTF-8)".to_string())?;
     match bound {
         None => {
@@ -681,19 +699,7 @@ fn parse_doc(d: &[u8], bound: Option<usize>) -> Result<rx::Document<'_>, String>
         }
         Some(_) => {}
     }
-    let opt = rx::ParsingOptions {
-        allow_dtd: true,
-        ..Default::default()
-    };
-    let doc = rx::Document::parse_with_options(s, opt)
-        .map_err(|e| format!("roxmltree rejects it: {e}"))?;
-    let root = doc.root_element();
-    if root.tag_name().name() != "svg"
-        || !matches!(root.tag_name().namespace(), None | Some(model::SVG_NS))
-    {
-        return Err("the root element is not <svg> (usvg: NoRootNode)".into());
-    }
-    Ok(doc)
+    Ok(s)
 }
 
 /// Map an SVG document at `d` into `inv` (whose input is `d`).
@@ -735,16 +741,15 @@ fn walk_parsed(
     nest: u32,
 ) -> Result<Walked, InvError> {
     let mut accepted: Result<(), String> = rejected.map_or(Ok(()), Err);
-    let doc = match accepted {
-        Ok(()) => match parse_doc(d, bound) {
-            Ok(doc) => Some(doc),
-            Err(e) => {
-                accepted = Err(e);
-                None
-            }
-        },
-        Err(_) => None,
-    };
+    // The decoder's own checks run first, before the walker's parse, so
+    // their parse (usvg's roxmltree document and tree) is dropped before
+    // the walker's is built: peak memory is one parse, not two. The
+    // nesting bound comes before either (both recurse per level).
+    if accepted.is_ok() {
+        if let Err(e) = parse_prechecks(d, bound) {
+            accepted = Err(e);
+        }
+    }
     if accepted.is_ok() {
         let gate = if nest == 0 {
             crate::render::check_render(d, job.options)
@@ -755,6 +760,16 @@ fn walk_parsed(
             accepted = Err(format!("the decoder rejects it before drawing: {e}"));
         }
     }
+    let doc = match accepted {
+        Ok(()) => match parse_doc(d, bound) {
+            Ok(doc) => Some(doc),
+            Err(e) => {
+                accepted = Err(e);
+                None
+            }
+        },
+        Err(_) => None,
+    };
     let uris = UriCache::default();
     let fonts = DocFonts {
         lookup: job.fonts,
@@ -2709,7 +2724,7 @@ fn accept_only(d: &[u8], rejected: Option<String>, job: &Job, nest: u32) -> Walk
         if let Some(r) = rejected.clone() {
             return Err(r);
         }
-        parse_doc(d, bound)?;
+        parse_prechecks(d, bound)?;
         if nest == 0 {
             crate::render::check_render(d, job.options)
         } else {
