@@ -932,34 +932,24 @@ impl<'p> Walker<'p> {
     }
 }
 
-/// Whether a stream's filter chain uses only the general-purpose filters
-/// (Flate, LZW, ASCIIHex, ASCII85, RunLength), so asking hayro to decode it
-/// cannot reach its image decoders. hayro's CCITT decoder panics on some
-/// input; the inventory never runs image decoders itself.
-pub(crate) fn text_filters_only(dict: &[u8]) -> bool {
-    let Some(v) = entry(dict, b"Filter") else {
-        return true;
-    };
-    let ok = |name: &[u8]| {
+/// Whether hayro would decode this stream with general-purpose filters only
+/// (Flate, LZW, ASCIIHex, ASCII85, RunLength), so asking it to decode the
+/// stream cannot reach its image decoders: its CCITT decoder panics on some
+/// input (zenextras#35). Uses hayro's own `Stream::filters()`, the list
+/// `decoded()` applies, rather than the inventory's tokenizer, which is
+/// stricter than hayro's dictionary parser.
+pub(crate) fn text_filters_only(stream: &Stream<'_>) -> bool {
+    use hayro_syntax::Filter;
+    stream.filters().iter().all(|f| {
         matches!(
-            name,
-            b"/FlateDecode"
-                | b"/Fl"
-                | b"/LZWDecode"
-                | b"/LZW"
-                | b"/ASCIIHexDecode"
-                | b"/AHx"
-                | b"/ASCII85Decode"
-                | b"/A85"
-                | b"/RunLengthDecode"
-                | b"/RL"
+            f,
+            Filter::FlateDecode
+                | Filter::LzwDecode
+                | Filter::AsciiHexDecode
+                | Filter::Ascii85Decode
+                | Filter::RunLengthDecode
         )
-    };
-    match super::lex::value_kind(v) {
-        ValueKind::Array => super::lex::array_items(v).into_iter().all(|r| ok(&v[r])),
-        ValueKind::Other => ok(v),
-        _ => false,
-    }
+    })
 }
 
 /// Refs in a value: the reference itself, or the references in an array.
@@ -1056,13 +1046,13 @@ pub(crate) fn oc_hidden(pdf: &Pdf, id: Id, inactive: &BTreeSet<Id>) -> bool {
 pub(crate) fn content_usage(
     pdf: &Pdf,
     content: &BTreeSet<Id>,
-    oc_name_hidden: &dyn Fn(&[u8]) -> bool,
+    oc_name_hidden: &dyn Fn(super::content::OcRef<'_>) -> bool,
 ) -> Option<super::content::Usage> {
     let mut used = super::content::Usage::default();
     let mut budget: u64 = 1 << 30;
     for &(n, g) in content {
         let stream = pdf.xref().get::<Stream<'_>>(ObjectIdentifier::new(n, g))?;
-        if !text_filters_only(stream.dict().data()) {
+        if !text_filters_only(&stream) {
             return None;
         }
         let decoded = stream.decoded().ok()?;
@@ -1077,7 +1067,7 @@ pub(crate) fn content_usage(
 /// Object numbers an object stream declares, in order.
 pub(crate) fn objstm_numbers(bytes: &[u8]) -> Result<Vec<u32>, &'static str> {
     let stream = Stream::from_bytes(bytes).ok_or("unparseable stream")?;
-    if !text_filters_only(stream.dict().data()) {
+    if !text_filters_only(&stream) {
         return Err("filters the inventory does not decode");
     }
     let n = stream.dict().get::<usize>(b"N").ok_or("no /N")?;

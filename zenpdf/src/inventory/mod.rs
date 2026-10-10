@@ -577,10 +577,11 @@ fn semantics(
     let first = graph::walk(pdf, trailer, render_annotations, None, &inactive);
     // A properties name hides content only when every object it names (in
     // any resource dictionary) is optional content that is off.
-    let oc_name_hidden = |name: &[u8]| {
-        first.properties.get(name).is_some_and(|ids| {
+    let oc_name_hidden = |r: content::OcRef<'_>| match r {
+        content::OcRef::Name(name) => first.properties.get(name).is_some_and(|ids| {
             !ids.is_empty() && ids.iter().all(|&id| graph::oc_hidden(pdf, id, &inactive))
-        })
+        }),
+        content::OcRef::Ref(n, g) => graph::oc_hidden(pdf, (n, g), &inactive),
     };
     let used = graph::content_usage(pdf, &first.content, &oc_name_hidden);
     let walk = match &used {

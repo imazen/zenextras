@@ -59,13 +59,26 @@ impl Usage {
 
 /// Add the resource names `content` uses to `used`. Returns `false` when the
 /// stream could not be tokenised to its end.
-pub(crate) fn scan(content: &[u8], usage: &mut Usage, oc_hidden: &dyn Fn(&[u8]) -> bool) -> bool {
+/// What a `BDC` names as its optional content: a `/Properties` resource
+/// name, or the `/OC` reference of an inline properties dictionary.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum OcRef<'a> {
+    Name(&'a [u8]),
+    Ref(i32, i32),
+}
+
+pub(crate) fn scan(
+    content: &[u8],
+    usage: &mut Usage,
+    oc_hidden: &dyn Fn(OcRef<'_>) -> bool,
+) -> bool {
     let n = content.len();
     let mut operands: Vec<(Tok, usize, usize)> = Vec::new();
     // `OcgState`'s visibility stack: BDC pushes (hidden when its properties
     // name an optional-content group or membership that is off), BMC pushes
     // the current state, EMC pops.
     let mut hidden_stack: Vec<bool> = Vec::new();
+    let mut nest = 0u32;
     let mut i = 0usize;
     loop {
         i = lex::skip_ws_comments_in(content, i, n);
@@ -75,7 +88,15 @@ pub(crate) fn scan(content: &[u8], usage: &mut Usage, oc_hidden: &dyn Fn(&[u8]) 
         let Some((tok, end)) = lex::token(content, i) else {
             return false;
         };
-        if tok != Tok::Regular || is_operand(&content[i..end]) {
+        // Inside an operand dictionary or array every token is an operand
+        // (`<< /OC 7 0 R >>` holds an `R`, `[(a) 3 (b)] TJ` strings).
+        let in_operand = nest > 0;
+        match tok {
+            Tok::DictOpen | Tok::ArrOpen => nest += 1,
+            Tok::DictClose | Tok::ArrClose => nest = nest.saturating_sub(1),
+            _ => {}
+        }
+        if tok != Tok::Regular || in_operand || is_operand(&content[i..end]) {
             if operands.len() < 64 {
                 operands.push((tok, i, end));
             }
@@ -106,7 +127,11 @@ pub(crate) fn scan(content: &[u8], usage: &mut Usage, oc_hidden: &dyn Fn(&[u8]) 
         let hidden_now = hidden_stack.last().copied().unwrap_or(false);
         match op {
             b"BDC" => {
-                let props_hidden = last.and_then(name_at).is_some_and(|name| oc_hidden(&name));
+                let props_hidden = match last.and_then(name_at) {
+                    Some(name) => oc_hidden(OcRef::Name(&name)),
+                    None => inline_oc(content, &operands)
+                        .is_some_and(|(n, g)| oc_hidden(OcRef::Ref(n, g))),
+                };
                 hidden_stack.push(hidden_now || props_hidden);
             }
             b"BMC" => hidden_stack.push(hidden_now),
@@ -132,6 +157,37 @@ pub(crate) fn scan(content: &[u8], usage: &mut Usage, oc_hidden: &dyn Fn(&[u8]) 
             };
             i = after;
         }
+    }
+}
+
+/// The `/OC` reference of a `BDC`'s inline properties dictionary (the last
+/// operand), when it has one.
+fn inline_oc(content: &[u8], operands: &[(Tok, usize, usize)]) -> Option<(i32, i32)> {
+    let &(Tok::DictClose, _, end) = operands.last()? else {
+        return None;
+    };
+    let mut depth = 0i32;
+    let mut start = None;
+    for &(t, s, _) in operands.iter().rev() {
+        match t {
+            Tok::DictClose => depth += 1,
+            Tok::DictOpen => {
+                depth -= 1;
+                if depth == 0 {
+                    start = Some(s);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let dict = start?..end;
+    let e = lex::dict_entries(content, dict)
+        .into_iter()
+        .rfind(|e| &*lex::unescape_name(&content[e.key.clone()]) == b"OC")?;
+    match lex::value_kind(&content[e.value]) {
+        lex::ValueKind::Ref(n, g) => Some((n, g)),
+        _ => None,
     }
 }
 
@@ -211,13 +267,21 @@ mod tests {
     fn draws_inside_hidden_optional_content_are_split_out() {
         let mut usage = Usage::default();
         let c = b"/OC /off BDC /Im1 Do /F1 9 Tf /Sh sh BMC /Im2 Do EMC EMC /Im3 Do \
-                  /OC /on BDC /Im4 Do EMC";
-        assert!(scan(c, &mut usage, &|n| n == b"off"));
+                  /OC /on BDC /Im4 Do EMC /OC << /OC 7 0 R >> BDC /Im5 Do EMC";
+        assert!(scan(c, &mut usage, &|r| matches!(
+            r,
+            OcRef::Name(b"off") | OcRef::Ref(7, 0)
+        )));
         let names = |s: &Used| -> Vec<Vec<u8>> { s.iter().map(|(_, n)| n.clone()).collect() };
         assert_eq!(
             names(&usage.hidden),
             // Ordered by (category, name): Shading before XObject.
-            [b"Sh".to_vec(), b"Im1".to_vec(), b"Im2".to_vec()]
+            [
+                b"Sh".to_vec(),
+                b"Im1".to_vec(),
+                b"Im2".to_vec(),
+                b"Im5".to_vec()
+            ]
         );
         // The font is resolved by Tf even inside hidden content.
         assert!(usage.visible.contains(&(&b"Font"[..], b"F1".to_vec())));
