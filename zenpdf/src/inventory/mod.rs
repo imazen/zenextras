@@ -130,6 +130,29 @@ pub(crate) fn pdf_inventory(
     rejected: Option<String>,
     stop: &dyn zencodec::enough::Stop,
 ) -> Result<Inventory, InvError> {
+    inventory_with_scan_budget(
+        data,
+        format,
+        render_annotations,
+        start_frame,
+        rejected,
+        stop,
+        graph::CONTENT_SCAN_BUDGET,
+    )
+}
+
+/// [`pdf_inventory`] with the unused-resource check's decoded-content
+/// budget as a parameter (tests lower it).
+#[allow(clippy::too_many_arguments)]
+fn inventory_with_scan_budget(
+    data: &[u8],
+    format: ImageFormat,
+    render_annotations: bool,
+    start_frame: u32,
+    rejected: Option<String>,
+    stop: &dyn zencodec::enough::Stop,
+    scan_budget: u64,
+) -> Result<Inventory, InvError> {
     let max_parts = zencodec::inventory::DEFAULT_MAX_PARTS;
     let units = lex::lex(data, max_parts as usize, stop).map_err(|e| match e {
         lex::LexStop::TooManyParts => {
@@ -142,6 +165,7 @@ pub(crate) fn pdf_inventory(
         &units,
         render_annotations,
         start_frame,
+        scan_budget,
         rejected,
         stop,
     )
@@ -334,6 +358,7 @@ fn assign(
     units: &[Unit],
     render_annotations: bool,
     start_frame: u32,
+    scan_budget: u64,
     rejected: Option<String>,
     stop: &dyn zencodec::enough::Stop,
 ) -> Result<Vec<Assign>, zencodec::enough::StopReason> {
@@ -372,6 +397,7 @@ fn assign(
                     start_frame,
                     rejected.as_deref(),
                     stop,
+                    scan_budget,
                 )
             }));
             match r {
@@ -627,6 +653,8 @@ struct Semantics {
     encrypted: bool,
     /// Resource names content uses, when every content stream was scanned.
     used: Option<content::Usage>,
+    /// Why the unused-resource check gave up, when it did.
+    abandoned: Option<&'static str>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -639,6 +667,7 @@ fn semantics(
     start_frame: u32,
     rejected: Option<&str>,
     stop: &dyn zencodec::enough::Stop,
+    scan_budget: u64,
 ) -> Result<Semantics, zencodec::enough::StopReason> {
     let mut by_id: BTreeMap<Id, Vec<usize>> = BTreeMap::new();
     for (i, u) in units.iter().enumerate() {
@@ -745,6 +774,7 @@ fn semantics(
         trailer,
         render_annotations,
         None,
+        false,
         &inactive,
         &sel,
         stop,
@@ -760,19 +790,23 @@ fn semantics(
         }),
         content::OcRef::Ref(n, g) => graph::oc_hidden(pdf, (n, g), &inactive),
     };
-    let used = graph::content_usage(pdf, &first.content, &oc_name_hidden, stop)?;
-    let walk = match &used {
-        Some(u) => graph::walk(
-            pdf,
-            trailer,
-            render_annotations,
-            Some(u),
-            &inactive,
-            &sel,
-            stop,
-        ),
-        None => first,
+    // When the scan gives up, the second walk still runs: the checked
+    // resources it could not rule on are unverified, never "read".
+    let scanned = graph::content_usage(pdf, &first.content, &oc_name_hidden, stop, scan_budget)?;
+    let (used, abandoned) = match scanned {
+        Ok(u) => (Some(u), None),
+        Err(why) => (None, Some(why)),
     };
+    let walk = graph::walk(
+        pdf,
+        trailer,
+        render_annotations,
+        used.as_ref(),
+        abandoned.is_some(),
+        &inactive,
+        &sel,
+        stop,
+    );
     if let Some(r) = walk.stopped {
         return Err(r);
     }
@@ -853,6 +887,7 @@ fn semantics(
         not_drawn,
         encrypted,
         used,
+        abandoned,
     })
 }
 
@@ -995,8 +1030,7 @@ fn unused_resource_children(
     data: &[u8],
     dict: Range<usize>,
     reach: &graph::Reach,
-    used: &content::Usage,
-    sel: &graph::Selection,
+    s: &Semantics,
 ) -> Vec<Child> {
     let category = |k: &[u8]| content::CHECKED.iter().find(|c| **c == k).copied();
     let is_dict = |r: &Range<usize>| data[r.clone()].starts_with(b"<<");
@@ -1035,13 +1069,29 @@ fn unused_resource_children(
             let name = lex::unescape_name(&data[e.key.clone()]);
             let k = (cat, name.to_vec());
             let shown = text(&name, 64);
+            let Some(used) = &s.used else {
+                // The check gave up: no entry is ruled read or unused.
+                out.push(Child {
+                    range: e.range.clone(),
+                    kind: PartKind::Attribute,
+                    tag: PartTag::Name(Cow::Owned(shown.clone())),
+                    disposition: Disposition::Unknown,
+                    detail: format!(
+                        "unused-resource check abandoned ({}); the decoder may read it; {}",
+                        s.abandoned.unwrap_or("no reason recorded"),
+                        text(&data[e.value.clone()], 64)
+                    ),
+                    label: Some(shown),
+                });
+                continue;
+            };
             let (disposition, why) = if !used.contains(&k) {
                 (
                     Disposition::Skipped,
                     format!(
                         "unused {} resource: no content operator on page index {} names /{shown}",
                         text(cat, 16),
-                        sel.index
+                        s.sel.index
                     ),
                 )
             } else if used.hidden_only(&k) {
@@ -1211,7 +1261,8 @@ fn jpeg_segment_parts(jpeg: &[u8], base: usize) -> Vec<(Child, Vec<Child>)> {
 fn reach_disposition(ctx: Ctx, is_stream: bool) -> Disposition {
     match ctx {
         Ctx::Render | Ctx::RenderMap if is_stream => Disposition::ImageData,
-        Ctx::Info | Ctx::OcHidden => Disposition::Dropped,
+        Ctx::Info | Ctx::OcHidden | Ctx::Undrawn => Disposition::Dropped,
+        Ctx::Unverified => Disposition::Unknown,
         Ctx::Names | Ctx::Skip => Disposition::Skipped,
         _ => Disposition::Structure,
     }
@@ -1280,10 +1331,10 @@ fn object_assign(
                     &s.sel,
                     0,
                 );
-                if let Some(used) = &s.used {
+                if s.used.is_some() || s.abandoned.is_some() {
                     // An unused resource entry covers its whole value: it wins
                     // over anything listed inside it.
-                    let unused = unused_resource_children(data, range, reach, used, &s.sel);
+                    let unused = unused_resource_children(data, range, reach, s);
                     children.retain(|c| {
                         !unused
                             .iter()
@@ -1460,6 +1511,14 @@ fn live_assign(i: usize, o: &lex::ObjUnit, s: &Semantics, dict: Option<&[u8]>) -
                 Ctx::OcHidden => "parsed but never drawn: used only inside optional content \
                                   that is off, or its own /OC is off"
                     .into(),
+                Ctx::Undrawn => "hayro-interpret's FormXObject::new needs /BBox; not drawn \
+                                 (the stream is decoded, nothing reaches the caller)"
+                    .into(),
+                Ctx::Unverified => format!(
+                    "unused-resource check abandoned ({}); the decoder may read it",
+                    s.abandoned.unwrap_or("no reason recorded")
+                )
+                .into(),
                 Ctx::Names | Ctx::Skip if r.label.ends_with("not decoded)") => {
                     match graph::page_number_of(&r.label) {
                         Some(n) => format!(
@@ -1499,7 +1558,12 @@ fn live_assign(i: usize, o: &lex::ObjUnit, s: &Semantics, dict: Option<&[u8]>) -
             };
             let mut a = Assign::new(disposition, why);
             a.label = match r.ctx {
-                Ctx::Info | Ctx::Names | Ctx::Skip | Ctx::OcHidden => Some(r.label.to_string()),
+                Ctx::Info
+                | Ctx::Names
+                | Ctx::Skip
+                | Ctx::OcHidden
+                | Ctx::Undrawn
+                | Ctx::Unverified => Some(r.label.to_string()),
                 _ => dict
                     .and_then(graph::type_label)
                     .or_else(|| Some(r.label.to_string())),
@@ -1604,6 +1668,8 @@ fn objstm_assign(
                     Ctx::Info => Some("Info, dropped".into()),
                     Ctx::Names | Ctx::Skip => Some(format!("{}, skipped", r.label).into()),
                     Ctx::OcHidden => Some("optional content off, dropped".into()),
+                    Ctx::Undrawn => Some("form without /BBox, dropped".into()),
+                    Ctx::Unverified => Some("unused-resource check abandoned, unknown".into()),
                     _ => None,
                 }
             }
@@ -1899,4 +1965,87 @@ fn emit(
     }
     inv.fill_gaps(None, Disposition::Trailing)?;
     Ok(inv)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The reviewer's a24 with a lowered budget: the decoded-content budget
+    /// runs out on the third extra stream, and the never-drawn image is
+    /// unknown, not read.
+    #[test]
+    fn a_spent_scan_budget_leaves_resources_unverified() {
+        let mut d = b"%PDF-1.7\n".to_vec();
+        let mut offs = Vec::new();
+        let mut obj = |d: &mut Vec<u8>, n: u32, body: &[u8]| {
+            offs.push((n, d.len()));
+            d.extend_from_slice(format!("{n} 0 obj\n").as_bytes());
+            d.extend_from_slice(body);
+            d.extend_from_slice(b"\nendobj\n");
+        };
+        let spaces = [b' '; 400];
+        let stream = |data: &[u8], dict: &str| {
+            let mut v = format!("<< {dict} /Length {} >>\nstream\n", data.len()).into_bytes();
+            v.extend_from_slice(data);
+            v.extend_from_slice(b"\nendstream");
+            v
+        };
+        obj(&mut d, 1, b"<< /Type /Catalog /Pages 2 0 R >>");
+        obj(&mut d, 2, b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>");
+        obj(
+            &mut d,
+            3,
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 10 10] /Contents [4 0 R 20 0 R 21 0 R \
+              22 0 R] /Resources << /XObject << /ImSecret 7 0 R >> >> >>",
+        );
+        obj(&mut d, 4, &stream(b"1 0 0 rg 0 0 10 10 re f", ""));
+        obj(
+            &mut d,
+            7,
+            &stream(
+                b"\x40",
+                "/Type /XObject /Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceGray \
+                 /BitsPerComponent 8",
+            ),
+        );
+        for n in 20..23 {
+            obj(&mut d, n, &stream(&spaces, ""));
+        }
+        let xref = d.len();
+        d.extend_from_slice(b"xref\n0 1\n0000000000 65535 f\r\n");
+        offs.sort();
+        for (n, o) in &offs {
+            d.extend_from_slice(format!("{n} 1\n{o:010} 00000 n\r\n").as_bytes());
+        }
+        d.extend_from_slice(
+            format!("trailer\n<< /Size 23 /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n").as_bytes(),
+        );
+        let format = crate::zencodec_impl::pdf_format_for_tests();
+        let run = |budget: u64| {
+            inventory_with_scan_budget(&d, format, true, 0, None, &zencodec::Unstoppable, budget)
+                .unwrap()
+        };
+        let image = |inv: &Inventory| {
+            let at = lex::find(&d, b"7 0 obj").unwrap() as u64;
+            inv.parts()
+                .iter()
+                .find(|p| p.parent.is_none() && p.range.start == at)
+                .unwrap()
+                .clone()
+        };
+        // Enough budget: the image is ruled unused.
+        let p = image(&run(10_000));
+        assert_eq!(p.disposition, Disposition::Skipped, "{p:?}");
+        // Two extra streams fit, the third does not.
+        let p = image(&run(900));
+        assert_eq!(p.disposition, Disposition::Unknown, "{p:?}");
+        assert!(
+            p.detail
+                .as_deref()
+                .unwrap_or("")
+                .contains("abandoned (the decoded-content budget is spent)"),
+            "{p:?}"
+        );
+    }
 }

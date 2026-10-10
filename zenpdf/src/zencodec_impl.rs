@@ -72,6 +72,11 @@ fn pdf_image_format() -> ImageFormat {
     PDF_FORMATS[0]
 }
 
+#[cfg(test)]
+pub(crate) fn pdf_format_for_tests() -> ImageFormat {
+    pdf_image_format()
+}
+
 // ---------------------------------------------------------------------------
 // Capabilities
 // ---------------------------------------------------------------------------

@@ -74,6 +74,12 @@ pub(crate) enum Ctx {
     /// is used only inside optional content that is off, or carries an
     /// `/OC` that is off (`ImageXObject::draw`, `FormXObject::draw`).
     OcHidden,
+    /// A resource the unused-resource check could not rule on (the content
+    /// scan gave up): the decoder may read it or not.
+    Unverified,
+    /// A form XObject hayro-interpret's `FormXObject::new` refuses (no
+    /// four-number `/BBox`): its stream is decoded, nothing is drawn.
+    Undrawn,
     /// Never read by the decoder.
     Skip,
 }
@@ -98,7 +104,7 @@ impl Ctx {
             // Parsed while hayro builds the page list, nothing more: an
             // object also reached for the decoded page takes that role.
             Ctx::OtherPage | Ctx::OtherTree | Ctx::OtherRes | Ctx::OtherMap => 4,
-            Ctx::OcHidden => 3,
+            Ctx::OcHidden | Ctx::Unverified | Ctx::Undrawn => 3,
             Ctx::Info => 2,
             Ctx::Names | Ctx::Skip => 1,
         }
@@ -664,6 +670,13 @@ fn rule(ctx: Ctx, key: &[u8], render_annotations: bool) -> Rule {
         // What a parsed-but-undrawn XObject references may still be read
         // while it is constructed (its colour space): count it as read.
         Ctx::OcHidden => rule(Ctx::Render, key, render_annotations),
+        // What an unverified resource leads to is unverified too.
+        Ctx::Unverified => match rule(Ctx::Render, key, render_annotations) {
+            Rule::Follow(Ctx::Render | Ctx::RenderMap, l) => Rule::Follow(Ctx::Unverified, l),
+            r => r,
+        },
+        // A form that is never drawn never searches its resources.
+        Ctx::Undrawn => other(),
         // `get_decryptor` (hayro-syntax crypto) reads these keys.
         Ctx::Encrypt => match key {
             b"CF" => follow(Ctx::EncryptMap, "CF"),
@@ -980,7 +993,8 @@ pub(crate) fn unread_entry(
         Ctx::OtherMap => false,
         // `interpret_page` reads `/F`, `/Rect` and `/AP`; never `/AS`.
         Ctx::Annot => matches!(key, b"F" | b"Rect") || (key == b"AP" && annot_drawn),
-        Ctx::Render | Ctx::OcHidden => kind_reads(kind, key, is_stream),
+        Ctx::Render | Ctx::OcHidden | Ctx::Unverified => kind_reads(kind, key, is_stream),
+        Ctx::Undrawn => false,
         Ctx::OcProps => matches!(key, b"OCGs" | b"D"),
         Ctx::OcConfig => matches!(key, b"BaseState" | b"ON" | b"OFF"),
         Ctx::Encrypt => key == b"CF" || ENCRYPT_KEYS.contains(&key),
@@ -1059,6 +1073,8 @@ struct Walker<'p> {
     /// resource categories that no content names are not followed as render
     /// objects.
     used: Option<&'p super::content::Usage>,
+    /// The unused-resource check gave up: checked resources are unverified.
+    abandoned: bool,
     /// Optional-content groups that are off.
     inactive: &'p BTreeSet<Id>,
     /// The page the job decodes.
@@ -1103,11 +1119,13 @@ fn resolve<'a>(pdf: &'a Pdf, id: Id) -> Option<Raw<'a>> {
 
 /// Walk the object graph from the trailer the way the decoder reads it.
 /// `trailer` is the trailer dictionary's bytes (hayro does not expose it).
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn walk<'p>(
     pdf: &'p Pdf,
     trailer: Option<&[u8]>,
     render_annotations: bool,
     used: Option<&'p super::content::Usage>,
+    abandoned: bool,
     inactive: &'p BTreeSet<Id>,
     sel: &'p Selection,
     stop: &'p dyn zencodec::enough::Stop,
@@ -1116,6 +1134,7 @@ pub(crate) fn walk<'p>(
         pdf,
         render_annotations,
         used,
+        abandoned,
         inactive,
         sel,
         found_page: false,
@@ -1305,7 +1324,7 @@ impl<'p> Walker<'p> {
             self.visit_annot(d, depth);
             return;
         }
-        let kind = if matches!(ctx, Ctx::Render | Ctx::OcHidden) {
+        let kind = if matches!(ctx, Ctx::Render | Ctx::OcHidden | Ctx::Unverified) {
             render_kind(&label, d, is_stream)
         } else {
             RKind::Pooled
@@ -1319,13 +1338,15 @@ impl<'p> Walker<'p> {
         };
         // A resource map whose category content names by operator: entries
         // no content names are never looked up.
-        let unused_check = match (ctx, self.used) {
-            (Ctx::RenderMap, Some(used)) => super::content::CHECKED
-                .iter()
-                .find(|c| label.as_bytes() == **c)
-                .map(|c| (*c, used)),
-            _ => None,
-        };
+        let checked = (ctx == Ctx::RenderMap)
+            .then(|| {
+                super::content::CHECKED
+                    .iter()
+                    .find(|c| label.as_bytes() == **c)
+                    .copied()
+            })
+            .flatten();
+        let unused_check = checked.zip(self.used);
         for e in super::lex::dict_entries(d, 0..d.len()) {
             if !self.spend() {
                 return;
@@ -1340,6 +1361,15 @@ impl<'p> Walker<'p> {
                     .entry(key.to_vec())
                     .or_default()
                     .insert((n, g));
+            }
+            if checked.is_some() && self.abandoned {
+                self.edge(
+                    &d[e.value],
+                    Ctx::Unverified,
+                    Cow::Borrowed(UNVERIFIED_RESOURCE),
+                    depth + 1,
+                );
+                continue;
             }
             if let Some((cat, used)) = unused_check {
                 let k = (cat, key.to_vec());
@@ -1366,6 +1396,20 @@ impl<'p> Walker<'p> {
                 && label == "XObject"
                 && let super::lex::ValueKind::Ref(n, g) =
                     super::lex::value_kind(&d[e.value.clone()])
+                && form_without_bbox(self.pdf, (n, g), true)
+            {
+                self.edge(
+                    &d[e.value],
+                    Ctx::Undrawn,
+                    Cow::Borrowed(FORM_WITHOUT_BBOX),
+                    depth + 1,
+                );
+                continue;
+            }
+            if ctx == Ctx::RenderMap
+                && label == "XObject"
+                && let super::lex::ValueKind::Ref(n, g) =
+                    super::lex::value_kind(&d[e.value.clone()])
                 && self.own_oc_hidden((n, g))
             {
                 self.edge(
@@ -1377,7 +1421,9 @@ impl<'p> Walker<'p> {
                 continue;
             }
             // A key this kind's reader never takes: followed as side data.
-            if matches!(ctx, Ctx::Render | Ctx::OcHidden) && !kind_reads(kind, &key, is_stream) {
+            if matches!(ctx, Ctx::Render | Ctx::OcHidden | Ctx::Unverified)
+                && !kind_reads(kind, &key, is_stream)
+            {
                 if let Rule::Follow(c, Some(l)) = side_data(&key).unwrap_or_else(|| skip_key(&key))
                 {
                     self.edge(&d[e.value], c, l, depth + 1);
@@ -1506,7 +1552,18 @@ impl<'p> Walker<'p> {
                 ValueKind::Ref(n, g) => matches!(resolve(pdf, (n, g)), Some(Raw::Dict(_, true))),
                 _ => false,
             };
-            if is_stream {
+            let no_bbox = match super::lex::value_kind(nv) {
+                ValueKind::Ref(n, g) => form_without_bbox(pdf, (n, g), false),
+                _ => false,
+            };
+            if is_stream && no_bbox {
+                self.edge(
+                    nv,
+                    Ctx::Undrawn,
+                    Cow::Borrowed(FORM_WITHOUT_BBOX),
+                    depth + 1,
+                );
+            } else if is_stream {
                 self.edge(nv, Ctx::Render, Cow::Borrowed("AP/N"), depth + 1);
             } else {
                 self.edge(nv, Ctx::Skip, Cow::Borrowed(APPEARANCE_STATES), depth + 1);
@@ -1631,25 +1688,62 @@ pub(crate) fn content_usage(
     content: &BTreeSet<Id>,
     oc_name_hidden: &dyn Fn(super::content::OcRef<'_>) -> bool,
     stop: &dyn zencodec::enough::Stop,
-) -> Result<Option<super::content::Usage>, zencodec::enough::StopReason> {
+    budget: u64,
+) -> Result<Result<super::content::Usage, &'static str>, zencodec::enough::StopReason> {
     let mut used = super::content::Usage::default();
-    let mut budget: u64 = 1 << 30;
+    let mut budget = budget;
     for &(n, g) in content {
         stop.check()?;
         let scanned = (|| {
-            let stream = pdf.xref().get::<Stream<'_>>(ObjectIdentifier::new(n, g))?;
+            let stream = pdf
+                .xref()
+                .get::<Stream<'_>>(ObjectIdentifier::new(n, g))
+                .ok_or("a content stream hayro does not read as a stream")?;
             if !text_filters_only(&stream) {
-                return None;
+                return Err("a content stream with filters the inventory does not decode");
             }
-            let decoded = stream.decoded().ok()?;
-            budget = budget.checked_sub(decoded.len() as u64)?;
-            super::content::scan(&decoded, &mut used, oc_name_hidden).then_some(())
+            let decoded = stream
+                .decoded()
+                .map_err(|_| "a content stream that does not decode")?;
+            budget = budget
+                .checked_sub(decoded.len() as u64)
+                .ok_or("the decoded-content budget is spent")?;
+            if super::content::scan(&decoded, &mut used, oc_name_hidden) {
+                Ok(())
+            } else {
+                Err("a content stream the scan cannot tokenise")
+            }
         })();
-        if scanned.is_none() {
-            return Ok(None);
+        if let Err(why) = scanned {
+            return Ok(Err(why));
         }
     }
-    Ok(Some(used))
+    Ok(Ok(used))
+}
+
+/// Decoded content the unused-resource check scans before giving up.
+pub(crate) const CONTENT_SCAN_BUDGET: u64 = 1 << 30;
+
+/// Label of a resource the abandoned unused-resource check could not rule on.
+pub(crate) const UNVERIFIED_RESOURCE: &str = "resource (unused-resource check abandoned)";
+
+/// Label of a form XObject without a four-number `/BBox`.
+pub(crate) const FORM_WITHOUT_BBOX: &str = "form without /BBox (not drawn)";
+
+/// A form XObject `FormXObject::new` refuses for want of a `/BBox` of four
+/// numbers (it decodes the stream first, then returns `None`). `via_do`:
+/// reached through `Do`, where `XObject::new` first needs `/Subtype /Form`;
+/// an annotation's `/AP /N` goes to `FormXObject::new` directly.
+fn form_without_bbox(pdf: &Pdf, id: Id, via_do: bool) -> bool {
+    let Some(stream) = pdf
+        .xref()
+        .get::<Stream<'_>>(ObjectIdentifier::new(id.0, id.1))
+    else {
+        return false;
+    };
+    let dict = stream.dict();
+    let is_form = !via_do || dict.get::<Name<'_>>(b"Subtype").as_deref() == Some(b"Form");
+    is_form && dict.get::<[f32; 4]>(b"BBox").is_none()
 }
 
 /// An object stream's members, read through hayro (so an encrypted
