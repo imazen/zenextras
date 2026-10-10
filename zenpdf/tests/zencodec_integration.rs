@@ -241,6 +241,8 @@ fn estimate_decode_resources_scales_with_output() {
     use zencodec::estimate::{ComputeEnvironment, ImageCharacteristics, ThreadingInformation};
     use zenpixels::PixelDescriptor;
     let img = ImageCharacteristics::new(595, 841, PixelDescriptor::RGBA8_SRGB);
+    // `new` is deprecated from zencodec 0.1.27 on; 0.1.26 has no `conservative()`.
+    #[allow(deprecated)]
     let env = ComputeEnvironment::new().with_cores(8);
     let est = PdfDecoderConfig::new().estimate_decode_resources(&img, &env);
     let output = 595u64 * 841 * 4;

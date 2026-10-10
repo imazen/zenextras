@@ -10,6 +10,7 @@ mod alloc_util;
 
 pub mod error;
 pub mod format;
+mod inventory;
 pub mod render;
 
 pub mod codec;

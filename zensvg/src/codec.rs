@@ -41,7 +41,8 @@ static SVG_DECODE_CAPS: DecodeCapabilities = DecodeCapabilities::new()
     .with_stop(true) // checked before render
     .with_enforces_max_pixels(true)
     .with_enforces_max_memory(true)
-    .with_enforces_max_input_bytes(true);
+    .with_enforces_max_input_bytes(true)
+    .with_inventory(true);
 
 static SVG_DECODE_DESCRIPTORS: &[PixelDescriptor] = &[PixelDescriptor::RGBA8_SRGB];
 
@@ -283,6 +284,50 @@ impl<'a> zencodec::decode::DecodeJob<'a> for SvgDecodeJob {
         Ok(self.build_image_info(w, h))
     }
 
+    /// Structural inventory: every element, attribute usvg ignores, comment,
+    /// processing instruction, DOCTYPE item and text run, or the gzip
+    /// framing of an SVGZ file, with what the render path does with it (see
+    /// `crate::inventory`). Honors `max_input_bytes` and the stop token; a
+    /// document the decoder refuses before drawing (usvg's parse, output
+    /// size, limits) draws nothing.
+    fn inventory(
+        &self,
+        data: &[u8],
+    ) -> Result<Option<zencodec::inventory::Inventory>, At<CodecError>> {
+        self.check_input_size(data.len())?;
+        let stop: &dyn Stop = match &self.stop {
+            Some(s) => s,
+            None => &enough::Unstoppable,
+        };
+        // The decoder's own checks before drawing, its render options and
+        // the fonts it would load decide what is drawn.
+        let options = &self.config.render_options;
+        let fonts = crate::inventory::FontLookup::new(options);
+        let job = crate::inventory::Job {
+            stop,
+            options,
+            fonts: &fonts,
+        };
+        match crate::inventory::svg_inventory(data, svg_format(), &job) {
+            Ok(inv) => Ok(Some(inv)),
+            Err(crate::inventory::InvError::Stopped(r)) => Err(SvgError::Stopped(r).into()),
+            Err(crate::inventory::InvError::Parts(e)) => {
+                // The part cap bounds the inventory's memory: report it as
+                // the memory limit it is (bytes of `Part`s, not file bytes).
+                let part = core::mem::size_of::<zencodec::inventory::Part>() as u64;
+                let max = match e {
+                    zencodec::inventory::InventoryError::TooManyParts { max } => u64::from(max),
+                    _ => u64::from(zencodec::inventory::DEFAULT_MAX_PARTS),
+                };
+                Err(SvgError::Limit(zencodec::LimitExceeded::Memory {
+                    actual: (max + 1).saturating_mul(part),
+                    max: max.saturating_mul(part),
+                })
+                .into())
+            }
+        }
+    }
+
     fn output_info(&self, data: &[u8]) -> Result<OutputInfo, At<CodecError>> {
         let (w, h) = crate::render::svg_dimensions(data, &self.config.render_options)?;
         Ok(OutputInfo::full_decode(w, h, RGBA8_SRGB).with_alpha(true))
@@ -461,6 +506,8 @@ mod tests {
     fn estimate_decode_resources_scales_with_output() {
         use zencodec::estimate::{ComputeEnvironment, ImageCharacteristics, ThreadingInformation};
         let img = ImageCharacteristics::new(800, 600, PixelDescriptor::RGBA8_SRGB);
+        // `new` is deprecated from zencodec 0.1.27 on; 0.1.26 has no `conservative()`.
+        #[allow(deprecated)]
         let env = ComputeEnvironment::new().with_cores(8);
         let est = SvgDecoderConfig::new().estimate_decode_resources(&img, &env);
         let output = 800u64 * 600 * 4;

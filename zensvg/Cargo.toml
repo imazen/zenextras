@@ -28,15 +28,27 @@ zenpixels = ">=0.2.10, <0.4.0"
 enough = "0.4.4"
 whereat = "0.1.5"
 
+# SVGZ: the optimizer compresses with it; the inventory inflates to find
+# the deflate stream's end (the same flate2 usvg decompresses with).
+flate2 = "1.1.10"
+
+# The structural inventory replays usvg's own parsing: the same CSS
+# (simplecss), attribute-value (svgtypes), data-URI (data-url) and image
+# sniffing (imagesize) crates and versions usvg 0.48.1 uses, so no new
+# package enters the dependency graph.
+simplecss = "0.2.2"
+svgtypes = "0.16.1"
+data-url = "0.3.2"
+imagesize = "0.15.0"
+
 # SVG optimization (optional)
-flate2 = { version = "1.1.10", optional = true }
 quick-xml = { version = "0.42.0", optional = true }
 
 [features]
 default = ["std", "text"]
 std = []
 text = []
-optimize = ["dep:flate2", "dep:quick-xml"]
+optimize = ["dep:quick-xml"]
 
 [dev-dependencies]
 zenbench = "0.1.10"

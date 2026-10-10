@@ -13,3 +13,6 @@
 
 #[path = "integration/truncation_series.rs"]
 mod truncation_series;
+
+#[path = "integration/inventory.rs"]
+mod inventory;

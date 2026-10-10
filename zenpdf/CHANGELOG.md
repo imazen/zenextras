@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `DecodeJob::inventory` and the `inventory` decode capability: a byte-exact
+  structural inventory (936735e, 081abf8). A lexer maps the header, every
+  indirect object with its stream data, xref tables, trailers, `startxref`,
+  `%%EOF`, comments and junk, each labelled with its revision. hayro-syntax,
+  the parser the decoder renders with, decides which copy of an object is
+  live (earlier revisions' copies are `Unreferenced`, "superseded in
+  revision N") and what the renderer reaches from the trailer: content
+  streams, images, fonts and drawn appearances are `ImageData`; `/Info` is
+  `Dropped`; XMP, attachments, JavaScript and actions, thumbnails, outlines
+  and unknown keys are `Skipped` with a label. Unread dictionary entries,
+  overwritten duplicate keys (also inside nested direct dictionaries),
+  comments, and stream bytes after the first filter's end (Flate, LZW,
+  ASCIIHex, ASCII85, RunLength, DCT, unfiltered images) are child parts
+  (081abf8, ad5dfe9, 16a6a89). Resources no content operator names are
+  `Skipped` as "unused resource" (d811808); XObjects and shadings drawn only
+  inside optional content that is off (a `BDC` naming a `/Properties`
+  resource or carrying an inline `/OC` dictionary), or whose own `/OC` is
+  off, are `Dropped` as "optional content off" (b6bddba, a56dd11). The
+  inventory follows the job's start frame: other pages' content streams,
+  annotations and resource-map entries are `Skipped` as "page not
+  decoded", the decoded page searches its own and its ancestor nodes'
+  resources, a page hayro finds by scanning objects is drawn, and a job the
+  decoder rejects before drawing (page geometry, output size, limits)
+  draws no page (eed7d2b). Review round 1 (9c2b7c7, 07dd716): object-stream
+  members are inspected (unread entries listed in the stream's detail,
+  real parts when the stream is stored as is) and read through the
+  decryptor; embedded JPEGs' APPn and COM segments are child parts;
+  appearance states, optional-content configuration and keys a
+  dictionary's reader never takes (per dictionary kind) are unconsumed;
+  bytes after an object's value are a child; object-stream lookups are
+  bounded, the lexer stops at the part cap, and the stop token is
+  honoured. Review round 2 (0b045ee): when the
+  unused-resource scan gives up, the resources it could not rule on are
+  `Unknown` rather than read; a form XObject without `/BBox` is `Dropped`
+  (never drawn). Fuzz target `inventory`,
+  regression seeds, mutool/exiftool oracle (`just inventory-oracle DIR`).
+
 ### Fixed
 - `PageSelection::All` is bounded by `Limits::max_pages` before the page-index
   list is materialized (zenextras#2).

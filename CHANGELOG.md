@@ -10,6 +10,12 @@ member entries here reference those files.
 
 #### Changed
 
+- **Temporary `[patch.crates-io]` for zencodec and zencodec-testkit** on the
+  `feat/inventory` branch (imazen/zencodec#133), in the root and the zenpdf
+  and zensvg fuzz manifests, for `DecodeJob::inventory` (2b30367, 081abf8,
+  4a55611; bumped to 413fc6e8 in 4c2fc36). Swap for the released crates before
+  merging.
+
 - Dependencies: compatible floors and locks refreshed (root and fuzz locks); hayro 0.8 held (zenpdf's hayro-syntax patch is a pinned 0.7 fork), hayro-jpeg2000 0.4 held (needs Rust 1.92) (bfa914b).
 - CI: checkout v7, upload-artifact v7 (c4b01fe).
 - **Third-party dependency pass.** Refreshed `Cargo.lock` within the existing requirements, third-party only (33db91c): every zen-family crate the refresh wanted to move was pinned back to what the lock already held (`archmage`/`archmage-macros` 0.9.26, `magetypes` 0.9.26, `zenpixels` 0.2.14, `zenpixels-convert` 0.2.13), verified by a package-by-package lock diff reporting 43 moved packages and zero zen-family ones. The two `[patch.crates-io]` git forks are untouched, as they must be — both carry security fixes pinned to a rev. Movers include `cc` 1.2.64 → 1.4.4, `flate2` 1.1.9 → 1.1.10, `zlib-rs` 0.6.6 → 0.6.7, `bytemuck` 1.25.0 → 1.25.2, `thiserror` 2.0.18 → 2.0.20, `getrandom` 0.3.4 → 0.4.3, `r-efi` 5.3.0 → 6.0.0, `pic-scale` 0.7.10 → 0.7.11, `zune-core` 0.5.1 → 0.5.3.
@@ -156,6 +162,64 @@ member entries here reference those files.
 
 ### [Unreleased]
 
+#### Added
+
+- **`DecodeJob::inventory`**: a byte-exact structural inventory of SVG and
+  SVGZ files, with each part's disposition taken from what usvg 0.48.1 does
+  with it: elements usvg converts versus skips (`title`, `desc`, `metadata`,
+  `script`, `foreignObject`, editor namespaces), `<style>` read as CSS,
+  attributes usvg ignores (`sodipodi:docname`, `inkscape:export-filename`,
+  `data-*`) as labelled attribute parts, `href`s that leave the document
+  (data URIs, local paths the default image resolver opens, external `use`),
+  the DOCTYPE's entities, and SVGZ gzip framing (FNAME/FCOMMENT, deflate
+  stream, trailer, extra members; the header checked as flate2 checks it).
+  Elements usvg converts but never draws are `Dropped` with the reason:
+  reference-only elements nothing references (`defs` children, symbols,
+  gradients, patterns, clip paths, masks, filters, markers), `display: none`,
+  failed `requiredExtensions`/`requiredFeatures`/`systemLanguage`, and
+  `switch` children after the selected one (e83f7b0). A document the
+  decoder refuses before drawing (usvg's parse, a zero output size, the
+  job's limits) is `Dropped` throughout (07e023c).
+  Capability `inventory` declared. Fuzz target `inventory`, regression seed,
+  xmllint oracle (`just inventory-oracle`) (4a55611, c3d2cdd, 13adb11,
+  b37e153).
+- **Inventory review round 1** (findings S1-S17 of the #33 review). The
+  walker now replays usvg 0.48.1's parse and converter on the roxmltree
+  document the decoder parses (`inventory/model.rs`): CSS and `style` with
+  simplecss, `!important`, `inherit`, references parsed with svgtypes,
+  `use`/`tref` into skipped subtrees, `switch`, `visibility`, invalid
+  transforms, opacity 0, fill and stroke, paint servers, clip paths, masks,
+  filters, markers, and text that draws only when one of the job's fonts
+  matches. `<style>` text splits into applied rule sets and the rest;
+  attributes CSS overrides, `svg:href` and attributes usvg never reads on
+  that element are attribute parts; internal entities nothing consumed
+  references are `Dropped`; `data:` image payloads are decoded like usvg and
+  their PNG chunks, JPEG segments or nested-SVG inventory become child parts.
+  Nesting is bounded before roxmltree runs (deep documents no longer abort
+  the process; the decoder's own overflow is zenextras#39), the walker's
+  entity expansion is gone (a 3,457-byte file no longer exhausts 8 GiB),
+  SVGZ inner documents are capped at 200,000 parts and header fields over
+  flate2's 65,535 bytes are rejected. Review probes kept as
+  `tests/review_adversarial.rs`; Inkscape and all-fields SVGZ inventories
+  pinned (7971e34, 26b8259, d7d9ba7, f783012).
+- **Inventory review round 2.** Declarations usvg drops in `style`
+  attributes (unknown or non-presentation names, overridden ones) and
+  unknown names inside applied `<style>` rule sets are `Dropped` children
+  instead of hiding in consumed parts; `context-fill`/`context-stroke`
+  outside `use` and marker content, recursive pattern paints, and patterns
+  whose content paints nothing no longer make a shape count as drawn
+  (ec58603, 2be2967).
+- **Inventory review round 3.** A cycle of three or more patterns, clip
+  paths, masks, filters or markers reached from drawn content no longer
+  aborts `inventory()`: the model finds it before the decoder's checks run
+  usvg, and the document is reported `Unknown` with the cycle named. The
+  decoder still aborts on such files (zenextras#41) (8f5a4d4).
+- **Inventory review round 4.** A pattern, gradient or filter `href` chain
+  that loops without returning to its start no longer makes `inventory()`
+  spin: the model finds it before the decoder's checks run usvg, and the
+  document is reported `Unknown` with the chain named. The decoder still
+  loops forever on such files (zenextras#42).
+
 #### Fixed (2026-08-27, zenextras#15, #16)
 
 - **Untrusted SVG can no longer take the process down through a third-party
@@ -292,6 +356,18 @@ member entries here reference those files.
 ## zenpdf
 
 ### [Unreleased]
+
+#### Added
+
+- **`DecodeJob::inventory`**: a byte-exact structural inventory of PDF files
+  (every object, xref section, trailer, revision and comment, superseded and
+  unreferenced copies, /Info, XMP, attachments, JavaScript, thumbnails), with
+  dispositions resolved through hayro-syntax, unused resources, content
+  hidden by optional content, pages the job does not decode, and stream
+  bytes after each filter's end. See
+  [zenpdf/CHANGELOG.md](zenpdf/CHANGELOG.md) (936735e, 081abf8, d811808,
+  ad5dfe9, 16a6a89, b6bddba, a56dd11, eed7d2b, 9c2b7c7, 07dd716,
+  0b045ee).
 
 #### Fixed (2026-08-27, zenextras#2, #13, #14)
 

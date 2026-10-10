@@ -90,15 +90,46 @@ pub fn parse_svg(data: &[u8], options: &RenderOptions) -> Result<usvg::Tree, Svg
     // Font loading
     let fontdb = Arc::get_mut(&mut usvg_options.fontdb)
         .expect("fontdb Arc should be uniquely owned at this point");
+    load_fonts(fontdb, options);
 
+    guard_panic(|| usvg::Tree::from_data(data, &usvg_options).map_err(SvgError::from))
+}
+
+/// Load the fonts `options` ask for: the system's, then the font files.
+fn load_fonts(fontdb: &mut usvg::fontdb::Database, options: &RenderOptions) {
     if options.load_system_fonts {
         fontdb.load_system_fonts();
     }
     for path in &options.font_paths {
         fontdb.load_font_file(path).ok();
     }
+}
 
-    guard_panic(|| usvg::Tree::from_data(data, &usvg_options).map_err(SvgError::from))
+/// The fonts [`parse_svg`] loads for `options`, for the structural
+/// inventory's question of whether a `<text>` finds a font. The system
+/// font scan is done once per process.
+pub(crate) fn inventory_fonts(options: &RenderOptions) -> Arc<usvg::fontdb::Database> {
+    static SYSTEM: std::sync::OnceLock<Arc<usvg::fontdb::Database>> = std::sync::OnceLock::new();
+    if options.load_system_fonts {
+        let system = SYSTEM
+            .get_or_init(|| {
+                let mut db = usvg::fontdb::Database::new();
+                db.load_system_fonts();
+                Arc::new(db)
+            })
+            .clone();
+        if options.font_paths.is_empty() {
+            return system;
+        }
+        let mut db = (*system).clone();
+        for path in &options.font_paths {
+            db.load_font_file(path).ok();
+        }
+        return Arc::new(db);
+    }
+    let mut db = usvg::fontdb::Database::new();
+    load_fonts(&mut db, options);
+    Arc::new(db)
 }
 
 /// Run a usvg/resvg call with a panic boundary: a panic inside the
@@ -145,25 +176,7 @@ pub fn render(data: &[u8], options: &RenderOptions) -> Result<RenderOutput, SvgE
 
 /// Render a pre-parsed usvg tree to RGBA8 pixels with straight alpha.
 pub fn render_tree(tree: &usvg::Tree, options: &RenderOptions) -> Result<RenderOutput, SvgError> {
-    let svg_size = tree.size();
-    let svg_w = svg_size.width();
-    let svg_h = svg_size.height();
-
-    if svg_w <= 0.0 || svg_h <= 0.0 {
-        // This is `tree.size()` itself, before any caller scale/target is
-        // applied — no `RenderOptions` combination can fix a non-positive
-        // intrinsic size, so this is the image's own content, not the
-        // caller's request.
-        return Err(SvgError::Parse(
-            "SVG has zero or negative intrinsic dimensions".into(),
-        ));
-    }
-
-    // Calculate output dimensions
-    let (out_w, out_h, transform) = compute_output(svg_w, svg_h, options)?;
-
-    // Check resource limits
-    check_limits(out_w, out_h, options)?;
+    let (out_w, out_h, transform) = output_plan(tree, options)?;
 
     // Create pixmap
     let mut pixmap = Pixmap::new(out_w, out_h).ok_or(SvgError::AllocationFailed {
@@ -193,6 +206,69 @@ pub fn render_tree(tree: &usvg::Tree, options: &RenderOptions) -> Result<RenderO
         width: out_w,
         height: out_h,
     })
+}
+
+/// The output size and transform for a parsed tree, after the checks that
+/// reject it before drawing.
+fn output_plan(
+    tree: &usvg::Tree,
+    options: &RenderOptions,
+) -> Result<(u32, u32, Transform), SvgError> {
+    let svg_size = tree.size();
+    let svg_w = svg_size.width();
+    let svg_h = svg_size.height();
+
+    if svg_w <= 0.0 || svg_h <= 0.0 {
+        // This is `tree.size()` itself, before any caller scale/target is
+        // applied — no `RenderOptions` combination can fix a non-positive
+        // intrinsic size, so this is the image's own content, not the
+        // caller's request.
+        return Err(SvgError::Parse(
+            "SVG has zero or negative intrinsic dimensions".into(),
+        ));
+    }
+
+    // Calculate output dimensions
+    let (out_w, out_h, transform) = compute_output(svg_w, svg_h, options)?;
+
+    // Check resource limits
+    check_limits(out_w, out_h, options)?;
+    Ok((out_w, out_h, transform))
+}
+
+/// The checks [`render`] runs before drawing, without drawing: usvg parses
+/// the document and the output size is computed and checked against the
+/// limits. Fonts and `<image>` targets are not loaded: neither changes
+/// whether usvg accepts the document or the size it reports, and loading
+/// them reads files (the structural inventory asks whether the document is
+/// drawn). `data` is an uncompressed document.
+pub(crate) fn check_render(data: &[u8], options: &RenderOptions) -> Result<(), SvgError> {
+    let usvg_options = usvg::Options {
+        dpi: options.dpi,
+        image_href_resolver: usvg::ImageHrefResolver {
+            resolve_data: Box::new(|_, _, _| None),
+            resolve_string: Box::new(|_, _| None),
+        },
+        ..usvg::Options::default()
+    };
+    let tree = guard_panic(|| usvg::Tree::from_data(data, &usvg_options).map_err(SvgError::from))?;
+    output_plan(&tree, options).map(|_| ())
+}
+
+/// Whether usvg parses an SVG embedded in an `<image>` `data:` URI
+/// (`ImageHrefResolver::default_data_resolver` → `load_sub_svg` →
+/// `Tree::from_data_nested`): the nested tree resolves no files. Nested
+/// images and fonts are not loaded; neither changes whether it parses.
+pub(crate) fn check_nested(data: &[u8], options: &RenderOptions) -> Result<(), SvgError> {
+    let usvg_options = usvg::Options {
+        dpi: options.dpi,
+        image_href_resolver: usvg::ImageHrefResolver {
+            resolve_data: Box::new(|_, _, _| None),
+            resolve_string: Box::new(|_, _| None),
+        },
+        ..usvg::Options::default()
+    };
+    guard_panic(|| usvg::Tree::from_data(data, &usvg_options).map_err(SvgError::from)).map(|_| ())
 }
 
 /// Compute output dimensions and transform from SVG size + render options.
