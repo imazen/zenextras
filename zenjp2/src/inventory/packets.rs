@@ -912,9 +912,18 @@ fn segment_for_bypass(pass: u8) -> u8 {
     }
 }
 
-/// One packet (`segment::parse_inner` loop body). `Err(Parse)` is a stop for
-/// this tile-part; the caller keeps the end of the last complete packet.
-fn packet(ctx: &Ctx<'_>, st: &mut State<'_>, rd: &mut Rd<'_>, pd: Pd) -> Result<(), Fail> {
+/// One packet (`segment::parse_inner` loop body). `rd` reads the packet
+/// header; `body` is the separate body reader of a tile-part with packed
+/// headers (PPM/PPT), `None` when header and body are interleaved. `Err(Parse)`
+/// is a stop for this tile-part; the caller keeps the end of the last complete
+/// packet.
+fn packet<'d>(
+    ctx: &Ctx<'_>,
+    st: &mut State<'_>,
+    rd: &mut Rd<'d>,
+    mut body: Option<&mut Rd<'d>>,
+    pd: Pd,
+) -> Result<(), Fail> {
     let (c, r) = (usize::from(pd.comp), usize::from(pd.res));
     let comp = ctx
         .cfg
@@ -927,9 +936,16 @@ fn packet(ctx: &Ctx<'_>, st: &mut State<'_>, rd: &mut Rd<'_>, pd: Pd) -> Result<
     }
     spend(st.budget, 1)?;
 
-    if comp.flags & 0x02 != 0 && rd.peek_marker() == Some(0x91) {
-        rd.read_marker().ok_or(Fail::Parse("SOP"))?;
-        rd.read_bytes(4).ok_or(Fail::Parse("SOP"))?;
+    // SOP comes from the body reader, EPH from the header reader.
+    {
+        let b: &mut Rd<'d> = match body.as_deref_mut() {
+            Some(b) => b,
+            None => &mut *rd,
+        };
+        if comp.flags & 0x02 != 0 && b.peek_marker() == Some(0x91) {
+            b.read_marker().ok_or(Fail::Parse("SOP"))?;
+            b.read_bytes(4).ok_or(Fail::Parse("SOP"))?;
+        }
     }
 
     let zero_length = rd.bits(1).ok_or(Fail::Parse("packet header"))? == 0;
@@ -1064,23 +1080,34 @@ fn packet(ctx: &Ctx<'_>, st: &mut State<'_>, rd: &mut Rd<'_>, pd: Pd) -> Result<
         return Err(Fail::Parse("EPH marker mismatch"));
     }
     if !zero_length {
+        let target: &mut Rd<'d> = match body {
+            Some(b) => b,
+            None => rd,
+        };
         for i in 0..st.lens.len() {
             let n = u64::from(st.lens[i]);
-            rd.read_bytes(n).ok_or(Fail::Parse("packet body"))?;
+            target.read_bytes(n).ok_or(Fail::Parse("packet body"))?;
         }
     }
     Ok(())
 }
 
-/// Walk one tile's tile-parts. `parts` are absolute data ranges in file
-/// order. `Err(reason)` means the walk cannot be followed with bounded
+/// One tile-part's data and, for packed packet headers, its header streams
+/// in the order hayro reads them: the PPT payloads sorted by Zppt, then the
+/// PPM entry for this tile-part (`tile::parse_tile_part`).
+pub(super) struct TpIn {
+    pub data: Range<u64>,
+    pub headers: Vec<Range<u64>>,
+}
+
+/// Walk one tile's tile-parts. `parts` hold absolute ranges in file order. `Err(reason)` means the walk cannot be followed with bounded
 /// resources or hayro itself would panic; the caller reports no tail.
 pub(super) fn analyze(
     data: &[u8],
     geo: &Geo,
     cfg: &TileCfg,
     tile_idx: u32,
-    parts: &[Range<u64>],
+    parts: &[TpIn],
     budget: &mut u64,
 ) -> Result<Vec<PartOut>, String> {
     run(data, geo, cfg, tile_idx, parts, budget).map_err(|f| match f {
@@ -1094,7 +1121,7 @@ fn run(
     geo: &Geo,
     cfg: &TileCfg,
     tile_idx: u32,
-    parts: &[Range<u64>],
+    parts: &[TpIn],
     budget: &mut u64,
 ) -> Result<Vec<PartOut>, Fail> {
     spend(budget, 1)?;
@@ -1111,32 +1138,66 @@ fn run(
     let mut out = Vec::new();
     out.try_reserve(parts.len())
         .map_err(|_| Fail::Unsupported("out of memory".into()))?;
+    let slice = |r: &Range<u64>| -> Result<&[u8], Fail> {
+        data.get(r.start as usize..r.end as usize)
+            .ok_or_else(|| Fail::Unsupported("tile-part outside the input".into()))
+    };
     for part in parts {
-        let (s, e) = (part.start as usize, part.end as usize);
-        let Some(slice) = data.get(s..e) else {
-            return unsupported("tile-part outside the input");
-        };
-        let mut rd = Rd::new(slice);
+        let mut body = Rd::new(slice(&part.data)?);
         let mut last_ok = 0usize;
         let mut packets = 0u32;
-        let stop = loop {
-            if rd.at_end() {
-                break Stop::Done;
-            }
-            let Some(pd) = prog.next(&ctx)? else {
-                break Stop::Exhausted;
-            };
-            match packet(&ctx, &mut st, &mut rd, pd) {
-                Ok(()) => {
-                    last_ok = rd.byte_pos();
-                    packets += 1;
+        let stop = if part.headers.is_empty() {
+            // `TilePart::Merged`: headers and bodies interleave in the data.
+            loop {
+                if body.at_end() {
+                    break Stop::Done;
                 }
-                Err(Fail::Parse(why)) => break Stop::Failed(why),
-                Err(f) => return Err(f),
+                let Some(pd) = prog.next(&ctx)? else {
+                    break Stop::Exhausted;
+                };
+                match packet(&ctx, &mut st, &mut body, None, pd) {
+                    Ok(()) => {
+                        last_ok = body.byte_pos();
+                        packets += 1;
+                    }
+                    Err(Fail::Parse(why)) => break Stop::Failed(why),
+                    Err(f) => return Err(f),
+                }
+            }
+        } else {
+            // `TilePart::Separated`: packet headers come from the PPT/PPM
+            // streams, switching to the next one when the current is used up
+            // (`TilePart::header`); the loop runs while a header remains, so
+            // body bytes after the last packet are never read.
+            let mut hdrs = Vec::new();
+            hdrs.try_reserve_exact(part.headers.len())
+                .map_err(|_| Fail::Unsupported("out of memory".into()))?;
+            for h in &part.headers {
+                hdrs.push(Rd::new(slice(h)?));
+            }
+            let mut active = 0usize;
+            loop {
+                if hdrs[active].at_end() && hdrs.len() - 1 > active {
+                    active += 1;
+                }
+                if hdrs[active].at_end() {
+                    break Stop::Done;
+                }
+                let Some(pd) = prog.next(&ctx)? else {
+                    break Stop::Exhausted;
+                };
+                match packet(&ctx, &mut st, &mut hdrs[active], Some(&mut body), pd) {
+                    Ok(()) => {
+                        last_ok = body.byte_pos();
+                        packets += 1;
+                    }
+                    Err(Fail::Parse(why)) => break Stop::Failed(why),
+                    Err(f) => return Err(f),
+                }
             }
         };
         out.push(PartOut {
-            end: part.start + last_ok as u64,
+            end: part.data.start + last_ok as u64,
             stop,
             packets,
         });

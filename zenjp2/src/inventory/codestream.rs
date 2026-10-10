@@ -187,26 +187,42 @@ fn parse_quant(c: &mut Cur<'_>, csiz: u16, is_qcc: bool) -> Option<u16> {
     Some(idx)
 }
 
+/// A packed-header segment: its sequence index and where the packet headers
+/// are.
+enum Packed {
+    /// PPM: one header stream per tile-part (each `Nppm` chunk), in order.
+    Ppm(u8, Vec<Range<u64>>),
+    /// PPT: the headers of one tile-part.
+    Ppt(u8, Range<u64>),
+}
+
 /// PPM / PPT after the marker: both read their whole declared payload
-/// (`ppm_marker` also walks the packet list inside it).
-fn parse_packed(c: &mut Cur<'_>, is_ppm: bool) -> Option<()> {
+/// (`ppm_marker` walks the packet list inside it, `ppt_marker` takes the
+/// bytes after Zppt).
+fn parse_packed(c: &mut Cur<'_>, is_ppm: bool) -> Option<Packed> {
     let l = c.u16()?.checked_sub(2)?;
-    let body = c.take(u64::from(l))?;
+    let start = c.pos;
+    let end = start + u64::from(l);
+    c.take(u64::from(l))?;
+    let mut r = Cur {
+        d: c.d,
+        pos: start,
+        end,
+    };
+    let seq = r.u8()?;
     if is_ppm {
-        let mut r = Cur {
-            d: body,
-            pos: 0,
-            end: body.len() as u64,
-        };
-        r.u8()?;
+        let mut chunks = Vec::new();
         while r.pos < r.end {
             let n = r.u16()?;
+            let s = r.pos;
             r.take(u64::from(n))?;
+            chunks.try_reserve(1).ok()?;
+            chunks.push(s..r.pos);
         }
-    } else if l < 1 {
-        return None;
+        Some(Packed::Ppm(seq, chunks))
+    } else {
+        Some(Packed::Ppt(seq, r.pos..end))
     }
-    Some(())
 }
 
 struct SizOut {
@@ -291,7 +307,6 @@ struct TileAcc {
     /// Last COD/QCD (comp 0) and COC/QCC part per component in this tile's
     /// tile-part headers.
     last: BTreeMap<(u8, u16), PartId>,
-    ppt: bool,
 }
 
 enum Ovr {
@@ -305,6 +320,10 @@ struct Tp {
     isot: u16,
     /// A decode-fatal point precedes this tile-part's data.
     dead: bool,
+    /// Position among all tile-parts of the codestream.
+    tp_idx: usize,
+    /// PPT header streams, sorted by Zppt.
+    ppt: Vec<Range<u64>>,
 }
 
 /// State of one codestream walk.
@@ -314,7 +333,13 @@ struct Cs {
     cod: Option<Cod>,
     coc: BTreeMap<u16, (u8, Params)>,
     qcd_seen: bool,
-    has_ppm: bool,
+    /// PPM segments in file order: (Zppm, per-tile-part header streams).
+    ppm: Vec<(u8, Vec<Range<u64>>)>,
+    /// Tile-parts started so far (hayro's `tile_part_idx`, which picks the
+    /// PPM entry).
+    tp_count: usize,
+    /// PPT payloads of the tile-part being walked: (Zppt, range).
+    cur_ppt: Vec<(u8, Range<u64>)>,
     last: BTreeMap<(u8, u16), PartId>,
     tiles: BTreeMap<u32, TileAcc>,
 }
@@ -399,7 +424,9 @@ impl Walker<'_> {
             cod: None,
             coc: BTreeMap::new(),
             qcd_seen: false,
-            has_ppm: false,
+            ppm: Vec::new(),
+            tp_count: 0,
+            cur_ppt: Vec::new(),
             last: BTreeMap::new(),
             tiles: BTreeMap::new(),
         };
@@ -596,6 +623,7 @@ impl Walker<'_> {
 
         // Parse exactly like hayro; `c.pos` ends where hayro's cursor does.
         let mut idx = 0u16;
+        let mut packed = None;
         let ok = match code {
             COD => parse_cod(&mut c).map(|cod| {
                 let own = cod;
@@ -610,7 +638,10 @@ impl Walker<'_> {
                 idx = i;
                 (None, None)
             }),
-            PPM | PPT => parse_packed(&mut c, code == PPM).map(|()| (None, None)),
+            PPM | PPT => parse_packed(&mut c, code == PPM).map(|p| {
+                packed = Some(p);
+                (None, None)
+            }),
             _ => skip_segment(&mut c).map(|()| (None, None)),
         };
         let Some((cod, coc)) = ok else {
@@ -764,7 +795,11 @@ impl Walker<'_> {
                 }
             }
             (Scope::Main, QCD) => cs.qcd_seen = true,
-            (Scope::Main, PPM) => cs.has_ppm = true,
+            (Scope::Main, PPM) => {
+                if let Some(Packed::Ppm(seq, chunks)) = packed {
+                    cs.ppm.push((seq, chunks));
+                }
+            }
             (Scope::Tile(t), COD) => {
                 if let Some(c) = cod {
                     cs.tiles.entry(t).or_default().ovr.push(Ovr::Cod(c));
@@ -775,7 +810,19 @@ impl Walker<'_> {
                     cs.tiles.entry(t).or_default().ovr.push(Ovr::Coc(idx, f, p));
                 }
             }
-            (Scope::Tile(t), PPT) => cs.tiles.entry(t).or_default().ppt = true,
+            (Scope::Tile(_), PPT) => {
+                // `PpmPptConflict`: PPT with non-empty PPM packets fails.
+                if cs.ppm.iter().any(|(_, c)| c.iter().any(|r| !r.is_empty())) {
+                    self.inv.set_disposition(id, Disposition::Malformed);
+                    self.inv.set_detail(
+                        id,
+                        "hayro-jpeg2000 0.3.5 fails the decode here: PPT together with PPM",
+                    );
+                    self.dead = true;
+                } else if let Some(Packed::Ppt(seq, r)) = packed {
+                    cs.cur_ppt.push((seq, r));
+                }
+            }
             _ => {}
         }
         Ok(Flow::Next(seg_end))
@@ -784,6 +831,9 @@ impl Walker<'_> {
     /// One tile-part starting at the SOT marker at `pos`
     /// (`tile::parse_tile_part`).
     fn tile_part(&mut self, parent: Option<PartId>, cs: &mut Cs, pos: u64, end: u64) -> Res<Flow> {
+        let tp_idx = cs.tp_count;
+        cs.tp_count += 1;
+        cs.cur_ppt.clear();
         if end - pos < 12 {
             self.fatal_rest(parent, pos..end, "truncated SOT")?;
             return Ok(Flow::Stop);
@@ -902,11 +952,15 @@ impl Walker<'_> {
         }
         if p < data_end {
             let dead = self.dead;
+            let mut ppt = core::mem::take(&mut cs.cur_ppt);
+            ppt.sort_by_key(|(seq, _)| *seq);
             cs.tiles.entry(u32::from(isot)).or_default().parts.push(Tp {
                 data: p..data_end,
                 psot0: psot == 0,
                 isot,
                 dead,
+                tp_idx,
+                ppt: ppt.into_iter().map(|(_, r)| r).collect(),
             });
         }
         Ok(Flow::Next(data_end))
@@ -919,17 +973,34 @@ impl Walker<'_> {
             geo,
             cod,
             coc,
-            has_ppm,
+            mut ppm,
             tiles,
             ..
         } = cs;
+        // `read_header`: PPM segments sorted by Zppm, their packets in order,
+        // empty ones dropped; tile-part N takes entry N.
+        ppm.sort_by_key(|(seq, _)| *seq);
+        let ppm: Vec<Range<u64>> = ppm
+            .into_iter()
+            .flat_map(|(_, c)| c)
+            .filter(|r| !r.is_empty())
+            .collect();
         for (tile_idx, acc) in tiles {
-            let ranges: Vec<Range<u64>> = acc.parts.iter().map(|t| t.data.clone()).collect();
+            let ranges: Vec<packets::TpIn> = acc
+                .parts
+                .iter()
+                .map(|t| {
+                    let mut headers = t.ppt.clone();
+                    headers.extend(ppm.get(t.tp_idx).cloned());
+                    packets::TpIn {
+                        data: t.data.clone(),
+                        headers,
+                    }
+                })
+                .collect();
             let result: Result<Vec<packets::PartOut>, String> = if acc.parts.iter().any(|t| t.dead)
             {
                 Err("the decode fails earlier in the codestream".into())
-            } else if has_ppm || acc.ppt {
-                Err("packed packet headers (PPM/PPT) are not walked".into())
             } else if let (Some(geo), Some(cod)) = (&geo, &cod) {
                 match tile_cfg(geo, cod, &coc, &acc.ovr) {
                     Some(cfg) => {

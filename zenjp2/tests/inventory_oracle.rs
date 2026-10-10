@@ -494,3 +494,91 @@ fn corpus_unconsumed_bytes_do_not_change_pixels() {
     assert!(checked_files > 0);
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
+
+/// Plant 76 bytes of text after the last tile-part of every bare codestream
+/// in the corpus that decodes (growing that tile-part's Psot), and check the
+/// text comes out unconsumed with the pixels unchanged. Files with packed
+/// packet headers (PPM/PPT) are reported separately: review round 2 found
+/// that slack there was still called image data.
+#[test]
+fn corpus_planted_tile_slack_is_unconsumed() {
+    let Some(files) = corpus_files() else {
+        eprintln!("INVENTORY_ORACLE_DIR not set; not run");
+        return;
+    };
+    use zencodec::decode::Decode;
+    let decode = |d: &[u8]| -> Option<Vec<u8>> {
+        let out = Jp2DecoderConfig::new()
+            .job()
+            .decoder(std::borrow::Cow::Borrowed(d), &[])
+            .and_then(|x| x.decode())
+            .ok()?;
+        let px = out.pixels();
+        Some((0..px.rows()).flat_map(|y| px.row(y).to_vec()).collect())
+    };
+    let text = b"PLANT-SLACK: owner Jane Doe, serial 12345, appended after the last packet.";
+    let (mut planted, mut packed) = (0, 0);
+    let mut failures = Vec::new();
+    for f in &files {
+        let data = std::fs::read(f).unwrap();
+        if data.len() > 6_000_000 || !data.starts_with(&[0xFF, 0x4F, 0xFF, 0x51]) {
+            continue;
+        }
+        let Some(base) = decode(&data) else { continue };
+        let inv = inventory_of(&data);
+        let has_packed = inv
+            .parts()
+            .iter()
+            .any(|p| matches!(p.tag, PartTag::Marker(0x60 | 0x61)));
+        let Some(sot) = inv
+            .parts()
+            .iter()
+            .filter(|p| p.tag == PartTag::Marker(0x90))
+            .map(|p| p.range.start as usize)
+            .max()
+        else {
+            continue;
+        };
+        let psot = u32::from_be_bytes(data[sot + 6..sot + 10].try_into().unwrap());
+        if psot == 0 || sot + psot as usize > data.len() {
+            continue;
+        }
+        let at = sot + psot as usize;
+        let mut m = data.clone();
+        m.splice(at..at, text.iter().copied());
+        m[sot + 6..sot + 10].copy_from_slice(&(psot + text.len() as u32).to_be_bytes());
+        let name = f.file_name().unwrap().to_string_lossy().into_owned();
+        planted += 1;
+        if has_packed {
+            packed += 1;
+        }
+        if decode(&m).as_ref() != Some(&base) {
+            // hayro reads the planted bytes as packets: not a clean plant.
+            eprintln!("{name}: planting changes the decode; skipped");
+            continue;
+        }
+        let mi = inventory_of(&m);
+        let leaf = mi
+            .parts()
+            .iter()
+            .filter(|p| p.range.start <= at as u64 && (at as u64) < p.range.end)
+            .min_by_key(|p| p.len())
+            .unwrap();
+        if leaf.disposition.is_consumed() || leaf.range.end < (at + text.len()) as u64 {
+            failures.push(format!(
+                "{name}{}: planted text is {} {}..{} ({:?})",
+                if has_packed { " (PPM/PPT)" } else { "" },
+                leaf.disposition,
+                leaf.range.start,
+                leaf.range.end,
+                leaf.detail
+            ));
+        }
+    }
+    eprintln!(
+        "corpus_planted: {planted} bare codestreams planted, {packed} with PPM/PPT, {} failures",
+        failures.len()
+    );
+    assert!(planted > 0);
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}

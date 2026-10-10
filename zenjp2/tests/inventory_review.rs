@@ -330,27 +330,29 @@ fn f3_clean_tile_part_has_no_tail() {
     }
 }
 
-/// Packed packet headers are not walked: the data part says so instead of
-/// claiming a clean tail.
+/// Packed packet headers are walked (review round 2, R2-2; round 1 left them
+/// as "unreferenced tail not detected"). Here the PPM header stream does not
+/// describe the tile data, so hayro stops early and the rest of the data is
+/// not consumed.
 #[test]
-fn f3_packed_headers_say_the_tail_is_not_detected() {
+fn f3_packed_headers_are_walked() {
     let sot = find(J2K, &[0xFF, 0x90]);
     let mut f = J2K[..sot].to_vec();
     f.extend(seg(0x60, &[0, 0, 1, 0xAA]));
     f.extend_from_slice(&J2K[sot..]);
     let i = inv(&f);
-    let scan = i
-        .parts()
-        .iter()
-        .find(|p| p.kind == PartKind::ScanData)
-        .unwrap();
     assert!(
-        scan.detail
+        !i.parts().iter().any(|p| p
+            .detail
             .as_deref()
-            .unwrap()
-            .contains("unreferenced tail not detected: packed packet headers"),
-        "{scan:?}"
+            .is_some_and(|d| d.contains("not detected"))),
+        "{i}"
     );
+    let sod = parts_with(&i, PartTag::Marker(0x93))[0].range.end;
+    let eoc = parts_with(&i, PartTag::Marker(0xD9))[0].range.start;
+    let last = leaf_at(&i, eoc - 1);
+    assert!(!last.disposition.is_consumed(), "{i}");
+    assert!(last.range.start >= sod);
 }
 
 // ───────── F4: slack inside consumed leaf boxes ─────────
@@ -638,10 +640,38 @@ fn undetected(i: &Inventory, why: &str) -> usize {
         .count()
 }
 
-/// R2-1: with the walk skipped (PPM present, or an invalid SIZ), a Psot = 0
-/// tile-part whose data starts with EOC must not produce an empty part.
+/// R2-1: with the walk skipped (here an invalid SIZ makes the decode fail,
+/// so the tile data is not walked), a Psot = 0 tile-part whose data starts
+/// with EOC must not produce an empty part, and the EOC is still reported.
 #[test]
 fn r2_1_no_empty_part_when_the_data_starts_with_eoc() {
+    let sot = find(J2K, &[0xFF, 0x90]);
+    let mut f = J2K[..sot].to_vec();
+    f[24..28].copy_from_slice(&0u32.to_be_bytes()); // XTsiz = 0
+    f.extend_from_slice(&[0xFF, 0x90, 0x00, 0x0A, 0, 0, 0, 0, 0, 0, 0, 1]);
+    f.extend_from_slice(&[0xFF, 0xD9]);
+    let i = inv(&f);
+    assert!(
+        parts_with(&i, PartTag::Marker(0x51))[0]
+            .detail
+            .as_deref()
+            .unwrap()
+            .contains("fails the decode"),
+        "the walk is skipped because SIZ is invalid: {i}"
+    );
+    assert!(i.parts().iter().all(|p| !p.is_empty()), "{i}");
+    assert_eq!(
+        parts_with(&i, PartTag::Marker(0xD9)).len(),
+        1,
+        "the EOC is still reported: {i}"
+    );
+}
+
+/// R2-1, walked variant: with an empty PPM the data (just FF D9) is walked as
+/// packet data, as hayro does; the failed packet leaves a malformed tail and
+/// still no empty part.
+#[test]
+fn r2_1_eoc_as_tile_data_with_an_empty_ppm() {
     let sot = find(J2K, &[0xFF, 0x90]);
     let mut f = J2K[..sot].to_vec();
     f.extend(seg(0x60, &[0])); // empty PPM
@@ -649,11 +679,8 @@ fn r2_1_no_empty_part_when_the_data_starts_with_eoc() {
     f.extend_from_slice(&[0xFF, 0xD9]);
     let i = inv(&f);
     assert!(i.parts().iter().all(|p| !p.is_empty()), "{i}");
-    assert_eq!(
-        parts_with(&i, PartTag::Marker(0xD9)).len(),
-        1,
-        "the EOC is still reported: {i}"
-    );
+    let tail = leaf_at(&i, f.len() as u64 - 2);
+    assert_eq!(tail.disposition, Disposition::Malformed, "{i}");
 }
 
 /// R2-3: a tile 4 wide and 32768 tall with 32 components gives each
@@ -749,4 +776,81 @@ fn r2_4_position_progression_elements_count_against_the_budget() {
     assert_eq!(f.len(), 101858);
     let i = inv(&f);
     assert!(undetected(&i, "work budget") > 0, "{}", i.parts().len());
+}
+
+/// A one-tile codestream whose packet headers sit in a PPM (main header) or a
+/// PPT (tile-part header) segment instead of the tile data. Every packet is
+/// empty (one header byte, `0x00`), so the body bytes after SOD are never
+/// read by hayro: they are where a writer can hide data.
+fn packed_headers_cs(ppm: bool, body: &[u8]) -> Vec<u8> {
+    let c = Cs {
+        xsiz: 16,
+        ysiz: 16,
+        xt: 16,
+        yt: 16,
+        csiz: 1,
+        nlev: 0,
+        prog: 0,
+        layers: 2,
+        scod: 0,
+        prec: vec![],
+    };
+    // Two packets (2 layers x 1 resolution x 1 component x 1 precinct).
+    let headers = [0x00u8, 0x00];
+    let base = build_cs(&c, &[]);
+    let mut f = base[..base.len() - 2].to_vec(); // drop EOC
+    if ppm {
+        let mut p = vec![0u8]; // Zppm
+        p.extend_from_slice(&(headers.len() as u16).to_be_bytes()); // Nppm
+        p.extend_from_slice(&headers);
+        f.extend(seg(0x60, &p));
+    }
+    let mut tph = Vec::new();
+    if !ppm {
+        let mut p = vec![0u8]; // Zppt
+        p.extend_from_slice(&headers);
+        tph.extend(seg(0x61, &p));
+    }
+    let psot = (12 + tph.len() + 2 + body.len()) as u32;
+    f.extend_from_slice(&[0xFF, 0x90, 0x00, 0x0A, 0, 0]);
+    f.extend_from_slice(&psot.to_be_bytes());
+    f.extend_from_slice(&[0, 1]);
+    f.extend(tph);
+    f.extend_from_slice(&[0xFF, 0x93]);
+    f.extend_from_slice(body);
+    f.extend_from_slice(&[0xFF, 0xD9]);
+    f
+}
+
+/// R2-2: with packed headers the body reader stops after the last packet the
+/// header streams describe; bytes after it are unreferenced, not image data.
+#[test]
+fn r2_2_body_after_packed_headers_is_unreferenced() {
+    let slack = b"PPT-SLACK: owner Jane Doe, serial 12345";
+    for ppm in [false, true] {
+        let f = packed_headers_cs(ppm, slack);
+        let base = decode(&f).unwrap_or_else(|e| panic!("ppm={ppm}: {e}"));
+        let i = inv(&f);
+        let at = find(&f, b"PPT-SLACK") as u64;
+        let p = leaf_at(&i, at);
+        assert_eq!(p.disposition, Disposition::Unreferenced, "ppm={ppm}: {i}");
+        assert_eq!(p.len() as usize, slack.len(), "ppm={ppm}: {i}");
+        assert!(
+            !i.parts().iter().any(|p| p
+                .detail
+                .as_deref()
+                .is_some_and(|d| d.contains("not detected"))),
+            "ppm={ppm}: the walk ran: {i}"
+        );
+        // Overwriting it leaves the decode unchanged.
+        let mut g = f.clone();
+        for b in &mut g[p.range.start as usize..p.range.end as usize] {
+            *b = !*b;
+        }
+        assert_eq!(
+            rows(&decode(&g).expect("decodes")),
+            rows(&base),
+            "ppm={ppm}"
+        );
+    }
 }
