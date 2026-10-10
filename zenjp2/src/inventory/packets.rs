@@ -121,11 +121,14 @@ fn unsupported<T>(why: impl Into<String>) -> Result<T, Fail> {
     Err(Fail::Unsupported(why.into()))
 }
 
+/// Reason [`analyze`] returns once the file's work budget is spent.
+pub(super) const BUDGET_EXHAUSTED: &str = "work budget for the whole file is used up";
+
 /// Take `n` units from the file's work budget.
 fn spend(budget: &mut u64, n: u64) -> Result<(), Fail> {
     if *budget < n {
         *budget = 0;
-        return unsupported("work budget for the whole file is used up");
+        return unsupported(BUDGET_EXHAUSTED);
     }
     *budget -= n;
     Ok(())

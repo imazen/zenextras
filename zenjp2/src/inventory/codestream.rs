@@ -33,6 +33,11 @@ const SOT: u8 = 0x90;
 const SOD: u8 = 0x93;
 const EOC: u8 = 0xD9;
 
+/// Detail on tile data (and packed headers) left unwalked when the file's
+/// packet-walk work budget runs out.
+const BUDGET_DETAIL: &str =
+    "work budget exhausted: packet structure not verified; decode reads these bytes as tile data";
+
 /// hayro's `BITPLANE_BIT_SIZE` (31): larger precisions fail the SIZ parse.
 const MAX_PRECISION: u8 = 31;
 
@@ -1088,15 +1093,20 @@ impl Walker<'_> {
                         eoc = Some(data_end);
                     }
                 }
-                // An EOC at the very start of the data leaves nothing to push.
-                if start < data_end {
-                    self.scan_part(
-                        parent,
-                        tp,
-                        start..data_end,
+                // Only adversarial input spends the file's work budget, and the
+                // budget is spent before a packet of these bytes is checked:
+                // report them as not consumed rather than vouch for them.
+                let (d, detail) = if why == packets::BUDGET_EXHAUSTED {
+                    (Disposition::Malformed, String::from(BUDGET_DETAIL))
+                } else {
+                    (
                         Disposition::ImageData,
                         format!("packet data; unreferenced tail not detected: {why}"),
-                    )?;
+                    )
+                };
+                // An EOC at the very start of the data leaves nothing to push.
+                if start < data_end {
+                    self.scan_part(parent, tp, start..data_end, d, detail)?;
                 }
                 if let Some(e) = eoc {
                     self.eoc(parent, e)?;

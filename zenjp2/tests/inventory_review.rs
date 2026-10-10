@@ -640,6 +640,20 @@ fn undetected(i: &Inventory, why: &str) -> usize {
         .count()
 }
 
+/// Data parts left unwalked because the file's work budget ran out; each must
+/// be unconsumed (R3-1).
+fn budget_exhausted(i: &Inventory) -> usize {
+    i.parts()
+        .iter()
+        .filter(|p| {
+            p.detail
+                .as_deref()
+                .is_some_and(|d| d.starts_with("work budget exhausted"))
+        })
+        .inspect(|p| assert!(!p.disposition.is_consumed(), "{p:?}"))
+        .count()
+}
+
 /// R2-1: with the walk skipped (here an invalid SIZ makes the decode fail,
 /// so the tile data is not walked), a Psot = 0 tile-part whose data starts
 /// with EOC must not produce an empty part, and the EOC is still reported.
@@ -733,24 +747,28 @@ fn r2_4_one_work_budget_across_tiles() {
     let f = build_cs(&c, &tiles);
     assert_eq!(f.len(), 38753);
     let i = inv(&f);
-    let spent = undetected(&i, "work budget");
+    let spent = budget_exhausted(&i);
     assert!(spent > 0, "the budget runs out: {i}");
     assert!(spent < usize::from(n), "the first tiles are walked");
-    // Once spent, every later tile reports it.
+    // Once spent, every later tile reports it, and none is vouched for (R3-1).
     let first = i
         .parts()
         .iter()
         .position(|p| {
             p.detail
                 .as_deref()
-                .is_some_and(|d| d.contains("work budget"))
+                .is_some_and(|d| d.starts_with("work budget exhausted"))
         })
         .unwrap();
     assert!(
         i.parts()[first..]
             .iter()
             .filter(|p| p.kind == PartKind::ScanData)
-            .all(|p| p.detail.as_deref().unwrap().contains("work budget"))
+            .all(|p| p.disposition == Disposition::Malformed
+                && p.detail
+                    .as_deref()
+                    .unwrap()
+                    .starts_with("work budget exhausted"))
     );
 }
 
@@ -775,7 +793,7 @@ fn r2_4_position_progression_elements_count_against_the_budget() {
     let f = build_cs(&c, &tiles);
     assert_eq!(f.len(), 101858);
     let i = inv(&f);
-    assert!(undetected(&i, "work budget") > 0, "{}", i.parts().len());
+    assert!(budget_exhausted(&i) > 0, "{}", i.parts().len());
 }
 
 /// A one-tile codestream whose packet headers sit in a PPM (main header) or a
@@ -851,6 +869,93 @@ fn r2_2_body_after_packed_headers_is_unreferenced() {
             rows(&decode(&g).expect("decodes")),
             rows(&base),
             "ppm={ppm}"
+        );
+    }
+}
+
+// ───────────────────────── review round 3 ─────────────────────────
+
+/// Like `build_cs`, with a tile-part header per tile-part.
+fn build_tp(c: &Cs, tiles: &[(u16, Vec<u8>, Vec<u8>)]) -> Vec<u8> {
+    let mut f = build_cs(c, &[]);
+    f.truncate(f.len() - 2); // drop EOC
+    for (idx, hdr, data) in tiles {
+        f.extend_from_slice(&[0xFF, 0x90, 0x00, 0x0A]);
+        f.extend_from_slice(&idx.to_be_bytes());
+        f.extend_from_slice(&((14 + hdr.len() + data.len()) as u32).to_be_bytes());
+        f.extend_from_slice(&[0, 1]);
+        f.extend_from_slice(hdr);
+        f.extend_from_slice(&[0xFF, 0x93]);
+        f.extend_from_slice(data);
+    }
+    f.extend_from_slice(&[0xFF, 0xD9]);
+    f
+}
+
+/// R3-1 (reviewer's `r3_budget_fail_open`): eight 15-byte RPCL tile-parts with
+/// 2^19 one-pixel precincts spend the file's work budget; tile 8 then carries
+/// one empty packet and planted text. The text must not be reported as
+/// consumed (it was ImageData after round 2), while the control without the
+/// expensive tiles still reports the exact unreferenced tail.
+#[test]
+fn r3_1_budget_exhaustion_does_not_vouch_for_later_tiles() {
+    let c = Cs {
+        xsiz: 1024 * 3,
+        ysiz: 512 * 3,
+        xt: 1024,
+        yt: 512,
+        csiz: 1,
+        nlev: 0,
+        prog: 2,
+        layers: 1,
+        scod: 1,
+        prec: vec![0x00],
+    };
+    // Tile-part COD for the last tile: LRCP, default precinct, one packet.
+    let tcod = seg(
+        0x52,
+        &[0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01],
+    );
+    let text = b"BUDGET-SLACK: owner Jane Doe, passport X1234567";
+    let mk = |expensive: usize, slack: bool| {
+        let mut tiles: Vec<(u16, Vec<u8>, Vec<u8>)> = (0..expensive)
+            .map(|i| (i as u16, vec![], vec![0x00]))
+            .collect();
+        let mut d = vec![0x00];
+        if slack {
+            d.extend_from_slice(text);
+        }
+        tiles.push((8, tcod.clone(), d));
+        build_tp(&c, &tiles)
+    };
+    for (expensive, want) in [
+        (0usize, Disposition::Unreferenced),
+        (8, Disposition::Malformed),
+    ] {
+        let f = mk(expensive, true);
+        assert_eq!(
+            f.len(),
+            [144, 264][expensive / 8],
+            "matches the reviewer's file"
+        );
+        let i = inv(&f);
+        let at = find(&f, b"BUDGET-SLACK") as u64;
+        let p = leaf_at(&i, at);
+        assert_eq!(p.disposition, want, "expensive={expensive}: {i}");
+        assert!(p.range.end >= at + text.len() as u64, "{i}");
+        if expensive > 0 {
+            assert!(
+                p.detail
+                    .as_deref()
+                    .unwrap()
+                    .starts_with("work budget exhausted")
+            );
+        }
+        let plain = mk(expensive, false);
+        assert_eq!(
+            decode(&f).map(|o| rows(&o)).ok(),
+            decode(&plain).map(|o| rows(&o)).ok(),
+            "the text does not change the decode"
         );
     }
 }
