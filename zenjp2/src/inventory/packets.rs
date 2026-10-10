@@ -235,6 +235,11 @@ fn push_node(nodes: &mut Vec<TagNode>, n: TagNode) -> Result<u32, Fail> {
 }
 
 /// `TagNode::build`: returns the node (not yet pushed); children are pushed.
+///
+/// hayro recurses into all four children before checking their size; a
+/// zero-width or zero-height child pushes nothing at any depth, so it is
+/// skipped here without recursing (the pushed nodes and their order are
+/// unchanged). Without the skip a 1 x 8192 grid costs ~4^13 calls.
 fn build_node(w: u32, h: u32, level: u16, nodes: &mut Vec<TagNode>) -> Result<TagNode, Fail> {
     let mut tag = TagNode {
         w,
@@ -250,10 +255,11 @@ fn build_node(w: u32, h: u32, level: u16, nodes: &mut Vec<TagNode>) -> Result<Ta
     let (tw, th) = (tag.tl_w(), tag.tl_h());
     let dims = [(tw, th), (w - tw, th), (tw, h - th), (w - tw, h - th)];
     for (i, (cw, chh)) in dims.into_iter().enumerate() {
-        let child = build_node(cw, chh, level - 1, nodes)?;
-        if child.w > 0 && child.h > 0 {
-            tag.ch[i] = push_node(nodes, child)?;
+        if cw == 0 || chh == 0 {
+            continue;
         }
+        let child = build_node(cw, chh, level - 1, nodes)?;
+        tag.ch[i] = push_node(nodes, child)?;
     }
     Ok(tag)
 }

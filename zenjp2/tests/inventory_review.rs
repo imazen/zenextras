@@ -582,6 +582,62 @@ fn f5_second_tile_part_is_walked_when_the_first_is_fine() {
 
 // ───────────────────────── review round 2 ─────────────────────────
 
+/// Minimal codestream builder for the round-2 resource probes (adapted from
+/// the reviewer's `review_r2.rs`).
+struct Cs {
+    xsiz: u32,
+    ysiz: u32,
+    xt: u32,
+    yt: u32,
+    csiz: u16,
+    nlev: u8,
+    prog: u8,
+    layers: u16,
+    scod: u8,
+    prec: Vec<u8>,
+}
+
+fn build_cs(c: &Cs, tiles: &[(u16, Vec<u8>)]) -> Vec<u8> {
+    let mut f = vec![0xFF, 0x4F];
+    let mut siz = vec![0, 0];
+    for v in [c.xsiz, c.ysiz, 0, 0, c.xt, c.yt, 0, 0] {
+        siz.extend_from_slice(&v.to_be_bytes());
+    }
+    siz.extend_from_slice(&c.csiz.to_be_bytes());
+    for _ in 0..c.csiz {
+        siz.extend_from_slice(&[7, 1, 1]);
+    }
+    f.extend(seg(0x51, &siz));
+    let mut cod = vec![c.scod, c.prog];
+    cod.extend_from_slice(&c.layers.to_be_bytes());
+    cod.extend_from_slice(&[0, c.nlev, 0, 0, 0, 1]);
+    cod.extend_from_slice(&c.prec);
+    f.extend(seg(0x52, &cod));
+    let mut qcd = vec![0x40];
+    qcd.extend(std::iter::repeat_n(0x40, 1 + 3 * c.nlev as usize));
+    f.extend(seg(0x5C, &qcd));
+    for (idx, data) in tiles {
+        f.extend_from_slice(&[0xFF, 0x90, 0x00, 0x0A]);
+        f.extend_from_slice(&idx.to_be_bytes());
+        f.extend_from_slice(&((14 + data.len()) as u32).to_be_bytes());
+        f.extend_from_slice(&[0, 1, 0xFF, 0x93]);
+        f.extend_from_slice(data);
+    }
+    f.extend_from_slice(&[0xFF, 0xD9]);
+    f
+}
+
+fn undetected(i: &Inventory, why: &str) -> usize {
+    i.parts()
+        .iter()
+        .filter(|p| {
+            p.detail
+                .as_deref()
+                .is_some_and(|d| d.contains("unreferenced tail not detected") && d.contains(why))
+        })
+        .count()
+}
+
 /// R2-1: with the walk skipped (PPM present, or an invalid SIZ), a Psot = 0
 /// tile-part whose data starts with EOC must not produce an empty part.
 #[test]
@@ -598,4 +654,33 @@ fn r2_1_no_empty_part_when_the_data_starts_with_eoc() {
         1,
         "the EOC is still reported: {i}"
     );
+}
+
+/// R2-3: a tile 4 wide and 32768 tall with 32 components gives each
+/// precinct a 1 x 8192 code-block grid. hayro's tag-tree build recurses into
+/// empty quadrants (~4^13 calls per tree); the walk must skip them and still
+/// walk the tile.
+#[test]
+fn r2_3_skinny_tag_trees_are_built_without_recursing_into_empty_quadrants() {
+    let c = Cs {
+        xsiz: 4,
+        ysiz: 32768,
+        xt: 4,
+        yt: 32768,
+        csiz: 32,
+        nlev: 0,
+        prog: 0,
+        layers: 1,
+        scod: 0,
+        prec: vec![],
+    };
+    let f = build_cs(&c, &[(0, vec![0x80; 32])]);
+    assert_eq!(f.len(), 206);
+    let t = std::time::Instant::now();
+    let i = inv(&f);
+    let el = t.elapsed();
+    assert_eq!(undetected(&i, ""), 0, "the tile is walked: {i}");
+    // Before the fix this took ~49 s in release; the bound only catches a
+    // return of the exponential recursion, not a tuned budget.
+    assert!(el.as_secs() < 20, "inventory took {el:?}");
 }

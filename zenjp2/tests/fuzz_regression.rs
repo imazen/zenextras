@@ -10,8 +10,9 @@ use std::time::{Duration, Instant};
 use zencodec::decode::{Decode, DecodeJob, DecoderConfig};
 use zenjp2::Jp2DecoderConfig;
 
-/// `inventory/`: two empty-part crashes (review round 2, R2-1).
-const TRACKED_SEEDS: usize = 2;
+/// `inventory/`: two empty-part crashes and one tag-tree timeout (review
+/// round 2, R2-1 and R2-3).
+const TRACKED_SEEDS: usize = 3;
 
 fn seeds() -> Vec<PathBuf> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("fuzz/regression");
