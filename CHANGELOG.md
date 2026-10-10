@@ -214,6 +214,11 @@ member entries here reference those files.
   aborts `inventory()`: the model finds it before the decoder's checks run
   usvg, and the document is reported `Unknown` with the cycle named. The
   decoder still aborts on such files (zenextras#41) (8f5a4d4).
+- **Inventory review round 4.** A pattern, gradient or filter `href` chain
+  that loops without returning to its start no longer makes `inventory()`
+  spin: the model finds it before the decoder's checks run usvg, and the
+  document is reported `Unknown` with the chain named. The decoder still
+  loops forever on such files (zenextras#42).
 
 #### Fixed (2026-08-27, zenextras#15, #16)
 
