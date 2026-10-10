@@ -318,6 +318,12 @@ pub(crate) struct Model {
     /// usvg parses; `None` when the text is not a slice of the file
     /// (entities, CR, or merged text and CDATA).
     pub css_used: HashMap<usize, Option<Vec<std::ops::Range<usize>>>>,
+    /// A cycle of three or more resources (patterns, clip paths, masks,
+    /// filters, markers) that drawn content reaches, by id. usvg breaks
+    /// only cycles of two (`fix_recursive_patterns`, `fix_recursive_links`),
+    /// so its converter recurses until the stack overflows and the process
+    /// aborts. The model's own guard stops at the first repeat.
+    pub cycle: Option<Vec<String>>,
     /// The document draws nothing at all (root not visible).
     pub nothing_drawn: Option<String>,
     /// Text whose drawing depends on the fonts found: (`<text>` roxmltree
@@ -362,8 +368,8 @@ struct Builder<'a, 'i> {
     links: HashMap<Arc<str>, usize>,
     env: &'a Env<'a>,
     out: Model,
-    /// Resources being converted (cycle guard).
-    active: HashSet<usize>,
+    /// Resources being converted, innermost last (cycle guard).
+    active: Vec<usize>,
     /// `style` declarations (file start) some parse of their element keeps.
     used_decls: HashSet<usize>,
     /// (node, is fill) paints `fix_recursive_patterns` rewrote to none.
@@ -389,7 +395,7 @@ pub(crate) fn build(doc: &rx::Document, env: &Env) -> Option<Model> {
             verdicts: vec![Verdict::default(); doc.descendants().count() + 1],
             ..Model::default()
         },
-        active: HashSet::new(),
+        active: Vec::new(),
         used_decls: HashSet::new(),
         none_paint: HashSet::new(),
         pattern_paints: std::cell::RefCell::new(HashMap::new()),
@@ -1074,6 +1080,32 @@ impl<'a, 'i: 'a> Builder<'a, 'i> {
         self.links.get(id).copied()
     }
 
+    /// Start converting a resource; `false` when it is already being
+    /// converted further up (a cycle), which is recorded when it spans
+    /// three or more resources.
+    fn enter(&mut self, r: usize) -> bool {
+        if let Some(at) = self.active.iter().position(|&a| a == r) {
+            let ring = &self.active[at..];
+            if ring.len() >= 3 && self.out.cycle.is_none() {
+                let mut ids: Vec<String> = ring
+                    .iter()
+                    .map(|&i| self.attr(i, "id").unwrap_or("?").to_string())
+                    .collect();
+                ids.push(ids[0].clone());
+                self.out.cycle = Some(ids);
+            }
+            return false;
+        }
+        self.active.push(r);
+        true
+    }
+
+    fn leave(&mut self, r: usize) {
+        if let Some(at) = self.active.iter().rposition(|&a| a == r) {
+            self.active.remove(at);
+        }
+    }
+
     fn mark(&mut self, n: usize) {
         if let Some(x) = self.nodes[n].xml {
             self.out.verdicts[Self::idx(x)].drawn = true;
@@ -1556,7 +1588,7 @@ impl<'a, 'i: 'a> Builder<'a, 'i> {
     }
 
     fn convert_server(&mut self, s: usize) {
-        if !self.active.insert(s) {
+        if !self.enter(s) {
             return;
         }
         if self.tag(s) == Some("pattern") {
@@ -1588,7 +1620,7 @@ impl<'a, 'i: 'a> Builder<'a, 'i> {
                 }
             }
         }
-        self.active.remove(&s);
+        self.leave(s);
     }
 
     /// `marker::is_valid` and the links `marker::convert` follows.
@@ -1615,7 +1647,7 @@ impl<'a, 'i: 'a> Builder<'a, 'i> {
     }
 
     fn convert_marker(&mut self, m: usize) {
-        if !self.active.insert(m) {
+        if !self.enter(m) {
             return;
         }
         self.mark(m);
@@ -1626,7 +1658,7 @@ impl<'a, 'i: 'a> Builder<'a, 'i> {
                 ..St::default()
             },
         );
-        self.active.remove(&m);
+        self.leave(m);
     }
 
     fn clip_valid(&self, c: usize, depth: u32) -> bool {
@@ -1687,7 +1719,7 @@ impl<'a, 'i: 'a> Builder<'a, 'i> {
     }
 
     fn convert_clip(&mut self, c: usize) {
-        if !self.active.insert(c) {
+        if !self.enter(c) {
             return;
         }
         self.mark(c);
@@ -1728,11 +1760,11 @@ impl<'a, 'i: 'a> Builder<'a, 'i> {
                 _ => b.why(k, "usvg ignores this element inside a clipPath"),
             });
         }
-        self.active.remove(&c);
+        self.leave(c);
     }
 
     fn convert_mask(&mut self, m: usize) {
-        if !self.active.insert(m) {
+        if !self.enter(m) {
             return;
         }
         self.mark(m);
@@ -1740,11 +1772,11 @@ impl<'a, 'i: 'a> Builder<'a, 'i> {
             self.convert_mask(l);
         }
         self.convert_children(m, St::default());
-        self.active.remove(&m);
+        self.leave(m);
     }
 
     fn convert_filter(&mut self, f: usize) {
-        if !self.active.insert(f) {
+        if !self.enter(f) {
             return;
         }
         self.mark(f);
@@ -1761,7 +1793,7 @@ impl<'a, 'i: 'a> Builder<'a, 'i> {
                 self.convert_element(l, St::default());
             }
         }
-        self.active.remove(&f);
+        self.leave(f);
     }
 
     /// `use_node::convert`.

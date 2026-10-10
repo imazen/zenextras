@@ -400,6 +400,9 @@ const MAX_INNER_PARTS: u32 = 200_000;
 /// Inflate work cap when locating the end of an SVGZ deflate stream.
 const MAX_INFLATE: u64 = 512 << 20;
 
+/// The decoder's abort on resource cycles longer than two.
+const CYCLE_ISSUE: u32 = 41;
+
 /// Nested `data:` SVG documents inventoried inside each other.
 const MAX_NEST: u32 = 4;
 
@@ -748,35 +751,13 @@ fn walk_parsed(
     // work budget runs out").
     let unverified =
         unverified || (accepted.is_ok() && bound.is_some_and(|b| b > MAX_PARSE_NESTING));
-    // The decoder's own checks run first, before the walker's parse, so
-    // their parse (usvg's roxmltree document and tree) is dropped before
-    // the walker's is built: peak memory is one parse, not two. The
-    // nesting bound comes before either (both recurse per level).
-    if accepted.is_ok() {
-        if let Err(e) = parse_prechecks(d, bound) {
-            accepted = Err(e);
-        }
+    let mut unverified =
+        unverified || (accepted.is_ok() && bound.is_some_and(|b| b > MAX_PARSE_NESTING));
+    if accepted.is_ok()
+        && let Err(e) = parse_prechecks(d, bound)
+    {
+        accepted = Err(e);
     }
-    if accepted.is_ok() {
-        let gate = if nest == 0 {
-            crate::render::check_render(d, job.options)
-        } else {
-            crate::render::check_nested(d, job.options)
-        };
-        if let Err(e) = gate {
-            accepted = Err(format!("the decoder rejects it before drawing: {e}"));
-        }
-    }
-    let doc = match accepted {
-        Ok(()) => match parse_doc(d, bound) {
-            Ok(doc) => Some(doc),
-            Err(e) => {
-                accepted = Err(e);
-                None
-            }
-        },
-        Err(_) => None,
-    };
     let uris = UriCache::default();
     let fonts = DocFonts {
         lookup: job.fonts,
@@ -793,26 +774,81 @@ fn walk_parsed(
         .flatten()
         .map(|a| (a.range.start, a.value.clone()))
         .collect();
-    let model = match (&doc, &accepted) {
-        (Some(doc), Ok(())) => {
-            let resolve = |at: usize, value: &str| -> Option<bool> {
-                let raw = &d[value_at.get(&at)?.clone()];
-                uris.get(at, raw, value, job, nest).map(|u| u.drawn)
-            };
-            let env = model::Env {
-                languages: &languages,
-                fonts: &fonts,
-                resolve_data: &resolve,
-            };
-            match model::build(doc, &env) {
-                Some(m) => Some(m),
-                None => {
-                    accepted = Err("more than 1,000,000 nodes (usvg: NodesLimitReached)".into());
-                    None
+    // The model first: its replay of usvg's converter stops at a resource
+    // cycle that usvg itself would follow until the stack overflows (usvg
+    // breaks only cycles of two). Such a document never reaches the
+    // decoder's gate, which runs usvg's converter (review R3-S1). The
+    // model owns no borrow of the document, so the document is dropped
+    // before the gate and parsed again for the walk: peak memory stays one
+    // parse.
+    let mut model = None;
+    if accepted.is_ok() {
+        match parse_doc(d, bound) {
+            Ok(doc) => {
+                let resolve = |at: usize, value: &str| -> Option<bool> {
+                    let raw = &d[value_at.get(&at)?.clone()];
+                    uris.get(at, raw, value, job, nest).map(|u| u.drawn)
+                };
+                let env = model::Env {
+                    languages: &languages,
+                    fonts: &fonts,
+                    resolve_data: &resolve,
+                };
+                match model::build(&doc, &env) {
+                    Some(m) => {
+                        if let Some(ring) = &m.cycle {
+                            // The decoder aborts on this document, so it
+                            // consumes nothing; the walker reports it
+                            // `Unknown` (it never ran usvg to confirm).
+                            unverified = true;
+                            accepted = Err(format!(
+                                "a cycle of resources ({}) that drawn content reaches; usvg \
+                                 breaks only cycles of two, so its converter recurses until \
+                                 the stack overflows and the decoder aborts (zenextras#{}). \
+                                 The inventory does not run usvg on it",
+                                ring.iter()
+                                    .map(|i| format!("#{i}"))
+                                    .collect::<Vec<_>>()
+                                    .join(" → "),
+                                CYCLE_ISSUE
+                            ));
+                        } else {
+                            model = Some(m);
+                        }
+                    }
+                    None => {
+                        accepted = Err("more than 1,000,000 nodes, or elements nested more \
+                                        than 1,024 levels deep in what usvg converts (usvg: \
+                                        NodesLimitReached)"
+                            .into());
+                    }
                 }
             }
+            Err(e) => accepted = Err(e),
         }
-        _ => None,
+    }
+    // The decoder's own checks before drawing.
+    if accepted.is_ok() {
+        let gate = if nest == 0 {
+            crate::render::check_render(d, job.options)
+        } else {
+            crate::render::check_nested(d, job.options)
+        };
+        if let Err(e) = gate {
+            accepted = Err(format!("the decoder rejects it before drawing: {e}"));
+            model = None;
+        }
+    }
+    let doc = match accepted {
+        Ok(()) => match parse_doc(d, bound) {
+            Ok(doc) => Some(doc),
+            Err(e) => {
+                accepted = Err(e);
+                model = None;
+                None
+            }
+        },
+        Err(_) => None,
     };
     let ok = accepted.is_ok();
     let mut w = Walker::new(

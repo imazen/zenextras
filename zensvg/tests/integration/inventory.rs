@@ -656,6 +656,32 @@ fn nested_data_uri_svgs_past_the_budget_are_unknown() {
     assert_eq!(named(&inv, "href")[0].disposition, Disposition::ImageData);
 }
 
+/// The review's 524-byte pattern cycle of three (R3-S1): usvg breaks only
+/// cycles of two, so its converter recurses until the stack overflows and
+/// the decoder aborts. The inventory finds the cycle with its own model
+/// before the decoder's gate runs usvg, so it returns, and nothing is
+/// consumed: the document is `Unknown`, with the cycle named.
+#[test]
+fn a_pattern_cycle_of_three_does_not_abort() {
+    let d = br##"<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="20" height="20"><pattern id="p1" width="4" height="4" patternUnits="userSpaceOnUse"><rect width="4" height="4" fill="url(#p2)"/></pattern><pattern id="p2" width="4" height="4" patternUnits="userSpaceOnUse"><rect width="4" height="4" fill="url(#p3)"/></pattern><pattern id="p3" width="4" height="4" patternUnits="userSpaceOnUse"><rect width="4" height="4" fill="url(#p1)"/></pattern><rect width="20" height="20" fill="url(#p1)"/></svg>"##;
+    assert_eq!(d.len(), 524);
+    let inv = inventory(d);
+    assert!(
+        inv.parts().iter().all(|p| !p.disposition.is_consumed()),
+        "{inv}"
+    );
+    let rect = leaf_at(&inv, find(d, br#"<rect width="20" height="20""#) as u64);
+    assert_eq!(rect.disposition, Disposition::Unknown, "{inv}");
+    assert!(detail(rect).contains("#p1 → #p2 → #p3 → #p1"), "{rect:?}");
+    assert!(detail(rect).contains("zenextras#41"), "{rect:?}");
+    // A cycle of two is broken by usvg (fix_recursive_patterns) and drawn
+    // content around it is still mapped.
+    let two = br##"<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20"><pattern id="p1" width="4" height="4" patternUnits="userSpaceOnUse"><rect width="4" height="4" fill="url(#p2)"/></pattern><pattern id="p2" width="4" height="4" patternUnits="userSpaceOnUse"><rect width="4" height="4" fill="url(#p1)"/></pattern><rect width="20" height="20" fill="url(#p1)"/><rect width="5" height="5" fill="#00f"/></svg>"##;
+    let inv = inventory(two);
+    let blue = leaf_at(&inv, find(two, b"#00f") as u64);
+    assert_eq!(blue.disposition, Disposition::ImageData, "{inv}");
+}
+
 /// One line per part: depth, kind, range, tag, disposition, label.
 fn pinned_lines(inv: &Inventory) -> Vec<String> {
     inv.parts()

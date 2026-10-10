@@ -1387,3 +1387,20 @@ fn r2_s9_unknown_property_in_style_attribute() {
         Verdict::Ok
     );
 }
+
+// ── Round 3 (review-r3.md: R3-S1) ───────────────────────────────────────
+
+/// The decoder aborts on a pattern cycle of three (usvg breaks only cycles
+/// of two; zenextras#41). This aborts the test process, so it runs
+/// only alone, with `R3_ABORTING=1`. The inventory's side is pinned by
+/// `a_pattern_cycle_of_three_does_not_abort` in the integration tests.
+#[test]
+fn r3_three_cycle_decode_aborts() {
+    if std::env::var_os("R3_ABORTING").is_none() {
+        return;
+    }
+    let d = svg(
+        r##"<pattern id="p1" width="4" height="4" patternUnits="userSpaceOnUse"><rect width="4" height="4" fill="url(#p2)"/></pattern><pattern id="p2" width="4" height="4" patternUnits="userSpaceOnUse"><rect width="4" height="4" fill="url(#p3)"/></pattern><pattern id="p3" width="4" height="4" patternUnits="userSpaceOnUse"><rect width="4" height="4" fill="url(#p1)"/></pattern><rect width="20" height="20" fill="url(#p1)"/>"##,
+    );
+    println!("decode: {}", painted(&render(&d)));
+}
