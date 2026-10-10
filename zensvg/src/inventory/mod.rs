@@ -315,6 +315,40 @@ const ATTRIBUTES: &[&[u8]] = &[
     b"z",
 ];
 
+/// Feature strings usvg 0.48.1 supports (`switch.rs` `FEATURES`).
+const FEATURES: &[&[u8]] = &[
+    b"http://www.w3.org/TR/SVG11/feature#SVGDOM-static",
+    b"http://www.w3.org/TR/SVG11/feature#SVG-static",
+    b"http://www.w3.org/TR/SVG11/feature#CoreAttribute",
+    b"http://www.w3.org/TR/SVG11/feature#Structure",
+    b"http://www.w3.org/TR/SVG11/feature#BasicStructure",
+    b"http://www.w3.org/TR/SVG11/feature#ContainerAttribute",
+    b"http://www.w3.org/TR/SVG11/feature#ConditionalProcessing",
+    b"http://www.w3.org/TR/SVG11/feature#Image",
+    b"http://www.w3.org/TR/SVG11/feature#Style",
+    b"http://www.w3.org/TR/SVG11/feature#Shape",
+    b"http://www.w3.org/TR/SVG11/feature#Text",
+    b"http://www.w3.org/TR/SVG11/feature#BasicText",
+    b"http://www.w3.org/TR/SVG11/feature#PaintAttribute",
+    b"http://www.w3.org/TR/SVG11/feature#BasicPaintAttribute",
+    b"http://www.w3.org/TR/SVG11/feature#OpacityAttribute",
+    b"http://www.w3.org/TR/SVG11/feature#GraphicsAttribute",
+    b"http://www.w3.org/TR/SVG11/feature#BasicGraphicsAttribute",
+    b"http://www.w3.org/TR/SVG11/feature#Marker",
+    b"http://www.w3.org/TR/SVG11/feature#Gradient",
+    b"http://www.w3.org/TR/SVG11/feature#Pattern",
+    b"http://www.w3.org/TR/SVG11/feature#Clip",
+    b"http://www.w3.org/TR/SVG11/feature#BasicClip",
+    b"http://www.w3.org/TR/SVG11/feature#Mask",
+    b"http://www.w3.org/TR/SVG11/feature#Filter",
+    b"http://www.w3.org/TR/SVG11/feature#BasicFilter",
+    b"http://www.w3.org/TR/SVG11/feature#XlinkAttribute",
+];
+
+const UNREFERENCED: &str = "drawn only through a reference (in <defs>, or a symbol, gradient, \
+                            pattern, clipPath, mask, filter or marker) and nothing references it";
+const NOT_SELECTED: &str = "a <switch> child after the first one whose conditions pass";
+
 /// Why an inventory could not be produced.
 #[derive(Debug)]
 pub(crate) enum InvError {
@@ -412,8 +446,10 @@ struct Ctx {
     css: bool,
     /// Document level.
     top: bool,
-    /// Inside a `<defs>` child or `<symbol>` nothing references.
-    unused_def: bool,
+    /// Why usvg does not draw this subtree, when it converts it but never
+    /// draws it (an unreferenced `defs` child, `display: none`, a failed
+    /// condition, a `switch` child it does not select).
+    not_drawn: Option<&'static str>,
 }
 
 enum Frame {
@@ -447,6 +483,9 @@ struct Walker<'a, 'i> {
     def_root: Vec<Option<usize>>,
     /// Those subtrees nothing outside them references.
     unused_defs: HashSet<usize>,
+    /// Some CSS text mentions `display`, so CSS could override a
+    /// `display="none"`: such elements are then not reported undrawn.
+    css_mentions_display: bool,
 }
 
 /// Map an SVG document at `d` into `inv` (whose input is `d`). Returns
@@ -481,6 +520,12 @@ fn walk_xml(
         }
     }
     let (def_root, unused_defs) = unreferenced_defs(d, &tree);
+    let css_mentions_display = tree.nodes.iter().any(|n| {
+        matches!(n.kind, XKind::Text | XKind::CData)
+            && d[n.range.clone()]
+                .windows(7)
+                .any(|w| w.eq_ignore_ascii_case(b"display"))
+    });
     let mut w = Walker {
         d,
         tree: &tree,
@@ -494,6 +539,7 @@ fn walk_xml(
         entities,
         def_root,
         unused_defs,
+        css_mentions_display,
     };
     w.run()?;
     Ok((ok, w.elements))
@@ -691,6 +737,64 @@ impl Walker<'_, '_> {
         out
     }
 
+    /// Why `is_condition_passed` fails for an element with these
+    /// attributes, under zensvg's default options (languages `["en"]`).
+    fn condition_reason(&self, attrs: &[XAttr]) -> Option<&'static str> {
+        let d = self.d;
+        let get = |name: &[u8]| {
+            attrs
+                .iter()
+                .find(|a| &d[a.qname.clone()] == name)
+                .map(|a| self.expand(&d[a.value.clone()]).into_owned())
+        };
+        if get(b"requiredExtensions").is_some() {
+            return Some("requiredExtensions is set; usvg supports no extensions");
+        }
+        if let Some(f) = get(b"requiredFeatures")
+            && f.split(|&b| b == b' ').any(|t| !FEATURES.contains(&t))
+        {
+            return Some("requiredFeatures names a feature usvg does not support");
+        }
+        if let Some(l) = get(b"systemLanguage") {
+            let ok = l.split(|&b| b == b',').any(|lang| {
+                let lang = lang.trim_ascii();
+                lang == b"en"
+                    || lang.split(|&b| b == b'-').next() == Some(&b"en"[..]) && lang.contains(&b'-')
+            });
+            if !ok {
+                return Some("systemLanguage does not include usvg's language (en)");
+            }
+        }
+        None
+    }
+
+    /// Why `is_visible_element` is false for an element: a failed condition,
+    /// or `display: none` from its attribute or `style` (only when no CSS in
+    /// the document mentions `display`, which could override it).
+    fn hidden_reason(&self, attrs: &[XAttr]) -> Option<&'static str> {
+        if let Some(r) = self.condition_reason(attrs) {
+            return Some(r);
+        }
+        if self.css_mentions_display {
+            return None;
+        }
+        let d = self.d;
+        let get = |name: &[u8]| {
+            attrs
+                .iter()
+                .find(|a| &d[a.qname.clone()] == name)
+                .map(|a| self.expand(&d[a.value.clone()]).into_owned())
+        };
+        let from_style = get(b"style").and_then(|st| {
+            st.split(|&b| b == b';').rev().find_map(|decl| {
+                let c = decl.iter().position(|&b| b == b':')?;
+                (decl[..c].trim_ascii() == b"display").then(|| decl[c + 1..].trim_ascii().to_vec())
+            })
+        });
+        let display = from_style.or_else(|| get(b"display").map(|v| v.trim_ascii().to_vec()));
+        (display.as_deref() == Some(b"none")).then_some("display: none")
+    }
+
     fn lookup(&self, prefix: &[u8]) -> Option<&[u8]> {
         if prefix == b"xml" {
             return Some(XML_NS);
@@ -746,7 +850,7 @@ impl Walker<'_, '_> {
             text: false,
             css: false,
             top: true,
-            unused_def: false,
+            not_drawn: None,
         };
         let mut stack: Vec<Frame> = self
             .tree
@@ -985,11 +1089,11 @@ impl Walker<'_, '_> {
                         Disposition::Structure,
                         "CSS; usvg applies it (resolve_css)".to_string(),
                     )
-                } else if ctx.text && ctx.converted && ctx.unused_def {
+                } else if let (true, true, Some(why)) = (ctx.text, ctx.converted, ctx.not_drawn) {
                     (
                         PartKind::Chunk,
                         Disposition::Dropped,
-                        "text in a <defs> child or <symbol> nothing references".to_string(),
+                        format!("text usvg does not draw: {why}"),
                     )
                 } else if ctx.text && ctx.converted {
                     (
@@ -1104,8 +1208,20 @@ impl Walker<'_, '_> {
             .children
             .iter()
             .any(|&c| matches!(tree.nodes[c].kind, XKind::Element { .. }));
-        let unused_def =
-            ctx.unused_def || self.def_root[n].is_some_and(|r| self.unused_defs.contains(&r));
+        let not_drawn = ctx
+            .not_drawn
+            .or_else(|| {
+                self.def_root[n]
+                    .is_some_and(|r| self.unused_defs.contains(&r))
+                    .then_some(UNREFERENCED)
+            })
+            .or_else(|| {
+                if converted && !ctx.top {
+                    self.hidden_reason(attrs)
+                } else {
+                    None
+                }
+            });
         let (disposition, detail) = if let Err(why) = &self.accepted {
             (
                 Disposition::Dropped,
@@ -1116,12 +1232,10 @@ impl Walker<'_, '_> {
                 Disposition::Structure,
                 "style sheet; usvg reads every <style> as CSS".to_string(),
             )
-        } else if converted && unused_def {
+        } else if let (true, Some(why)) = (converted, not_drawn) {
             (
                 Disposition::Dropped,
-                "drawn only through a reference (in <defs>, or a symbol, gradient, \
-                 pattern, clipPath, mask, filter or marker) and nothing references it"
-                    .to_string(),
+                format!("usvg converts it but never draws it: {why}"),
             )
         } else if converted {
             if has_elements {
@@ -1185,7 +1299,7 @@ impl Walker<'_, '_> {
                 "start tag".into(),
             )?
         };
-        self.attributes(attr_parent, local, converted, unused_def, attrs)?;
+        self.attributes(attr_parent, local, converted, not_drawn, attrs)?;
         if self_closing {
             for p in pops {
                 if let Some(s) = self.ns.get_mut(&p) {
@@ -1199,7 +1313,7 @@ impl Walker<'_, '_> {
             text: converted && (local == b"text" || (ctx.text && text_content)),
             css: css && self.accepted.is_ok(),
             top: false,
-            unused_def,
+            not_drawn,
         };
         stack.push(Frame::Close {
             node: n,
@@ -1223,8 +1337,25 @@ impl Walker<'_, '_> {
                 .position(|&c| !is_chars(c))
                 .unwrap_or(kids.len() - f)
         });
+        // `switch::convert` draws the first element child whose conditions
+        // pass and none of the others.
+        let selected = (converted && local == b"switch")
+            .then(|| {
+                kids.iter().copied().find(|&c| match &tree.nodes[c].kind {
+                    XKind::Element { attrs, .. } => self.condition_reason(attrs).is_none(),
+                    _ => false,
+                })
+            })
+            .map(|s| s.unwrap_or(usize::MAX));
         for (k, &c) in kids.iter().enumerate().rev() {
             let mut ctx = child_ctx;
+            if let Some(sel) = selected
+                && c != sel
+                && matches!(tree.nodes[c].kind, XKind::Element { .. })
+                && ctx.not_drawn.is_none()
+            {
+                ctx.not_drawn = Some(NOT_SELECTED);
+            }
             if ctx.css && !(first.is_some_and(|f| k >= f) && run_end.is_some_and(|e| k < e)) {
                 ctx.css = false;
             }
@@ -1240,7 +1371,7 @@ impl Walker<'_, '_> {
         parent: PartId,
         element: &[u8],
         converted: bool,
-        unused_def: bool,
+        not_drawn: Option<&'static str>,
         attrs: &[XAttr],
     ) -> Result<(), InvError> {
         let d = self.d;
@@ -1334,12 +1465,10 @@ impl Walker<'_, '_> {
             };
             let (disposition, detail) = if rejected {
                 (Disposition::Dropped, detail)
-            } else if unused_def && disposition.is_consumed() {
+            } else if let (Some(why), true) = (not_drawn, disposition.is_consumed()) {
                 (
                     Disposition::Dropped,
-                    format!(
-                        "{detail}; but the element is in a <defs> child or <symbol> nothing references"
-                    ),
+                    format!("{detail}; but usvg never draws the element: {why}"),
                 )
             } else {
                 (disposition, detail)

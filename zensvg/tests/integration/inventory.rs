@@ -421,6 +421,60 @@ fn unreferenced_defs_draw_nothing() {
 }
 
 #[test]
+fn elements_usvg_never_draws_are_dropped() {
+    let data = br##"<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8">
+<rect id="shown" width="1" height="1"/>
+<rect id="attr-none" display="none" width="8" height="8" fill="#f00"/>
+<g id="style-none" style="fill:red; display: none"><rect width="8" height="8"/></g>
+<rect id="ext" requiredExtensions="http://example.com/ext" width="8" height="8" fill="#f00"/>
+<rect id="lang" systemLanguage="de" width="8" height="8" fill="#f00"/>
+<rect id="lang-ok" systemLanguage="de, en-US" width="1" height="1"/>
+<switch><rect id="sw-skip" systemLanguage="fr" width="8" height="8" fill="#f00"/><rect id="sw-pick" width="1" height="1"/><rect id="sw-later" width="8" height="8" fill="#f00"/></switch>
+</svg>"##;
+    let inv = inventory(data);
+    let by_id = |id: &str| -> &Part {
+        inv.parts()
+            .iter()
+            .find(|p| p.label.as_deref() == Some(id) && p.kind == PartKind::Chunk)
+            .unwrap_or_else(|| panic!("{id}\n{inv}"))
+    };
+    for id in ["shown", "lang-ok", "sw-pick"] {
+        assert!(by_id(id).disposition.is_consumed(), "{id}\n{inv}");
+    }
+    for id in [
+        "attr-none",
+        "style-none",
+        "ext",
+        "lang",
+        "sw-skip",
+        "sw-later",
+    ] {
+        assert_eq!(by_id(id).disposition, Disposition::Dropped, "{id}\n{inv}");
+    }
+    // The decoder agrees: none of the red full-canvas shapes is drawn.
+    use zencodec::decode::Decode;
+    let out = SvgDecoderConfig::new()
+        .job()
+        .decoder(std::borrow::Cow::Borrowed(&data[..]), &[])
+        .unwrap()
+        .decode()
+        .unwrap();
+    let px = out.pixels().contiguous_bytes().into_owned();
+    // Pixel (7, 7) is outside every shape that is drawn.
+    let at = (7 * 8 + 7) * 4;
+    assert_eq!(&px[at..at + 4], &[0, 0, 0, 0]);
+    // CSS that mentions display could override the attribute: not dropped.
+    let css = br#"<svg xmlns="http://www.w3.org/2000/svg" width="2" height="2"><style>rect { display: inline }</style><rect id="r" display="none" width="2" height="2"/></svg>"#;
+    let inv = inventory(css);
+    let r = inv
+        .parts()
+        .iter()
+        .find(|p| p.label.as_deref() == Some("r"))
+        .unwrap();
+    assert!(r.disposition.is_consumed(), "{inv}");
+}
+
+#[test]
 fn rejected_documents_consume_nothing() {
     // Trailing junk after the root element: roxmltree rejects the document.
     let mut data = SMALL.to_vec();
