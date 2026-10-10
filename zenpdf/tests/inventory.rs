@@ -1906,3 +1906,121 @@ fn p13_p15_details_name_what_is_not_distinguished() {
         "{inv}"
     );
 }
+
+// ── Review round 2 pins ─────────────────────────────────────────────────
+
+/// A page with an image resource no content names, plus `extra` content
+/// streams appended to /Contents (the reviewer's `unused_image_pdf`).
+fn unused_image_pdf(extra: &[&[u8]]) -> Vec<u8> {
+    let mut b = PdfBuilder::new();
+    b.obj(1, CAT).obj(2, PAGES1);
+    let mut contents = String::from("4 0 R");
+    for k in 0..extra.len() {
+        contents.push_str(&format!(" {} 0 R", 20 + k));
+    }
+    b.obj(
+        3,
+        &format!(
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 10 10] /Contents [{contents}] \
+             /Resources << /XObject << /ImSecret 7 0 R >> >> >>"
+        ),
+    );
+    b.stream(4, "", RED);
+    b.stream(
+        7,
+        "/Type /XObject /Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceGray \
+         /BitsPerComponent 8 /Name (SECRET-UNUSED-IMAGE)",
+        b"\x40",
+    );
+    for (k, e) in extra.iter().enumerate() {
+        b.stream(20 + k as u32, "", e);
+    }
+    b.end_revision("/Root 1 0 R");
+    b.finish()
+}
+
+#[test]
+fn r2_1_an_abandoned_unused_resource_check_never_claims_read() {
+    // Control: the scan completes and rules the image unused.
+    let ctl = unused_image_pdf(&[]);
+    let inv = inventory(&ctl);
+    assert_eq!(
+        the_object(&inv, 7).disposition,
+        Disposition::Skipped,
+        "{inv}"
+    );
+    // One content stream the scan cannot tokenise (`(`): the check gives
+    // up, and the image is unknown rather than read (a23, a23b).
+    let data = unused_image_pdf(&[b"("]);
+    let inv = inventory(&data);
+    let img = the_object(&inv, 7);
+    assert_eq!(img.disposition, Disposition::Unknown, "{inv}");
+    assert!(
+        detail(img).contains(
+            "unused-resource check abandoned (a content stream the scan cannot tokenise)"
+        ),
+        "{img:?}"
+    );
+    let entry = leaf_at(&inv, find(&data, b"/ImSecret 7 0 R") as u64);
+    assert_eq!(entry.disposition, Disposition::Unknown, "{entry:?}");
+    assert_unconsumed(&data, &inv, b"SECRET-UNUSED-IMAGE");
+    let at = find(&data, b"\x40\nendstream");
+    assert!(!leaf_at(&inv, at as u64).disposition.is_consumed());
+    let mut changed = data.clone();
+    changed[at] = 0x80;
+    assert_eq!(render0(&changed), render0(&data), "the image is not drawn");
+}
+
+/// A form `1 0 0 rg 0 0 10 10 re f`, drawn as an annotation's `/AP /N` or
+/// with `/Fm1 Do`, with or without `/BBox`.
+fn form_pdf(annotation: bool, bbox: &str) -> Vec<u8> {
+    let mut b = PdfBuilder::new();
+    b.obj(1, CAT).obj(2, PAGES1);
+    if annotation {
+        b.obj(
+            3,
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 10 10] /Contents 4 0 R /Annots [9 0 R] >>",
+        );
+        b.stream(4, "", b"");
+        b.obj(
+            9,
+            "<< /Type /Annot /Subtype /Square /Rect [0 0 10 10] /AP << /N 10 0 R >> >>",
+        );
+    } else {
+        b.obj(
+            3,
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 10 10] /Contents 4 0 R \
+             /Resources << /XObject << /Fm1 10 0 R >> >> >>",
+        );
+        b.stream(4, "", b"/Fm1 Do");
+    }
+    b.stream(
+        10,
+        &format!("/Type /XObject /Subtype /Form {bbox}"),
+        b"1 0 0 rg 0 0 10 10 re f",
+    );
+    b.end_revision("/Root 1 0 R");
+    b.finish()
+}
+
+#[test]
+fn r2_2_a_form_without_bbox_is_not_drawn() {
+    for annotation in [true, false] {
+        let with = form_pdf(annotation, "/BBox [0 0 10 10]");
+        let inv = inventory(&with);
+        let p = leaf_at(&inv, find(&with, b"1 0 0 rg") as u64);
+        assert_eq!(p.disposition, Disposition::ImageData, "{inv}");
+        // hayro draws the form only with /BBox.
+        assert_ne!(render0(&with), render0(&form_pdf(annotation, "")));
+
+        let without = form_pdf(annotation, "");
+        let inv = inventory(&without);
+        let form = the_object(&inv, 10);
+        assert_eq!(form.disposition, Disposition::Dropped, "{inv}");
+        assert!(
+            detail(form).contains("hayro-interpret's FormXObject::new needs /BBox; not drawn"),
+            "{form:?}"
+        );
+        assert_unconsumed(&without, &inv, b"1 0 0 rg");
+    }
+}

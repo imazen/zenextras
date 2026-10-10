@@ -39,7 +39,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dictionary's reader never takes (per dictionary kind) are unconsumed;
   bytes after an object's value are a child; object-stream lookups are
   bounded, the lexer stops at the part cap, and the stop token is
-  honoured. Fuzz target `inventory`,
+  honoured. Review round 2 (0b045ee): when the
+  unused-resource scan gives up, the resources it could not rule on are
+  `Unknown` rather than read; a form XObject without `/BBox` is `Dropped`
+  (never drawn). Fuzz target `inventory`,
   regression seeds, mutool/exiftool oracle (`just inventory-oracle DIR`).
 
 ### Fixed
