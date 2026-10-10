@@ -567,12 +567,46 @@ fn truncated_and_damaged_inputs_still_validate() {
     }
 }
 
-/// The pinned part list for [`SMALL`].
+/// roxmltree recurses once per nested element, and so does the decoder's
+/// parse: 5,000 levels overflowed a 2 MiB test thread inside the inventory
+/// (review S2). The inventory bounds nesting before it parses, parses deep
+/// documents on its own large stack, and does not parse past 8,192 levels.
+/// usvg rejects nesting past 1,025 levels, so nothing is consumed.
 #[test]
-fn small_inventory_is_pinned() {
-    let inv = inventory(SMALL);
-    let got: Vec<String> = inv
-        .parts()
+fn deeply_nested_documents_do_not_overflow() {
+    for depth in [5_000usize, 20_000] {
+        let data = format!(
+            r#"<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4">{}<rect width="4" height="4"/>{}</svg>"#,
+            "<g>".repeat(depth),
+            "</g>".repeat(depth)
+        )
+        .into_bytes();
+        let inv = inventory(&data);
+        assert!(
+            inv.parts().iter().all(|p| !p.disposition.is_consumed()),
+            "{depth}"
+        );
+        let rect = named(&inv, "rect")[0];
+        let d = detail(rect);
+        assert!(
+            d.contains("nest") || d.contains("nodes limit"),
+            "{depth}: {rect:?}"
+        );
+    }
+    // Nesting carried by an entity's replacement text counts too.
+    let data = format!(
+        r#"<!DOCTYPE svg [<!ENTITY deep "{}{}">]><svg xmlns="http://www.w3.org/2000/svg" width="4" height="4">&deep;</svg>"#,
+        "<g>".repeat(3_000),
+        "</g>".repeat(3_000)
+    )
+    .into_bytes();
+    let inv = inventory(&data);
+    assert!(inv.parts().iter().all(|p| !p.disposition.is_consumed()));
+}
+
+/// One line per part: depth, kind, range, tag, disposition, label.
+fn pinned_lines(inv: &Inventory) -> Vec<String> {
+    inv.parts()
         .iter()
         .map(|p| {
             let depth =
@@ -591,9 +625,180 @@ fn small_inventory_is_pinned() {
             }
             line
         })
-        .collect();
-    assert_eq!(got, PINNED_SMALL, "\n{inv}");
+        .collect()
 }
+
+/// Compare with a pinned list; `PRINT_PINNED=1` prints the current one.
+fn assert_pinned(inv: &Inventory, pinned: &[&str]) {
+    let got = pinned_lines(inv);
+    if std::env::var_os("PRINT_PINNED").is_some() {
+        for l in &got {
+            println!("    {l:?},");
+        }
+    }
+    assert_eq!(got, pinned, "\n{inv}");
+}
+
+/// The pinned part list for [`SMALL`].
+#[test]
+fn small_inventory_is_pinned() {
+    assert_pinned(&inventory(SMALL), PINNED_SMALL);
+}
+
+/// The pinned part list for the Inkscape fixture: every unit type a plain
+/// SVG has (BOM aside), the leak carriers and the drawn content. System
+/// fonts are off, so the text is undrawn on every host.
+#[test]
+fn inkscape_inventory_is_pinned() {
+    let mut cfg = SvgDecoderConfig::new();
+    cfg.render_options_mut().load_system_fonts = false;
+    let inv = cfg.job().inventory(&inkscape_svg()).unwrap().unwrap();
+    inv.validate().unwrap();
+    assert_pinned(&inv, PINNED_INKSCAPE);
+}
+
+/// The pinned part list for the SVGZ with every optional header field.
+#[test]
+fn svgz_all_fields_inventory_is_pinned() {
+    assert_pinned(&inventory(&svgz_all_fields(0, 0)), PINNED_SVGZ_ALL_FIELDS);
+}
+
+const PINNED_INKSCAPE: &[&str] = &[
+    "header 0..54 ?xml structure",
+    "gap 54..55 - padding",
+    "chunk 55..112 #comment skipped \"Created with Inkscape (http://www.inkscape.org/)\"",
+    "gap 112..113 - padding",
+    "chunk 113..381 !DOCTYPE structure",
+    "  attribute 134..159 external id dropped \"-//W3C//DTD SVG 1.1//EN\"",
+    "  attribute 160..210 external id dropped \"http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd\"",
+    "  chunk 215..260 !ENTITY structure \"ns_svg\"",
+    "  chunk 263..318 !ENTITY dropped \"secret\"",
+    "  chunk 321..346 declaration skipped \"<!ELEMENT note (#PCDATA)>\"",
+    "  chunk 349..378 #comment skipped \" dtd comment by alice \"",
+    "gap 381..382 - padding",
+    "chunk 382..436 ?xml-stylesheet skipped \"xml-stylesheet\"",
+    "gap 436..437 - padding",
+    "chunk 437..2236 svg structure \"svg1\"",
+    "  segment 437..993 svg structure",
+    "    attribute 488..501 version skipped \"version\"",
+    "    attribute 515..549 sodipodi:docname skipped \"sodipodi:docname\"",
+    "    attribute 553..606 inkscape:export-filename skipped \"inkscape:export-filename\"",
+    "    attribute 610..640 data-owner skipped \"data-owner\"",
+    "  gap 993..996 - padding",
+    "  chunk 996..1034 title skipped \"title1\"",
+    "    segment 996..1015 title skipped",
+    "    chunk 1015..1026 #text skipped \"Q3 salaries\"",
+    "    segment 1026..1034 /title skipped",
+    "  gap 1034..1037 - padding",
+    "  chunk 1037..1064 desc skipped",
+    "    segment 1037..1043 desc skipped",
+    "    chunk 1043..1057 #text skipped \"Draft by Alice\"",
+    "    segment 1057..1064 /desc skipped",
+    "  gap 1064..1067 - padding",
+    "  chunk 1067..1234 metadata skipped \"metadata1\"",
+    "    segment 1067..1092 metadata skipped",
+    "    chunk 1092..1223 rdf:RDF skipped",
+    "      segment 1092..1101 rdf:RDF skipped",
+    "      chunk 1101..1213 cc:Work skipped",
+    "        segment 1101..1123 cc:Work skipped",
+    "          attribute 1110..1122 rdf:about skipped \"rdf:about\"",
+    "        chunk 1123..1203 dc:creator skipped",
+    "          segment 1123..1135 dc:creator skipped",
+    "          chunk 1135..1190 cc:Agent skipped",
+    "            segment 1135..1145 cc:Agent skipped",
+    "            chunk 1145..1179 dc:title skipped",
+    "              segment 1145..1155 dc:title skipped",
+    "              chunk 1155..1168 #text skipped \"Alice Example\"",
+    "              segment 1168..1179 /dc:title skipped",
+    "            segment 1179..1190 /cc:Agent skipped",
+    "          segment 1190..1203 /dc:creator skipped",
+    "        segment 1203..1213 /cc:Work skipped",
+    "      segment 1213..1223 /rdf:RDF skipped",
+    "    segment 1223..1234 /metadata skipped",
+    "  gap 1234..1237 - padding",
+    "  chunk 1237..1335 sodipodi:namedview skipped \"namedview1\"",
+    "    attribute 1273..1304 inkscape:current-layer skipped \"inkscape:current-layer\"",
+    "    attribute 1305..1333 inkscape:window-width skipped \"inkscape:window-width\"",
+    "  gap 1335..1338 - padding",
+    "  chunk 1338..1483 defs dropped \"defs1\"",
+    "    segment 1338..1355 defs dropped",
+    "    chunk 1355..1400 style structure",
+    "      segment 1355..1362 style structure",
+    "      chunk 1362..1392 #cdata structure \"<![CDATA[ .a { fill: red } ]]>\"",
+    "        segment 1362..1372 CDATA structure",
+    "        segment 1388..1392 CDATA structure",
+    "      segment 1392..1400 /style structure",
+    "    chunk 1400..1476 linearGradient dropped \"g\"",
+    "      segment 1400..1423 linearGradient dropped",
+    "      chunk 1423..1459 stop dropped",
+    "      segment 1459..1476 /linearGradient dropped",
+    "    segment 1476..1483 /defs dropped",
+    "  gap 1483..1486 - padding",
+    "  chunk 1486..2229 g structure \"layer1\"",
+    "    segment 1486..1553 g structure",
+    "      attribute 1501..1525 inkscape:label skipped \"inkscape:label\"",
+    "      attribute 1526..1552 inkscape:groupmode skipped \"inkscape:groupmode\"",
+    "    gap 1553..1558 - padding",
+    "    chunk 1558..1624 rect image-data",
+    "      attribute 1597..1622 mix-blend-mode skipped \"mix-blend-mode\"",
+    "    gap 1624..1629 - padding",
+    "    chunk 1629..1790 image image-data",
+    "      attribute 1657..1788 xlink:href image-data \"xlink:href\"",
+    "    gap 1790..1795 - padding",
+    "    chunk 1795..1866 image image-data",
+    "      attribute 1829..1864 href structure \"href\"",
+    "    gap 1866..1871 - padding",
+    "    chunk 1871..1896 use dropped",
+    "      attribute 1876..1894 href dropped \"href\"",
+    "    gap 1896..1901 - padding",
+    "    chunk 1901..1993 a structure",
+    "      segment 1901..1974 a structure",
+    "        attribute 1904..1936 href dropped \"href\"",
+    "        attribute 1937..1973 xlink:href dropped \"xlink:href\"",
+    "      chunk 1974..1989 circle image-data",
+    "      segment 1989..1993 /a structure",
+    "    gap 1993..1998 - padding",
+    "    chunk 1998..2050 text dropped",
+    "      segment 1998..2017 text dropped",
+    "      chunk 2017..2023 #text dropped \"Hello\"",
+    "      chunk 2023..2043 tspan dropped",
+    "        segment 2023..2030 tspan dropped",
+    "        chunk 2030..2035 #text dropped \"there\"",
+    "        segment 2035..2043 /tspan dropped",
+    "      segment 2043..2050 /text dropped",
+    "    gap 2050..2055 - padding",
+    "    chunk 2055..2086 script skipped",
+    "      segment 2055..2063 script skipped",
+    "      chunk 2063..2077 #text skipped \"alert(\\\"alice\\\")\"",
+    "      segment 2077..2086 /script skipped",
+    "    gap 2086..2091 - padding",
+    "    chunk 2091..2200 foreignObject skipped",
+    "      segment 2091..2127 foreignObject skipped",
+    "      chunk 2127..2184 p skipped",
+    "        segment 2127..2167 p skipped",
+    "        chunk 2167..2180 #text skipped \"html by alice\"",
+    "        segment 2180..2184 /p skipped",
+    "      segment 2184..2200 /foreignObject skipped",
+    "    gap 2200..2205 - padding",
+    "    chunk 2205..2222 unknownElement skipped",
+    "    gap 2222..2225 - padding",
+    "    segment 2225..2229 /g structure",
+    "  gap 2229..2230 - padding",
+    "  segment 2230..2236 /svg structure",
+    "gap 2236..2237 - padding",
+];
+const PINNED_SVGZ_ALL_FIELDS: &[&str] = &[
+    "header 0..52 gzip structure",
+    "  attribute 0..4 ID CM FLG structure \"ID CM FLG\"",
+    "  attribute 4..8 MTIME dropped \"MTIME\"",
+    "  attribute 8..10 XFL OS dropped \"XFL OS\"",
+    "  attribute 10..17 FEXTRA dropped \"FEXTRA\"",
+    "  attribute 17..33 FNAME dropped \"FNAME\"",
+    "  attribute 33..50 FCOMMENT dropped \"FCOMMENT\"",
+    "  attribute 50..52 FHCRC structure \"FHCRC\"",
+    "chunk 52..141 deflate image-data",
+    "chunk 141..149 gzip trailer structure",
+];
 
 const PINNED_SMALL: &[&str] = &[
     "chunk 0..114 svg structure",
