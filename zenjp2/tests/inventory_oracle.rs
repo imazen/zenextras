@@ -70,6 +70,7 @@ fn corpus_conformance() {
     };
     let mut failures = Vec::new();
     let (mut decodable, mut other) = (0, 0);
+    let mut undetected: Vec<String> = Vec::new();
     for f in &files {
         let data = std::fs::read(f).unwrap();
         let inv = inventory_of(&data);
@@ -85,6 +86,13 @@ fn corpus_conformance() {
                 .and_then(|d| d.decode())
                 .is_ok()
         };
+        for p in inv.parts() {
+            if let Some(d) = p.detail.as_deref()
+                && let Some((_, why)) = d.split_once("unreferenced tail not detected: ")
+            {
+                undetected.push(format!("{}: {why}", f.display()));
+            }
+        }
         if decodes {
             decodable += 1;
             if data.len() <= 6_000_000 {
@@ -97,8 +105,11 @@ fn corpus_conformance() {
         }
     }
     eprintln!(
-        "corpus_conformance: {} files, {decodable} decode (check_inventory run), {other} do not decode (validate only)",
-        files.len()
+        "corpus_conformance: {} files, {decodable} decode (check_inventory run), {other} do not \
+         decode (validate only); {} tile-part data parts say the tail is not detected:\n{}",
+        files.len(),
+        undetected.len(),
+        undetected.join("\n")
     );
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
@@ -109,8 +120,11 @@ fn corpus_conformance() {
 enum Unit {
     /// A box: type, payload offset, payload length (`None` = to end of file).
     Box(String, u64, Option<u64>),
-    /// A codestream marker segment: name, payload offset, payload length.
-    Marker(String, u64, u64),
+    /// A codestream marker segment: name, payload offset, payload length and
+    /// the payload bytes exiftool dumps.
+    Marker(String, u64, u64, Vec<u8>),
+    /// `JPEG SOD`: tile-part data follows.
+    Sod,
 }
 
 fn hex_offset(line: &str) -> Option<u64> {
@@ -147,6 +161,8 @@ fn parse_units(out: &str) -> Vec<Unit> {
             {
                 units.push(Unit::Box(name.to_string(), off, None));
             }
+        } else if t == "JPEG SOD" {
+            units.push(Unit::Sod);
         } else if let Some(rest) = t.strip_prefix("JPEG ")
             && let Some((name, tail)) = rest.split_once(" (")
             && let Some(n) = tail
@@ -154,7 +170,19 @@ fn parse_units(out: &str) -> Vec<Unit> {
                 .and_then(|n| n.parse::<u64>().ok())
             && let Some(off) = lines.get(i + 1).and_then(|l| hex_offset(l))
         {
-            units.push(Unit::Marker(name.to_string(), off, n));
+            let mut bytes = Vec::new();
+            for l in &lines[i + 1..] {
+                if hex_offset(l).is_none() {
+                    break;
+                }
+                let hex = l.split_once(": ").map_or("", |(_, r)| r);
+                let hex = hex.split('[').next().unwrap_or("");
+                bytes.extend(
+                    hex.split_whitespace()
+                        .filter_map(|b| u8::from_str_radix(b, 16).ok()),
+                );
+            }
+            units.push(Unit::Marker(name.to_string(), off, n, bytes));
         }
     }
     units
@@ -196,12 +224,59 @@ fn find_unit(inv: &Inventory, unit: &Unit, base: u64, len: u64) -> bool {
                     None => p.range.end == len,
                 }
         }
-        Unit::Marker(name, off, n) => {
+        Unit::Marker(name, off, n, _) => {
             marker_code(name).is_some_and(|c| p.tag == PartTag::Marker(c))
                 && p.range.start + 4 == off + base
                 && p.range.end == off + base + n
         }
+        Unit::Sod => false,
     })
+}
+
+/// exiftool scans for `FFxx` byte pairs past the points where a codestream
+/// walker stops, so it lists phantom markers inside packet data and inside
+/// the payload of a segment it already listed. Both are decided here from
+/// exiftool's own listing, not from the walker under test:
+///
+/// - a marker that starts inside the payload of the previous kept marker
+///   (by exiftool's own length), and
+/// - every marker listed after a `JPEG SOD` until an `SOT` that starts exactly
+///   where the preceding tile-part ends (the Psot from exiftool's own dump of
+///   that SOT; a Psot of 0 never ends).
+///
+/// Returns the kept units and the number discarded.
+fn drop_phantoms(units: Vec<Unit>) -> (Vec<Unit>, usize) {
+    let mut kept = Vec::new();
+    let mut discarded = 0;
+    let (mut seg_until, mut tile_end, mut in_data) = (0u64, 0u64, false);
+    for u in units {
+        match &u {
+            Unit::Marker(name, off, n, payload) => {
+                let start = off - 4;
+                let real_sot = name == "SOT" && in_data && start == tile_end;
+                if (in_data && !real_sot) || start < seg_until {
+                    discarded += 1;
+                    continue;
+                }
+                if real_sot {
+                    in_data = false;
+                }
+                if name == "SOT" && payload.len() >= 6 {
+                    let psot = u32::from_be_bytes([payload[2], payload[3], payload[4], payload[5]]);
+                    tile_end = if psot == 0 {
+                        u64::MAX
+                    } else {
+                        start + u64::from(psot)
+                    };
+                }
+                seg_until = off + n;
+                kept.push(u);
+            }
+            Unit::Sod => in_data = true,
+            Unit::Box(..) => kept.push(u),
+        }
+    }
+    (kept, discarded)
 }
 
 fn exiftool(bin: &Path, file: &Path) -> String {
@@ -228,11 +303,12 @@ fn exiftool_oracle() {
     let mut table = String::new();
     writeln!(
         table,
-        "{:<64} {:>9} {:>6} {:>8} {:>8}  differences",
-        "file", "bytes", "parts", "listed", "matched"
+        "{:<64} {:>9} {:>6} {:>8} {:>8} {:>9}  differences",
+        "file", "bytes", "parts", "listed", "matched", "discarded"
     )
     .unwrap();
-    let (mut total_listed, mut total_matched, mut files_with_units) = (0usize, 0usize, 0usize);
+    let (mut total_listed, mut total_matched, mut total_discarded, mut files_with_units) =
+        (0usize, 0usize, 0usize, 0usize);
     let mut mismatches = Vec::new();
     for f in &files {
         let data = std::fs::read(f).unwrap();
@@ -242,26 +318,12 @@ fn exiftool_oracle() {
 
         let mut listed = 0;
         let mut matched = 0;
+        let mut discarded = 0;
         let mut diffs = Vec::new();
         let mut check = |units: Vec<Unit>, base: u64, what: &str| {
+            let (units, dropped) = drop_phantoms(units);
+            discarded += dropped;
             for u in units {
-                // exiftool keeps scanning for FFxx byte pairs after SOD, so
-                // it reports phantom markers inside packet data (SOP, ADS,
-                // "marker 0x..", stray SIZ/COD) and inside the payload of a
-                // marker segment (p1_04.j2k hides SOT/QCD look-alikes in a
-                // 65 KB COM). Only markers that start a segment count.
-                if let Unit::Marker(name, off, _) = &u {
-                    let at = off + base - 4;
-                    let in_data = inv.parts().iter().any(|p| {
-                        (p.kind == PartKind::ScanData && p.range.start <= at && at < p.range.end)
-                            || (p.kind == PartKind::Segment
-                                && p.range.start < at
-                                && at < p.range.end)
-                    });
-                    if in_data || marker_code(name).is_none() {
-                        continue;
-                    }
-                }
                 listed += 1;
                 if find_unit(&inv, &u, base, data.len() as u64) {
                     matched += 1;
@@ -284,7 +346,7 @@ fn exiftool_oracle() {
             std::fs::write(&tmp, &data[body.start as usize..body.end as usize]).unwrap();
             let units: Vec<Unit> = parse_units(&exiftool(&bin, &tmp))
                 .into_iter()
-                .filter(|u| matches!(u, Unit::Marker(..)))
+                .filter(|u| matches!(u, Unit::Marker(..) | Unit::Sod))
                 .collect();
             check(units, body.start, "jp2c");
         }
@@ -293,26 +355,28 @@ fn exiftool_oracle() {
         }
         total_listed += listed;
         total_matched += matched;
+        total_discarded += discarded;
         let _ = writeln!(
             table,
-            "{:<64} {:>9} {:>6} {:>8} {:>8}  {}",
+            "{:<64} {:>9} {:>6} {:>8} {:>8} {:>9}  {}",
             name.chars().take(64).collect::<String>(),
             data.len(),
             inv.parts().len(),
             listed,
             matched,
+            discarded,
             diffs.join("; ")
         );
         if !diffs.is_empty() {
             mismatches.push(format!("{name}: {}", diffs.join("; ")));
         }
-        // The SOD of the first tile-part is the only unit exiftool leaves
-        // without a length; make sure we still have one.
-        let _ = PartKind::Segment;
     }
     let _ = std::fs::remove_dir_all(&scratch);
     let summary = format!(
-        "{} files, {files_with_units} with exiftool units, {total_listed} units listed, {total_matched} matched",
+        "{} files, {files_with_units} with exiftool units, {total_listed} units compared, \
+         {total_matched} matched, {total_discarded} phantom markers discarded (listed after a \
+         SOD before the next SOT at the previous Psot boundary, or inside a listed segment's \
+         payload; both by exiftool's own lengths)",
         files.len()
     );
     eprintln!("{table}{summary}");
@@ -326,4 +390,107 @@ fn exiftool_oracle() {
         mismatches.len(),
         mismatches.join("\n")
     );
+}
+
+/// Bytes the inventory calls unconsumed must not influence the decode: on every
+/// corpus file that decodes (and is small enough), overwrite each unreferenced
+/// or malformed tail and each skipped segment, and compare the pixels. This is
+/// the check that backs the packet walk's `Unreferenced` claims. The result
+/// table also lists files whose tile-part data has a tail, so a walk that
+/// stops early on conformant files shows up.
+#[test]
+fn corpus_unconsumed_bytes_do_not_change_pixels() {
+    let Some(files) = corpus_files() else {
+        eprintln!("INVENTORY_ORACLE_DIR not set; not run");
+        return;
+    };
+    use zencodec::decode::Decode;
+    let decode = |d: &[u8]| -> Option<Vec<u8>> {
+        let out = Jp2DecoderConfig::new()
+            .job()
+            .decoder(std::borrow::Cow::Borrowed(d), &[])
+            .and_then(|x| x.decode())
+            .ok()?;
+        let px = out.pixels();
+        let mut v: Vec<u8> = (0..px.rows()).flat_map(|y| px.row(y).to_vec()).collect();
+        v.extend_from_slice(
+            out.info()
+                .source_color
+                .icc_profile
+                .as_deref()
+                .unwrap_or(&[]),
+        );
+        Some(v)
+    };
+    let (mut checked_files, mut checked_parts, mut tails) = (0, 0, Vec::new());
+    let mut failures = Vec::new();
+    for f in &files {
+        let data = std::fs::read(f).unwrap();
+        if data.len() > 400_000 {
+            continue;
+        }
+        let Some(base) = decode(&data) else { continue };
+        let inv = inventory_of(&data);
+        let mut has_child = vec![false; inv.parts().len()];
+        for p in inv.parts() {
+            if let Some(par) = p.parent {
+                has_child[par.index()] = true;
+            }
+        }
+        let name = f.file_name().unwrap().to_string_lossy().into_owned();
+        let mut n = 0;
+        for (i, p) in inv.parts().iter().enumerate() {
+            if has_child[i] || p.disposition.is_consumed() {
+                continue;
+            }
+            let tail = matches!(
+                p.disposition,
+                Disposition::Unreferenced | Disposition::Malformed
+            ) && p.tag == PartTag::None;
+            if tail {
+                tails.push(format!(
+                    "{name}: {} {}..{} {}",
+                    p.disposition,
+                    p.range.start,
+                    p.range.end,
+                    p.detail.as_deref().unwrap_or("")
+                ));
+            }
+            // Skipped markers and boxes carry payloads worth checking too, but
+            // the tails are the point: a few per file keep the run short.
+            if !tail && n >= 3 {
+                continue;
+            }
+            n += 1;
+            let skip = match p.kind {
+                PartKind::Box => 8,
+                PartKind::Segment => 4,
+                _ => 0,
+            };
+            let from = (p.range.start + skip).min(p.range.end);
+            if from >= p.range.end {
+                continue;
+            }
+            let mut m = data.clone();
+            for b in &mut m[from as usize..p.range.end as usize] {
+                *b = !*b;
+            }
+            checked_parts += 1;
+            if decode(&m).as_ref() != Some(&base) {
+                failures.push(format!(
+                    "{name}: flipping {} {:?} {}..{} changed the decode",
+                    p.disposition, p.tag, p.range.start, p.range.end
+                ));
+            }
+        }
+        checked_files += 1;
+    }
+    eprintln!(
+        "corpus_unconsumed: {checked_files} files, {checked_parts} unconsumed parts overwritten, \
+         {} tails reported:\n{}",
+        tails.len(),
+        tails.join("\n")
+    );
+    assert!(checked_files > 0);
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
