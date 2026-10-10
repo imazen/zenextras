@@ -330,7 +330,8 @@ member entries here reference those files.
   hidden by optional content, pages the job does not decode, and stream
   bytes after each filter's end. See
   [zenpdf/CHANGELOG.md](zenpdf/CHANGELOG.md) (936735e, 081abf8, d811808,
-  ad5dfe9, 16a6a89, b6bddba, a56dd11, eed7d2b, 9c2b7c7, 07dd716).
+  ad5dfe9, 16a6a89, b6bddba, a56dd11, eed7d2b, 9c2b7c7, 07dd716,
+  0b045ee).
 
 #### Fixed (2026-08-27, zenextras#2, #13, #14)
 
