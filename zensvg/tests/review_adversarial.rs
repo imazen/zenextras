@@ -1300,3 +1300,90 @@ fn a33_reference_from_skipped_content_keeps_def_consumed() {
         Verdict::Ok
     );
 }
+
+// ── Round 2 (review-r2-svg.md: R2-S1, R2-S2, R2-S3) ─────────────────────
+
+/// MISSING 10: a pattern that paints with itself (usvg rewrites the
+/// recursive paint to none).
+#[test]
+fn r2_m10_self_recursive_pattern() {
+    let d = svg(
+        r##"<pattern id="p" width="4" height="4" patternUnits="userSpaceOnUse"><rect width="4" height="4" fill="url(#p)"/></pattern><rect width="20" height="20" fill="url(#p)"/>"##,
+    );
+    println!("render: {}", painted(&render(&d)));
+    assert_eq!(
+        probe(
+            "self-recursive pattern: outer rect size",
+            &d,
+            br#"<rect width="20" height="20""#,
+            br#"<rect width="19" height="19""#
+        ),
+        Verdict::Ok
+    );
+}
+
+/// MISSING 10: context-fill outside a marker or use.
+#[test]
+fn r2_m10_context_fill_outside_marker() {
+    let d = svg(r##"<rect width="20" height="20" fill="context-fill"/>"##);
+    println!("render: {}", painted(&render(&d)));
+    assert_eq!(
+        probe(
+            "context-fill outside marker: rect size",
+            &d,
+            br#"<rect width="20" height="20""#,
+            br#"<rect width="19" height="19""#
+        ),
+        Verdict::Ok
+    );
+}
+
+/// S8/S9 re-check: a property usvg does not know, inside an applied rule
+/// set and inside a `style` attribute.
+#[test]
+fn r2_s8_unknown_property_in_applied_rule() {
+    let d = svg(
+        r##"<style>.a{x-author:SECRETALICE;fill:#00f}</style><rect class="a" width="20" height="20"/>"##,
+    );
+    let inv = inventory(&d);
+    let p = leaf_at(&inv, find(&d, b"SECRETALICE") as u64);
+    println!(
+        "rule-set unknown property: {} {} {:?}",
+        p.kind.name(),
+        p.disposition,
+        p.detail
+    );
+    assert_eq!(
+        probe(
+            "unknown property in applied rule",
+            &d,
+            b"SECRETALICE",
+            b"XXXXXXXXXXX"
+        ),
+        Verdict::Ok
+    );
+}
+
+#[test]
+fn r2_s9_unknown_property_in_style_attribute() {
+    let d = svg(
+        r##"<rect style="fill:#00f;-inkscape-font-specification:SECRETALICE" width="20" height="20"/>"##,
+    );
+    let inv = inventory(&d);
+    let p = leaf_at(&inv, find(&d, b"SECRETALICE") as u64);
+    println!(
+        "style-attribute unknown property: {} {} {:?}",
+        p.kind.name(),
+        p.disposition,
+        p.detail
+    );
+    assert_eq!(
+        probe(
+            "unknown property in style attribute",
+            &d,
+            b"SECRETALICE",
+            b"XXXXXXXXXXX"
+        ),
+        Verdict::Ok
+    );
+}

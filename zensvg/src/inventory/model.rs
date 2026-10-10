@@ -243,8 +243,10 @@ fn is_graphic(tag: &str) -> bool {
 pub(crate) enum Src {
     /// The XML attribute starting at this offset.
     Xml(usize),
-    /// A CSS declaration (`<style>` rule or `style` attribute).
-    Css,
+    /// A CSS declaration: from a `<style>` rule (`None`) or from a `style`
+    /// attribute (`Some`: the declaration's start offset in the file, or
+    /// `usize::MAX` when the value is not the file's bytes).
+    Css(Option<usize>),
     /// `inherit`, or a default `inherit` falls back to.
     Inherit,
 }
@@ -302,6 +304,15 @@ pub(crate) struct Model {
     /// XML attributes (by start offset) whose value usvg replaces with a
     /// CSS or `style` declaration.
     pub overridden: HashSet<usize>,
+    /// Declarations usvg drops, as file ranges (start → end): in `style`
+    /// attributes, unknown names, non-presentation names and ones a later
+    /// declaration overrides; in `<style>` rule sets, unknown and
+    /// non-presentation names. Read only after [`build`] removed the ones
+    /// another parse of the element keeps.
+    pub dropped_decls: HashMap<usize, usize>,
+    /// `style` attributes (by start offset) whose value is not the file's
+    /// bytes, so dropped declarations cannot be split out.
+    pub unmapped_style: HashSet<usize>,
     /// Per `<style>` text (by the roxmltree text node index): the byte
     /// ranges (file offsets) of rule sets that match at least one element
     /// usvg parses; `None` when the text is not a slice of the file
@@ -353,6 +364,8 @@ struct Builder<'a, 'i> {
     out: Model,
     /// Resources being converted (cycle guard).
     active: HashSet<usize>,
+    /// `style` declarations (file start) some parse of their element keeps.
+    used_decls: HashSet<usize>,
     steps: usize,
 }
 
@@ -372,6 +385,7 @@ pub(crate) fn build(doc: &rx::Document, env: &Env) -> Option<Model> {
             ..Model::default()
         },
         active: HashSet::new(),
+        used_decls: HashSet::new(),
         steps: 0,
     };
     b.prepare();
@@ -414,6 +428,28 @@ impl<'a, 'i: 'a> Builder<'a, 'i> {
             self.out
                 .css_used
                 .insert(tn, offset_in(input, text).map(|_| Vec::new()));
+        }
+        // Declarations usvg never applies inside rule sets (review R2-S2):
+        // names that are not `marker`, a valid `font` shorthand or a
+        // presentation attribute. Rule sets matching no element are
+        // already unconsumed as a whole; the walker keeps only the ones
+        // inside applied rule sets.
+        for rule in &self.sheet.rules {
+            for d in &rule.declarations {
+                if applies(d.name, d.value) {
+                    continue;
+                }
+                // The style text holding it, when that text is a slice of
+                // the file.
+                let found = texts.iter().find_map(|&(_, t)| {
+                    let at = offset_in(t, d.name)?;
+                    Some((t, at, offset_in(input, t)?))
+                });
+                if let Some((t, at, f)) = found {
+                    let end = declaration_end(t, d.value);
+                    self.out.dropped_decls.insert(f + at, f + end);
+                }
+            }
         }
         // Every rule's style text and rule-set range, found by the address
         // of its first declaration (simplecss returns slices of the text).
@@ -566,22 +602,61 @@ impl<'a, 'i: 'a> Builder<'a, 'i> {
             }
         }
         // CSS rules, then the `style` attribute.
-        let mut decls: Vec<(&'a str, &'a str, bool)> = Vec::new();
+        let mut decls: Vec<(&'a str, &'a str, bool, Src)> = Vec::new();
         for (ri, rule) in self.sheet.rules.iter().enumerate() {
             if rule.selector.matches(&XmlNode(node)) {
                 self.rule_used[ri] = true;
                 for d in &rule.declarations {
-                    decls.push((d.name, d.value, d.important));
+                    decls.push((d.name, d.value, d.important, Src::Css(None)));
                 }
             }
         }
+        // `style` declarations: where each sits in the file, so the ones
+        // usvg drops (unknown names, not presentation attributes, or
+        // overridden later) can be split out (review R2-S1).
+        let mut style_decls: Vec<std::ops::Range<usize>> = Vec::new();
         if let Some(value) = node.attribute("style") {
+            let input = self.doc.input_text();
+            // The value's characters are the file's when roxmltree did not
+            // replace references or CR (newline normalisation keeps the
+            // length).
+            let base = node
+                .attributes()
+                .find(|a| std::ptr::eq(a.value().as_ptr(), value.as_ptr()))
+                .map(|a| a.range_value())
+                .filter(|r| {
+                    let raw = &input.as_bytes()[r.clone()];
+                    raw.len() == value.len() && !raw.contains(&b'&') && !raw.contains(&b'\r')
+                })
+                .map(|r| r.start);
+            if base.is_none() {
+                self.out.unmapped_style.insert(
+                    node.attributes()
+                        .find(|a| std::ptr::eq(a.value().as_ptr(), value.as_ptr()))
+                        .map_or(usize::MAX, |a| a.range().start),
+                );
+            }
             for d in simplecss::DeclarationTokenizer::from(value) {
-                decls.push((d.name, d.value, d.important));
+                let src = match (base, offset_in(value, d.name)) {
+                    (Some(b), Some(at)) => {
+                        let end = declaration_end(value, d.value);
+                        style_decls.push(b + at..b + end);
+                        Src::Css(Some(b + at))
+                    }
+                    _ => Src::Css(Some(usize::MAX)),
+                };
+                decls.push((d.name, d.value, d.important, src));
             }
         }
-        for (name, value, important) in decls {
-            self.write_declaration(&mut attrs, parent_id, tag, name, value, important);
+        for (name, value, important, src) in decls {
+            self.write_declaration(&mut attrs, parent_id, tag, name, value, important, src);
+        }
+        for r in style_decls {
+            if attrs.iter().any(|a| a.src == Src::Css(Some(r.start))) {
+                self.used_decls.insert(r.start);
+            } else {
+                self.out.dropped_decls.entry(r.start).or_insert(r.end);
+            }
         }
         let id = self.nodes.len();
         self.nodes.push(SNode {
@@ -594,6 +669,7 @@ impl<'a, 'i: 'a> Builder<'a, 'i> {
         Some(id)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn write_declaration(
         &mut self,
         attrs: &mut Vec<RAttr>,
@@ -602,10 +678,11 @@ impl<'a, 'i: 'a> Builder<'a, 'i> {
         name: &str,
         value: &str,
         important: bool,
+        src: Src,
     ) {
         if name == "marker" {
             for a in ["marker-start", "marker-mid", "marker-end"] {
-                self.insert_attribute(attrs, parent_id, tag, a, value, important);
+                self.insert_attribute(attrs, parent_id, tag, a, value, important, src);
             }
         } else if name == "font" {
             if let Ok(s) = svgtypes::FontShorthand::from_str(value) {
@@ -623,7 +700,7 @@ impl<'a, 'i: 'a> Builder<'a, 'i> {
                     ("font-variant-east-asian", "normal"),
                     ("font-variant-position", "normal"),
                 ] {
-                    self.insert_attribute(attrs, parent_id, tag, a, v, important);
+                    self.insert_attribute(attrs, parent_id, tag, a, v, important, src);
                 }
                 for (a, v) in [
                     ("font-stretch", s.font_stretch),
@@ -634,18 +711,19 @@ impl<'a, 'i: 'a> Builder<'a, 'i> {
                     ("font-family", Some(s.font_family)),
                 ] {
                     if let Some(v) = v {
-                        self.insert_attribute(attrs, parent_id, tag, a, v, important);
+                        self.insert_attribute(attrs, parent_id, tag, a, v, important, src);
                     }
                 }
             }
         } else if let Some(a) = aid(name)
             && is_presentation(a)
         {
-            self.insert_attribute(attrs, parent_id, tag, a, value, important);
+            self.insert_attribute(attrs, parent_id, tag, a, value, important, src);
         }
     }
 
     /// `insert_attribute` in `parse_svg_element`.
+    #[allow(clippy::too_many_arguments)]
     fn insert_attribute(
         &mut self,
         attrs: &mut Vec<RAttr>,
@@ -654,6 +732,7 @@ impl<'a, 'i: 'a> Builder<'a, 'i> {
         name: &'static str,
         value: &str,
         important: bool,
+        src: Src,
     ) {
         let Some(name) = aid(name) else { return };
         let idx = attrs.iter().position(|a| a.name == name);
@@ -664,7 +743,7 @@ impl<'a, 'i: 'a> Builder<'a, 'i> {
             name,
             Arc::from(value),
             important,
-            Src::Css,
+            src,
         );
         if added && let Some(idx) = idx {
             let last = attrs.len() - 1;
@@ -697,7 +776,7 @@ impl<'a, 'i: 'a> Builder<'a, 'i> {
             return false;
         }
         if ALLOWS_INHERIT.contains(&name) && &*value == "inherit" {
-            return self.resolve_inherit(attrs, parent_id, name);
+            return self.resolve_inherit(attrs, parent_id, name, src);
         }
         attrs.push(RAttr {
             name,
@@ -714,7 +793,14 @@ impl<'a, 'i: 'a> Builder<'a, 'i> {
         attrs: &mut Vec<RAttr>,
         parent_id: usize,
         name: &'static str,
+        src: Src,
     ) -> bool {
+        // An `inherit` written in a `style` declaration is that
+        // declaration's value.
+        let src = match src {
+            Src::Css(Some(_)) => src,
+            _ => Src::Inherit,
+        };
         let found = if is_inheritable(name) {
             self.ancestors(parent_id)
                 .find_map(|n| self.own_attr(n, name).cloned())
@@ -722,7 +808,7 @@ impl<'a, 'i: 'a> Builder<'a, 'i> {
             self.own_attr(parent_id, name).cloned()
         };
         if let Some(mut a) = found {
-            a.src = Src::Inherit;
+            a.src = src;
             attrs.push(a);
             return true;
         }
@@ -755,7 +841,7 @@ impl<'a, 'i: 'a> Builder<'a, 'i> {
             name,
             value: Arc::from(v),
             important: false,
-            src: Src::Inherit,
+            src,
         });
         true
     }
@@ -1764,6 +1850,9 @@ impl<'a, 'i: 'a> Builder<'a, 'i> {
     }
 
     fn finish(&mut self) {
+        for u in &self.used_decls {
+            self.out.dropped_decls.remove(u);
+        }
         // CSS rule sets that match no element usvg parses.
         for (ri, used) in self.rule_used.iter().enumerate() {
             if let Some((tn, Some(range))) = self.rule_origin.get(ri).cloned()
@@ -1778,6 +1867,34 @@ impl<'a, 'i: 'a> Builder<'a, 'i> {
             v.sort_by_key(|r| r.start);
         }
     }
+}
+
+/// Whether usvg applies a declaration at all (`write_declaration`):
+/// `marker`, a `font` shorthand it parses, or a presentation attribute.
+fn applies(name: &str, value: &str) -> bool {
+    match name {
+        "marker" => true,
+        "font" => svgtypes::FontShorthand::from_str(value).is_ok(),
+        _ => aid(name).is_some_and(is_presentation),
+    }
+}
+
+/// Where a declaration whose value is `value` ends inside `text`: after an
+/// optional `!important`, before the `;` or `}` that closes it.
+fn declaration_end(text: &str, value: &str) -> usize {
+    let Some(v) = offset_in(text, value) else {
+        return text.len();
+    };
+    let b = text.as_bytes();
+    let mut e = v + value.len();
+    while e < b.len() && !matches!(b[e], b';' | b'}') {
+        e += 1;
+    }
+    // Trim trailing white space before the terminator.
+    while e > v + value.len() && b[e - 1].is_ascii_whitespace() {
+        e -= 1;
+    }
+    e
 }
 
 /// Whether a paint fallback paints.

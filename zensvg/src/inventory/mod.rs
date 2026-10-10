@@ -1799,8 +1799,9 @@ impl<'a, 'i, 'r> Walker<'a, 'i, 'r> {
                     &range,
                     Disposition::Structure,
                     Some(excerpt),
-                    "CSS; usvg applies the rule sets that match its elements (declarations a \
-                     later one overrides are not distinguished)"
+                    "CSS; usvg applies the rule sets that match its elements. Declarations \
+                     with names it does not apply are split out; declarations a later one \
+                     overrides are not distinguished"
                         .into(),
                 )?;
                 let mut at = range.start;
@@ -1852,6 +1853,31 @@ impl<'a, 'i, 'r> Walker<'a, 'i, 'r> {
                                 .into(),
                         )?;
                     }
+                }
+                // Inside applied rule sets, declarations usvg never applies
+                // (review R2-S2).
+                let mut dropped: Vec<Range<usize>> = self
+                    .model
+                    .map(|m| {
+                        m.dropped_decls
+                            .iter()
+                            .map(|(&st, &en)| st..en)
+                            .filter(|r| sets.iter().any(|s| s.start <= r.start && r.end <= s.end))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                dropped.sort_by_key(|r| r.start);
+                for r in dropped {
+                    self.push(
+                        Some(id),
+                        PartKind::Segment,
+                        PartTag::Name(Cow::Borrowed("css declaration")),
+                        &r,
+                        Disposition::Dropped,
+                        Some(text(&d[r.clone()], 64)),
+                        "a declaration usvg never applies: not a presentation attribute it knows"
+                            .into(),
+                    )?;
                 }
             }
             _ => {
@@ -2253,6 +2279,49 @@ impl<'a, 'i, 'r> Walker<'a, 'i, 'r> {
                                 "a CSS or style declaration replaces this value, so usvg never \
                                  uses it: {excerpt}"
                             ),
+                        )
+                    } else if local == b"style" && consumed && uri.is_none() {
+                        // Declarations usvg drops are split out (review
+                        // R2-S1); the rest of the value is read.
+                        let m = self.model;
+                        let dropped: Vec<Range<usize>> = m
+                            .map(|m| {
+                                let mut v: Vec<Range<usize>> = m
+                                    .dropped_decls
+                                    .iter()
+                                    .filter(|(st, en)| **st >= a.value.start && **en <= a.value.end)
+                                    .map(|(&st, &en)| st..en)
+                                    .collect();
+                                v.sort_by_key(|r| r.start);
+                                v
+                            })
+                            .unwrap_or_default();
+                        let unmapped = m.is_some_and(|m| m.unmapped_style.contains(&a.range.start));
+                        if dropped.is_empty() && !unmapped {
+                            continue;
+                        }
+                        for r in dropped {
+                            let text_of = text(&d[r.clone()], 64);
+                            children.push((
+                                r.start - a.value.start..r.end - a.value.start,
+                                Disposition::Dropped,
+                                text_of,
+                                "a declaration usvg drops: not a presentation attribute it knows, \
+                                 or overridden by a later or !important one"
+                                    .to_string(),
+                            ));
+                        }
+                        (
+                            Disposition::Structure,
+                            if unmapped {
+                                format!(
+                                    "style; usvg applies its presentation declarations. The value \
+                                     is not the file's bytes (references or CR), so declarations \
+                                     usvg drops are not split out: {excerpt}"
+                                )
+                            } else {
+                                "style; usvg applies the declarations not split out below".into()
+                            },
                         )
                     } else {
                         // Read by usvg on converted elements; covered by the
