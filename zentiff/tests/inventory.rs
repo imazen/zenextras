@@ -2104,3 +2104,207 @@ fn read_parts_influence_decode() {
         failures.join("\n")
     );
 }
+
+// ── Review round 3 ─────────────────────────────────────────────────────
+
+/// The leaf parts (no child overlapping `r`) that overlap `r`.
+fn leaves_over(inv: &Inventory, r: std::ops::Range<u64>) -> Vec<&Part> {
+    let parts = inv.parts();
+    let hit = |p: &Part| p.range.start < r.end && p.range.end > r.start;
+    let mut inner = vec![false; parts.len()];
+    for p in parts.iter().filter(|p| hit(p)) {
+        if let Some(id) = p.parent {
+            inner[id.index()] = true;
+        }
+    }
+    parts
+        .iter()
+        .enumerate()
+        .filter(|&(i, p)| hit(p) && !inner[i])
+        .map(|(_, p)| p)
+        .collect()
+}
+
+/// A 1x5 gray8 PackBits image, one row per strip. With `exhaust`, strips
+/// 0-3 overlap one 1,000,000-byte region and spend the count-only scan
+/// budget (2 x len + 1 MiB) down to 10 bytes before strip 4, whose tail
+/// after a 2-byte PackBits run is never read (review round 3, probe Y).
+fn packbits_budget_file(exhaust: bool) -> (Vec<u8>, std::ops::Range<u64>) {
+    let a_len = 1_000_000usize;
+    let mut b = b"II\x2a\x00\0\0\0\0".to_vec();
+    let a_at = b.len() as u32;
+    let mut a = vec![0u8; a_len];
+    a[..2].copy_from_slice(&[0x00, 0x41]);
+    b.extend_from_slice(&a);
+    let b_at = b.len() as u32;
+    let tail = b"PII-AFTER-PACKBITS-BUDGET-SPENT!";
+    b.extend_from_slice(&[0x00, 0x42]);
+    b.extend_from_slice(tail);
+    let b_len = 2 + tail.len() as u32;
+    let n = if exhaust { 5u32 } else { 1 };
+    if b.len() % 2 == 1 {
+        b.push(0);
+    }
+    let offs_at = b.len() as u32;
+    b.extend_from_slice(&vec![0u8; 4 * n as usize]);
+    let cnts_at = b.len() as u32;
+    b.extend_from_slice(&vec![0u8; 4 * n as usize]);
+    let ifd0 = b.len() as u32;
+    let entries: [(u16, u16, u32, u32); 9] = [
+        (256, 3, 1, 1),
+        (257, 3, 1, n),
+        (258, 3, 1, 8),
+        (259, 3, 1, 32773),
+        (262, 3, 1, 1),
+        (273, 4, n, if n == 1 { b_at } else { offs_at }),
+        (277, 3, 1, 1),
+        (278, 3, 1, 1),
+        (279, 4, n, if n == 1 { b_len } else { cnts_at }),
+    ];
+    b.extend_from_slice(&(entries.len() as u16).to_le_bytes());
+    for (tag, typ, count, v) in entries {
+        b.extend_from_slice(&tag.to_le_bytes());
+        b.extend_from_slice(&typ.to_le_bytes());
+        b.extend_from_slice(&count.to_le_bytes());
+        b.extend_from_slice(&v.to_le_bytes());
+    }
+    b.extend_from_slice(&0u32.to_le_bytes());
+    b[4..8].copy_from_slice(&ifd0.to_le_bytes());
+    if exhaust {
+        let budget = 2 * b.len() as u64 + (1 << 20);
+        let left = budget - 3 * a_len as u64;
+        let counts = [
+            a_len as u32,
+            a_len as u32,
+            a_len as u32,
+            (left - 10) as u32,
+            b_len,
+        ];
+        let offs = [a_at, a_at, a_at, a_at, b_at];
+        for k in 0..5 {
+            let o = offs_at as usize + 4 * k;
+            b[o..o + 4].copy_from_slice(&offs[k].to_le_bytes());
+            let c = cnts_at as usize + 4 * k;
+            b[c..c + 4].copy_from_slice(&counts[k].to_le_bytes());
+        }
+    }
+    let t = u64::from(b_at) + 2..u64::from(b_at) + u64::from(b_len);
+    (b, t)
+}
+
+/// When the count-only scan budget is spent, a chunk whose end was not
+/// worked out is `Unknown` ("may read"), never `ImageData`.
+#[test]
+fn scan_budget_spent_leaves_chunks_unknown() {
+    for exhaust in [false, true] {
+        let (data, tail) = packbits_budget_file(exhaust);
+        let inv = inventory(&data);
+        inv.validate().unwrap();
+        let base = decode_summary(&data).unwrap();
+        assert_eq!(
+            decode_summary(&xor(&data, tail.clone(), 0x5A)).unwrap(),
+            base
+        );
+        for p in leaves_over(&inv, tail.clone()) {
+            assert!(!p.disposition.is_consumed(), "exhaust={exhaust}: {inv}");
+            if exhaust {
+                assert_eq!(p.disposition, Disposition::Unknown, "{inv}");
+                assert!(
+                    p.detail
+                        .as_deref()
+                        .unwrap()
+                        .contains("scan budget is spent"),
+                    "{inv}"
+                );
+            } else {
+                assert_eq!(p.disposition, Disposition::Dropped, "{inv}");
+            }
+        }
+    }
+}
+
+/// Overlapping bytes take the strongest fate: a dropped duplicate inside
+/// an XMP value does not take the XMP bytes the caller receives (review
+/// round 3, probe Z).
+#[test]
+fn overlapping_bytes_take_the_strongest_fate() {
+    let mut w = W::new();
+    let strip = w.put(&[1, 2, 3, 4]);
+    let x = w.put(b"<x:xmpmeta>PII-IN-BOTH-VALUES</x:xmpmeta>");
+    let other = w.put(b"LAST-DESCRIPTION");
+    let mut e = page(strip);
+    e.insert(4, at(270, 2, 18, x + 11));
+    e.insert(5, at(270, 2, 16, other));
+    e.push(at(700, 7, 41, x));
+    let ifd0 = w.ifd(&e, 0);
+    w.set_ifd0(ifd0);
+    let data = w.b;
+    let inv = inventory(&data);
+    inv.validate().unwrap();
+    let xmp = decode_summary(&data).unwrap().2[1].clone().unwrap();
+    assert!(contains(&xmp, b"PII-IN-BOTH-VALUES"));
+    let r = u64::from(x)..u64::from(x) + 41;
+    for p in leaves_over(&inv, r) {
+        assert_eq!(
+            p.disposition,
+            Disposition::Metadata(MetadataKind::Xmp),
+            "{inv}"
+        );
+    }
+}
+
+/// A value overlapping more than 64 placed parts lists 64 pieces; the
+/// rest of it is `Unknown` ("may read"), never an `unreferenced` gap
+/// (review round 3, probe W and an equal-rank variant).
+#[test]
+fn values_past_the_overlap_cap_stay_unknown() {
+    for wide_tag in [700u16, 60001] {
+        let small = 200u32;
+        let mut w = W::new();
+        let strip = w.put(&[1, 2, 3, 4]);
+        let region = w.pos();
+        let mut xmp = Vec::new();
+        for k in 0..small {
+            xmp.extend_from_slice(if k == 0 { b"<x:xm" } else { b"aaaaa" });
+            xmp.extend_from_slice(b"PII");
+        }
+        w.put(&xmp);
+        let mut e = page(strip);
+        for k in 0..small {
+            e.push(at(60000, 7, 5, region + 8 * k));
+        }
+        e.push(at(wide_tag, 7, small * 8, region));
+        e.sort_by_key(|e| e.tag);
+        let ifd0 = w.ifd(&e, 0);
+        w.set_ifd0(ifd0);
+        let data = w.b;
+        let inv = inventory(&data);
+        inv.validate().unwrap();
+        let r = u64::from(region)..u64::from(region) + u64::from(small) * 8;
+        let leaves = leaves_over(&inv, r);
+        assert!(
+            leaves
+                .iter()
+                .all(|p| p.disposition != Disposition::Unreferenced),
+            "tag {wide_tag}: {inv}"
+        );
+        if wide_tag == 700 {
+            let out = decode_summary(&data).unwrap().2[1].clone().unwrap();
+            assert_eq!(out, xmp);
+            assert!(
+                leaves
+                    .iter()
+                    .all(|p| p.disposition == Disposition::Metadata(MetadataKind::Xmp)),
+                "{inv}"
+            );
+        } else {
+            assert!(
+                leaves.iter().any(|p| p
+                    .detail
+                    .as_deref()
+                    .is_some_and(|d| d.contains("not listed past 64 overlaps"))),
+                "{inv}"
+            );
+        }
+    }
+}
