@@ -324,6 +324,7 @@ impl TiffPolicy {
             Kind::Sub => Fate::because(Disposition::Skipped, "SubIFDs are not read"),
             Kind::Gps => Fate::because(Disposition::Skipped, "GPS IFD is not read"),
             Kind::Interop => Fate::because(Disposition::Skipped, "Interop IFD is not read"),
+            Kind::MakerNote => Fate::because(Disposition::Skipped, "maker notes are not walked"),
         }
     }
 
@@ -386,7 +387,9 @@ impl TiffPolicy {
                     _ => fate,
                 }
             }
-            Kind::Sub | Kind::Gps | Kind::Interop => self.skipped(ifd.kind, e.tag, "not read"),
+            Kind::Sub | Kind::Gps | Kind::Interop | Kind::MakerNote => {
+                self.skipped(ifd.kind, e.tag, "not read")
+            }
         }
     }
 }
