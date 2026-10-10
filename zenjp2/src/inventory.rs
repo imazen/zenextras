@@ -6,13 +6,22 @@
 //! (`crate::codec`, which calls hayro-jpeg2000 0.3.5 and forwards only the
 //! dimensions, the alpha flag and an ICC profile) does with those bytes.
 //!
-//! Where hayro-jpeg2000 decides a disposition, the comments cite its source
-//! (`src/jp2/mod.rs`, `src/jp2/colr.rs`, `src/j2c/codestream.rs`,
-//! `src/j2c/tile.rs`, version 0.3.5).
+//! The walk mirrors hayro's cursor, not the length fields in the file: where
+//! hayro parses fixed fields and ignores a marker segment's `L`, the part ends
+//! where hayro's parse ends and whatever follows is walked as the next marker
+//! or reported as malformed. Where hayro-jpeg2000 decides a disposition, the
+//! comments cite its source (`src/jp2/mod.rs`, `src/jp2/colr.rs`,
+//! `src/lib.rs`, `src/j2c/codestream.rs`, `src/j2c/tile.rs`,
+//! `src/j2c/segment.rs`, version 0.3.5).
+
+mod codestream;
+mod packets;
 
 use alloc::borrow::Cow;
+use alloc::collections::BTreeSet;
 use alloc::format;
 use alloc::string::String;
+use alloc::vec::Vec;
 use core::ops::Range;
 
 use zencodec::ImageFormat;
@@ -28,34 +37,7 @@ const J2K_MAGIC: [u8; 4] = [0xFF, 0x4F, 0xFF, 0x51];
 /// Longest label copied out of the file.
 const MAX_LABEL: usize = 64;
 
-// Codestream marker codes (second byte, first byte is always 0xFF).
-const SOC: u8 = 0x4F;
-const SIZ: u8 = 0x51;
-const COD: u8 = 0x52;
-const COC: u8 = 0x53;
-const QCD: u8 = 0x5C;
-const QCC: u8 = 0x5D;
-const RGN: u8 = 0x5E;
-const POC: u8 = 0x5F;
-const TLM: u8 = 0x55;
-const PLM: u8 = 0x57;
-const PLT: u8 = 0x58;
-const PPM: u8 = 0x60;
-const PPT: u8 = 0x61;
-const CRG: u8 = 0x63;
-const COM: u8 = 0x64;
-const SOT: u8 = 0x90;
-const SOD: u8 = 0x93;
-const EOC: u8 = 0xD9;
-
 type Res<T = ()> = Result<T, InventoryError>;
-
-/// Where a marker segment sits, which decides how hayro-jpeg2000 treats it.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Header {
-    Main,
-    TilePart,
-}
 
 /// A parsed box header.
 struct BoxHdr {
@@ -171,6 +153,139 @@ fn contains(hay: &[u8], needle: &[u8]) -> bool {
     hay.windows(needle.len()).any(|w| w == needle)
 }
 
+fn append_detail(part: &mut Part, more: &str) {
+    part.detail = Some(match part.detail.take() {
+        Some(d) => format!("{d}; {more}"),
+        None => more.into(),
+    });
+}
+
+// ───────────────────── jp2h child parsers (hayro `jp2/*.rs`) ─────────────────────
+
+/// What a `colr` box says, as hayro reads it (`jp2/colr.rs`).
+enum ColrKind {
+    /// METH = 1, EnumCS value, bytes hayro reads from the payload.
+    Enumerated(u32, usize),
+    /// METH = 2: restricted ICC profile. `channels` is `Some` when the
+    /// profile's colour-space signature is one hayro recognises
+    /// (`ICCMetadata::from_data`).
+    Icc { channels: Option<u8> },
+    /// Any other METH.
+    Other(u8),
+}
+
+/// `colr::parse`. `Err` is a parse failure, which aborts hayro's decode.
+fn parse_colr(b: &[u8]) -> Result<ColrKind, &'static str> {
+    if b.len() < 3 {
+        return Err("colr shorter than METH/PREC/APPROX");
+    }
+    match b[0] {
+        1 => {
+            let e = b.get(3..7).ok_or("METH=1 without an EnumCS field")?;
+            let e = u32::from_be_bytes([e[0], e[1], e[2], e[3]]);
+            if !matches!(e, 0 | 1 | 3 | 4 | 9 | 11..=26) {
+                return Err("EnumCS value hayro does not recognise");
+            }
+            // CIELab (14) reads up to seven more u32 fields, ignoring failures.
+            let used = if e == 14 {
+                7 + 4 * ((b.len() - 7) / 4).min(7)
+            } else {
+                7
+            };
+            Ok(ColrKind::Enumerated(e, used))
+        }
+        2 => {
+            let sig = b.get(3 + 16..3 + 20);
+            let channels = sig.and_then(|s| {
+                Some(match s {
+                    b"XYZ " | b"Lab " | b"Luv " | b"YCbr" | b"Yxy " | b"Lms " | b"RGB "
+                    | b"HSV " | b"HLS " | b"CMY " | b"3CLR" => 3,
+                    b"GRAY" | b"1CLR" => 1,
+                    b"CMYK" | b"4CLR" => 4,
+                    _ => return None,
+                })
+            });
+            Ok(ColrKind::Icc { channels })
+        }
+        n => Ok(ColrKind::Other(n)),
+    }
+}
+
+/// `pclr::parse`: `Some((columns, bytes read))`.
+fn parse_pclr(b: &[u8]) -> Option<(usize, u64)> {
+    let entries = u64::from(u16::from_be_bytes([*b.first()?, *b.get(1)?]));
+    let cols = usize::from(*b.get(2)?);
+    if entries == 0 || cols == 0 {
+        return None;
+    }
+    let desc = b.get(3..3 + cols)?;
+    let mut row = 0u64;
+    for d in desc {
+        if d & 0x80 != 0 {
+            return None;
+        }
+        row += (u64::from(d & 0x7F) + 1).div_ceil(8).max(1);
+    }
+    let used = 3 + cols as u64 + entries * row;
+    (used <= b.len() as u64).then_some((cols, used))
+}
+
+/// `cdef::parse`: `Some((last channel is opacity, bytes read))`.
+fn parse_cdef(b: &[u8]) -> Option<(bool, u64)> {
+    let count = usize::from(u16::from_be_bytes([*b.first()?, *b.get(1)?]));
+    if count == 0 {
+        return None;
+    }
+    let used = 2 + 6 * count;
+    let body = b.get(2..used)?;
+    let mut idx: Vec<u16> = Vec::new();
+    idx.try_reserve_exact(count).ok()?;
+    let mut alpha_idx = None;
+    for e in body.chunks_exact(6) {
+        let i = u16::from_be_bytes([e[0], e[1]]);
+        let ty = u16::from_be_bytes([e[2], e[3]]);
+        let assoc = u16::from_be_bytes([e[4], e[5]]);
+        if ty > 1 || assoc == u16::MAX {
+            return None;
+        }
+        if ty == 1 {
+            alpha_idx = Some(i);
+        }
+        idx.push(i);
+    }
+    idx.sort_unstable();
+    if idx.iter().enumerate().any(|(n, &i)| usize::from(i) != n) {
+        return None;
+    }
+    // `last` after sorting by channel index is channel `count - 1`.
+    let last_is_opacity = body.chunks_exact(6).any(|e| {
+        usize::from(u16::from_be_bytes([e[0], e[1]])) == count - 1
+            && u16::from_be_bytes([e[2], e[3]]) == 1
+    });
+    let _ = alpha_idx;
+    Some((last_is_opacity, used as u64))
+}
+
+/// `cmap::parse`: every 4-byte entry has a mapping type of 0 or 1.
+fn parse_cmap(b: &[u8]) -> bool {
+    b.len() % 4 == 0 && b.chunks_exact(4).all(|e| e[2] <= 1)
+}
+
+/// What the first pass over a `jp2h` found (the second pass classifies the
+/// children with it).
+#[derive(Default)]
+struct HdrInfo {
+    first_colr: Option<(u64, ColrKind)>,
+    /// Start of the last valid box, with the bytes hayro reads from it.
+    pclr: Option<(u64, usize, u64)>,
+    cdef: Option<(u64, bool, u64)>,
+    cmap: Option<u64>,
+    /// Boxes hayro skips because they fail to parse (non-strict mode).
+    invalid: BTreeSet<u64>,
+    /// First child whose parse aborts the decode, with the reason.
+    fatal: Option<(u64, String)>,
+}
+
 #[derive(Clone, Copy)]
 enum Descend {
     Jp2h,
@@ -185,12 +300,16 @@ struct Walker<'a> {
     /// Inside a box hayro-jpeg2000 parses and then replaces with a later one
     /// (an earlier `jp2h` or `jp2c`): nothing in it reaches the caller.
     superseded: bool,
+    /// Past a point where hayro-jpeg2000 fails the decode: later bytes are
+    /// never read.
+    dead: bool,
 }
 
 impl Walker<'_> {
-    /// Consumed dispositions become `Dropped` inside a superseded box.
+    /// Consumed dispositions become `Dropped` inside a superseded box or after
+    /// a decode-fatal point.
     fn disp(&self, d: Disposition) -> Disposition {
-        if self.superseded && d.is_consumed() {
+        if (self.superseded || self.dead) && d.is_consumed() {
             Disposition::Dropped
         } else {
             d
@@ -220,14 +339,35 @@ impl Walker<'_> {
         Ok(())
     }
 
+    /// A decode-fatal condition: record it on `range` as malformed, and treat
+    /// everything after as unread.
+    fn fatal_rest(
+        &mut self,
+        parent: Option<PartId>,
+        range: Range<u64>,
+        why: impl AsRef<str>,
+    ) -> Res {
+        self.malformed_rest(
+            parent,
+            range,
+            format!(
+                "hayro-jpeg2000 0.3.5 fails the decode here: {}",
+                why.as_ref()
+            ),
+        )?;
+        self.dead = true;
+        Ok(())
+    }
+
     // ───────────────────────── JP2 boxes ─────────────────────────
 
     /// Which `jp2h` and `jp2c` boxes hayro-jpeg2000 keeps: the loop in
     /// `jp2::parse` overwrites on every match, so the last of each wins, and
-    /// it stops at the first box that fails to parse.
-    fn scan_top_level(&self) -> (Option<u64>, Option<u64>) {
+    /// it stops at the first box that fails to parse. Also the component count
+    /// of the last `jp2c`'s SIZ.
+    fn scan_top_level(&self) -> (Option<u64>, Option<u64>, Option<u16>) {
         let len = self.data.len() as u64;
-        let (mut jp2h, mut jp2c) = (None, None);
+        let (mut jp2h, mut jp2c, mut csiz) = (None, None, None);
         let mut pos = 0;
         while pos < len {
             let Ok(b) = read_box(self.data, pos, len) else {
@@ -238,17 +378,30 @@ impl Walker<'_> {
             }
             match &b.ty {
                 b"jp2h" => jp2h = Some(pos),
-                b"jp2c" => jp2c = Some(pos),
+                b"jp2c" => {
+                    jp2c = Some(pos);
+                    csiz = self.csiz_at(b.payload().start);
+                }
                 _ => {}
             }
             pos = b.end;
         }
-        (jp2h, jp2c)
+        (jp2h, jp2c, csiz)
+    }
+
+    /// Csiz of the codestream starting at `at`, when SOC and SIZ are in place.
+    fn csiz_at(&self, at: u64) -> Option<u16> {
+        let d = self.data.get(at as usize..)?;
+        if d.get(..4)? != J2K_MAGIC {
+            return None;
+        }
+        let c = d.get(40..42)?;
+        Some(u16::from_be_bytes([c[0], c[1]]))
     }
 
     fn walk_jp2(&mut self) -> Res {
         let len = self.data.len() as u64;
-        let (last_jp2h, last_jp2c) = self.scan_top_level();
+        let (last_jp2h, last_jp2c, csiz) = self.scan_top_level();
         let mut pos = 0u64;
         let mut index = 0usize;
         while pos < len {
@@ -260,7 +413,7 @@ impl Walker<'_> {
                     return Ok(());
                 }
             };
-            self.top_level_box(&b, index, last_jp2h, last_jp2c)?;
+            self.top_level_box(&b, index, last_jp2h, last_jp2c, csiz)?;
             pos = b.end;
             index += 1;
         }
@@ -273,6 +426,7 @@ impl Walker<'_> {
         index: usize,
         last_jp2h: Option<u64>,
         last_jp2c: Option<u64>,
+        csiz: Option<u16>,
     ) -> Res {
         let tag = PartTag::FourCc(b.ty);
         let payload = b.payload();
@@ -284,35 +438,50 @@ impl Walker<'_> {
         };
         let mut part = Part::new(kind, tag, b.range(), Disposition::Skipped);
         let mut descend: Option<Descend> = None;
+        // A child of an otherwise unread payload: the parent covers the box
+        // header, the child the bytes hayro never reads.
+        let mut unread_payload: Option<(&'static str, Option<String>)> = None;
+        let mut superseded_here = false;
 
         match &b.ty {
-            // Both are required by `jp2::parse` in this order (`InvalidSignature`
-            // / `InvalidFileType` otherwise); their payloads are not read.
-            b"jP  " => {
+            // hayro checks only the first eight bytes of the file (the magic)
+            // and, for the second box, its type: `jp2::parse`. The payloads
+            // are never read, and any later `jP  `/`ftyp` hits `_ => {}`.
+            b"jP  " if index == 0 => {
                 part.disposition = Disposition::Structure;
                 part.label = Some(Cow::Borrowed("jP  "));
+                unread_payload = Some(("signature payload", None));
             }
-            b"ftyp" => {
+            b"ftyp" if index == 1 => {
                 part.disposition = Disposition::Structure;
-                if body.len() >= 4 {
-                    part.label = Some(Cow::Owned(label_of(&body[..4])));
-                }
-                part.detail = Some("brand and compatibility list not read".into());
+                unread_payload = Some((
+                    "brand, minor version and compatibility list",
+                    (body.len() >= 4).then(|| label_of(&body[..4])),
+                ));
+            }
+            b"jP  " | b"ftyp" => {
+                part.detail = Some(format!(
+                    "ignored by hayro: only box {} is read as {}",
+                    if &b.ty == b"jP  " { 0 } else { 1 },
+                    fourcc_name(b.ty).trim_end()
+                ));
             }
             b"jp2h" => {
                 part.disposition = Disposition::Structure;
                 part.body = Some(payload.clone());
                 descend = Some(Descend::Jp2h);
-                if Some(b.start) != last_jp2h {
+                if Some(b.start) != last_jp2h && !b.truncated {
                     part.detail = Some("superseded by a later jp2h (hayro keeps the last)".into());
+                    superseded_here = true;
                 }
             }
             b"jp2c" => {
                 part.disposition = Disposition::ImageData;
                 part.body = Some(payload.clone());
                 descend = Some(Descend::Jp2c);
-                if Some(b.start) != last_jp2c {
+                if Some(b.start) != last_jp2c && !b.truncated {
                     part.detail = Some("superseded by a later jp2c (hayro keeps the last)".into());
+                    superseded_here = true;
                 }
             }
             b"xml " => {
@@ -357,35 +526,54 @@ impl Walker<'_> {
             part.label = Some(Cow::Owned(fourcc_name(b.ty)));
         }
         if b.to_end {
-            part.detail = Some(match part.detail.take() {
-                Some(d) => format!("{d}; LBox=0, runs to end of file"),
-                None => "LBox=0, runs to end of file".into(),
-            });
+            append_detail(&mut part, "LBox=0, runs to end of file");
         }
         if b.truncated {
             // hayro-jpeg2000 `box::read` fails when the declared length runs
             // past the data, ending the box loop: the box is never parsed.
             part.disposition = Disposition::Malformed;
-            part.detail = Some(match part.detail.take() {
-                Some(d) => format!("{d}; declared length exceeds the input"),
-                None => "declared length exceeds the input".into(),
-            });
+            append_detail(&mut part, "declared length exceeds the input");
+            descend = None;
+            part.body = None;
+            unread_payload = None;
         }
-        let superseded_here = part
-            .detail
-            .as_deref()
-            .is_some_and(|d| d.starts_with("superseded"));
         if superseded_here {
             part.disposition = Disposition::Dropped;
         }
+        // The second box must be `ftyp` (`InvalidFileType` otherwise).
+        let bad_second = index == 1 && &b.ty != b"ftyp";
+        if bad_second {
+            append_detail(
+                &mut part,
+                "hayro-jpeg2000 0.3.5 fails the decode here: the second box must be ftyp",
+            );
+        }
+        if unread_payload.is_some() && !payload.is_empty() {
+            part.body = Some(payload.clone());
+        }
 
         let body_range = part.body.clone();
-        let id = self.inv.push(None, part)?;
+        let id = self.push(None, part)?;
+        if let Some((what, label)) = unread_payload
+            && !payload.is_empty()
+        {
+            let mut child = Part::new(
+                PartKind::Field,
+                PartTag::Name(Cow::Borrowed("payload")),
+                payload.clone(),
+                Disposition::Skipped,
+            )
+            .with_detail(format!("{what}; hayro reads only the box type"));
+            if let Some(l) = label {
+                child = child.with_label(l);
+            }
+            self.push(Some(id), child)?;
+        }
         if let (Some(which), Some(r)) = (descend, body_range) {
             let saved = self.superseded;
             self.superseded = superseded_here;
             let res = match which {
-                Descend::Jp2h => self.walk_jp2h(id, r),
+                Descend::Jp2h => self.walk_jp2h(id, r, csiz),
                 Descend::Jp2c => self.walk_codestream(Some(id), r),
                 Descend::Uinf => self.walk_uinf(id, r),
                 Descend::Asoc => self.walk_asoc(id, r, 0),
@@ -400,6 +588,9 @@ impl Walker<'_> {
                 };
                 self.inv.fill_gaps(Some(id), fill)?;
             }
+        }
+        if bad_second {
+            self.dead = true;
         }
         Ok(())
     }
@@ -472,34 +663,74 @@ impl Walker<'_> {
         Ok(())
     }
 
-    /// Children of `jp2h` (`jp2::parse`, the inner loop).
-    fn walk_jp2h(&mut self, parent: PartId, body: Range<u64>) -> Res {
-        // First pass: which duplicate wins. `colr`: the first (`colr::parse`
-        // returns early once one is set). `pclr`/`cmap`/`cdef`: the last
-        // (each parse overwrites).
-        let mut first_colr = None;
-        let mut last = [None::<u64>; 3];
+    /// First pass over a `jp2h`: which duplicates win and which children make
+    /// hayro fail (`jp2::parse`, the inner loop).
+    fn scan_jp2h(&self, body: &Range<u64>) -> HdrInfo {
+        let mut h = HdrInfo::default();
         let mut pos = body.start;
         while pos < body.end {
             let Ok(b) = read_box(self.data, pos, body.end) else {
                 break;
             };
+            if b.truncated {
+                break;
+            }
+            let p = b.payload();
+            let bytes = &self.data[p.start as usize..p.end as usize];
             match &b.ty {
-                b"colr" if first_colr.is_none() => first_colr = Some(pos),
-                b"pclr" => last[0] = Some(pos),
-                b"cmap" => last[1] = Some(pos),
-                b"cdef" => last[2] = Some(pos),
+                // `colr::parse` returns before parsing once one is set.
+                b"colr" if h.first_colr.is_none() => match parse_colr(bytes) {
+                    Ok(k) => h.first_colr = Some((pos, k)),
+                    Err(e) => {
+                        h.fatal = Some((pos, e.into()));
+                        break;
+                    }
+                },
+                b"pclr" => match parse_pclr(bytes) {
+                    Some((cols, used)) => h.pclr = Some((pos, cols, used)),
+                    None => {
+                        h.invalid.insert(pos);
+                    }
+                },
+                b"cdef" => match parse_cdef(bytes) {
+                    Some((alpha, used)) => h.cdef = Some((pos, alpha, used)),
+                    None => {
+                        h.invalid.insert(pos);
+                    }
+                },
+                b"cmap" => {
+                    if parse_cmap(bytes) {
+                        h.cmap = Some(pos);
+                    } else {
+                        h.fatal = Some((pos, "cmap entry with an invalid mapping type".into()));
+                        break;
+                    }
+                }
                 _ => {}
             }
             pos = b.end;
         }
+        h
+    }
+
+    /// Children of `jp2h` (`jp2::parse`, the inner loop).
+    fn walk_jp2h(&mut self, parent: PartId, body: Range<u64>, csiz: Option<u16>) -> Res {
+        let info = self.scan_jp2h(&body);
+        // Colour resolution (hayro `resolve_alpha_and_color_space`).
+        let palette_cols = info.pclr.map(|(_, c, _)| c);
+        let alpha = info.cdef.is_some_and(|(_, a, _)| a);
+        let colr_outcome = info
+            .first_colr
+            .as_ref()
+            .map(|(pos, k)| (*pos, colr_effect(k, csiz, palette_cols, alpha)));
 
         let mut pos = body.start;
         while pos < body.end {
             let b = match read_box(self.data, pos, body.end) {
                 Ok(b) => b,
                 Err(why) => {
-                    self.malformed_rest(Some(parent), pos..body.end, why)?;
+                    // `box::read(..).ok_or(InvalidBox)?` inside jp2h: fatal.
+                    self.fatal_rest(Some(parent), pos..body.end, why)?;
                     return Ok(());
                 }
             };
@@ -511,7 +742,12 @@ impl Walker<'_> {
                 b.range(),
                 Disposition::Unknown,
             );
+            // Children of a consumed leaf box: (field range end, disposition,
+            // detail); the rest of the payload is unread.
+            let mut fields: Option<(u64, Disposition, String)> = None;
             let mut is_res = false;
+            let mut make_dead = false;
+            let fatal_here = info.fatal.as_ref().filter(|(p, _)| *p == pos);
             match &b.ty {
                 // `_ => debug!("ignoring header box")`: geometry and bit depth
                 // come from the codestream SIZ marker, not from these boxes.
@@ -524,22 +760,76 @@ impl Walker<'_> {
                     part.detail = Some("depth is taken from SIZ".into());
                 }
                 b"colr" => {
-                    self.classify_colr(bytes, Some(b.start) == first_colr, &mut part);
-                }
-                b"pclr" | b"cmap" | b"cdef" => {
-                    let slot = match &b.ty {
-                        b"pclr" => 0,
-                        b"cmap" => 1,
-                        _ => 2,
-                    };
-                    if last[slot] == Some(b.start) {
-                        part.disposition = Disposition::Structure;
-                        if &b.ty == b"cdef" {
-                            part.detail = Some("channel types decide the alpha flag".into());
+                    if let Some((_, why)) = fatal_here {
+                        part.disposition = Disposition::Malformed;
+                        part.detail =
+                            Some(format!("hayro-jpeg2000 0.3.5 fails the decode here: {why}"));
+                        make_dead = true;
+                    } else if let Some((cpos, out)) = &colr_outcome
+                        && *cpos == pos
+                    {
+                        part.disposition = out.disposition;
+                        part.detail = Some(out.detail.clone());
+                        if out.fatal {
+                            make_dead = true;
+                        }
+                        if out.disposition.is_consumed() {
+                            let used = match info.first_colr.as_ref().map(|(_, k)| k) {
+                                Some(ColrKind::Enumerated(_, u)) => *u,
+                                Some(ColrKind::Icc { .. }) => bytes.len(),
+                                _ => 3,
+                            };
+                            fields = Some((
+                                payload.start + used as u64,
+                                out.disposition,
+                                out.detail.clone(),
+                            ));
                         }
                     } else {
+                        part.disposition = Disposition::Skipped;
+                        part.detail = Some("ignored: hayro keeps only the first colr".into());
+                    }
+                }
+                b"pclr" | b"cdef" => {
+                    let is_pclr = &b.ty == b"pclr";
+                    let best = if is_pclr {
+                        info.pclr.map(|(p, _, u)| (p, u))
+                    } else {
+                        info.cdef.map(|(p, _, u)| (p, u))
+                    };
+                    if info.invalid.contains(&pos) {
+                        part.disposition = Disposition::Malformed;
+                        part.detail = Some(
+                            "fails to parse; hayro ignores it in non-strict mode and keeps an \
+                             earlier valid box"
+                                .into(),
+                        );
+                    } else if let Some((bp, used)) = best
+                        && bp == pos
+                    {
+                        part.disposition = Disposition::Structure;
+                        let what = if is_pclr {
+                            "palette"
+                        } else {
+                            "channel definitions (decide the alpha flag)"
+                        };
+                        fields = Some((payload.start + used, Disposition::Structure, what.into()));
+                    } else {
                         part.disposition = Disposition::Dropped;
-                        part.detail = Some("replaced by a later box of the same type".into());
+                        part.detail = Some("replaced by a later valid box of the same type".into());
+                    }
+                }
+                b"cmap" => {
+                    if let Some((_, why)) = fatal_here {
+                        part.disposition = Disposition::Malformed;
+                        part.detail =
+                            Some(format!("hayro-jpeg2000 0.3.5 fails the decode here: {why}"));
+                        make_dead = true;
+                    } else if info.cmap == Some(pos) {
+                        part.disposition = Disposition::Structure;
+                    } else {
+                        part.disposition = Disposition::Dropped;
+                        part.detail = Some("replaced by a later cmap".into());
                     }
                 }
                 b"res " => {
@@ -553,445 +843,202 @@ impl Walker<'_> {
                 }
             }
             if b.truncated {
+                // `box::read(..).ok_or(InvalidBox)?`: fatal.
                 part.disposition = Disposition::Malformed;
-                part.detail = Some("declared length exceeds the jp2h box".into());
+                part.detail = Some(
+                    "hayro-jpeg2000 0.3.5 fails the decode here: child box length exceeds jp2h"
+                        .into(),
+                );
+                part.body = None;
+                is_res = false;
+                fields = None;
+                make_dead = true;
+            }
+            // A consumed leaf: the box header is framing, the fields carry the
+            // disposition, and bytes hayro never reads are unreferenced.
+            if let Some((fend, _, _)) = &fields
+                && payload.start < *fend
+            {
+                part.disposition = self.disp(Disposition::Structure);
+                part.detail = None;
+                part.body = Some(payload.clone());
+            } else {
+                fields = None;
             }
             let body_range = part.body.clone();
             let id = self.push(Some(parent), part)?;
-            if is_res {
-                if let Some(r) = body_range {
-                    self.walk_children(id, r, |_, cb, cp| match &cb.ty {
-                        b"resc" | b"resd" => cp.disposition = Disposition::Skipped,
-                        _ => cp.disposition = Disposition::Unknown,
-                    })?;
-                    self.inv.fill_gaps(Some(id), Disposition::Malformed)?;
-                }
+            if let Some((fend, d, detail)) = fields {
+                let fend = fend.min(payload.end);
+                self.push(
+                    Some(id),
+                    Part::new(
+                        PartKind::Field,
+                        PartTag::Name(Cow::Borrowed("fields")),
+                        payload.start..fend,
+                        d,
+                    )
+                    .with_detail(detail),
+                )?;
+                self.inv.fill_gaps(Some(id), Disposition::Unreferenced)?;
+            }
+            if is_res && let Some(r) = body_range {
+                self.walk_children(id, r, |_, cb, cp| match &cb.ty {
+                    b"resc" | b"resd" => cp.disposition = Disposition::Skipped,
+                    _ => cp.disposition = Disposition::Unknown,
+                })?;
+                self.inv.fill_gaps(Some(id), Disposition::Malformed)?;
+            }
+            if make_dead {
+                self.dead = true;
             }
             pos = b.end;
         }
         Ok(())
     }
+}
 
-    /// `colr` (`jp2::colr::parse` and `resolve_alpha_and_color_space`).
-    fn classify_colr(&mut self, bytes: &[u8], first: bool, part: &mut Part) {
-        if !first {
-            part.disposition = Disposition::Skipped;
-            part.detail = Some("ignored: hayro keeps only the first colr".into());
-            return;
-        }
-        let Some(&meth) = bytes.first() else {
-            part.disposition = Disposition::Malformed;
-            part.detail = Some("colr shorter than METH/PREC/APPROX".into());
-            return;
-        };
-        if bytes.len() < 3 {
-            part.disposition = Disposition::Malformed;
-            part.detail = Some("colr shorter than METH/PREC/APPROX".into());
-            return;
-        }
-        match meth {
-            1 => {
-                // Enumerated colour space: selects the pixel path (sRGB, grey,
-                // sYCC, CMYK, ...). zenjp2 does not report it as signalling.
-                part.disposition = Disposition::Metadata(MetadataKind::Colour);
-                match bytes.get(3..7) {
-                    Some(e) => {
-                        let e = u32::from_be_bytes([e[0], e[1], e[2], e[3]]);
-                        part.detail = Some(format!("METH=1 enumerated colour space {e}"));
-                    }
-                    None => {
-                        part.disposition = Disposition::Malformed;
-                        part.detail = Some("METH=1 without an EnumCS field".into());
-                    }
-                }
-            }
-            2 => {
-                // `ICCMetadata::from_data` reads the colour space signature at
-                // profile offset 16; an unrecognised one makes hayro assume
-                // RGB and the profile never reaches the caller.
-                let profile = &bytes[3..];
-                let known = profile.get(16..20).is_some_and(|s| {
-                    matches!(
-                        s,
-                        b"XYZ "
-                            | b"Lab "
-                            | b"Luv "
-                            | b"YCbr"
-                            | b"Yxy "
-                            | b"Lms "
-                            | b"RGB "
-                            | b"GRAY"
-                            | b"HSV "
-                            | b"HLS "
-                            | b"CMYK"
-                            | b"CMY "
-                            | b"1CLR"
-                            | b"3CLR"
-                            | b"4CLR"
-                    )
-                });
-                if known {
-                    part.disposition = Disposition::Metadata(MetadataKind::Icc);
-                    part.detail = Some(format!(
-                        "METH=2 restricted ICC profile, {} bytes",
-                        profile.len()
-                    ));
-                } else {
-                    part.disposition = Disposition::Dropped;
-                    part.detail = Some(
-                        "METH=2 profile with an unrecognised colour space signature; hayro assumes RGB"
-                            .into(),
-                    );
-                }
-            }
-            n => {
-                part.disposition = Disposition::Dropped;
-                part.detail = Some(format!("METH={n}: unknown method, treated as unspecified"));
-            }
+/// Disposition and detail of the first `colr` once hayro's channel-count
+/// repair (`resolve_alpha_and_color_space`) has run.
+struct ColrOutcome {
+    disposition: Disposition,
+    detail: String,
+    /// The decode fails because of this box.
+    fatal: bool,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Cs {
+    Gray,
+    Rgb,
+    Cmyk,
+    Icc(u8),
+}
+
+impl Cs {
+    fn channels(self) -> usize {
+        match self {
+            Cs::Gray => 1,
+            Cs::Rgb => 3,
+            Cs::Cmyk => 4,
+            Cs::Icc(n) => usize::from(n),
         }
     }
+}
 
-    // ───────────────────── codestream marker segments ─────────────────────
-
-    /// Walk `SOC` … `EOC` inside `range`. Bytes after the end marker are left
-    /// for the caller's `fill_gaps` (as `Trailing`).
-    fn walk_codestream(&mut self, parent: Option<PartId>, range: Range<u64>) -> Res {
-        let data = self.data;
-        let end = range.end;
-        let mut pos = range.start;
-        if pos >= end {
-            return Ok(());
-        }
-        if end - pos < 2 || data[pos as usize] != 0xFF || data[pos as usize + 1] != SOC {
-            return self.malformed_rest(parent, pos..end, "codestream does not start with SOC");
-        }
-        self.push(
-            parent,
-            Part::new(
-                PartKind::Header,
-                PartTag::Marker(SOC),
-                pos..pos + 2,
-                Disposition::Structure,
-            )
-            .with_detail("SOC start of codestream"),
-        )?;
-        pos += 2;
-
-        // Main header: marker segments until the first SOT (or EOC).
-        loop {
-            if pos >= end {
-                return Ok(());
-            }
-            match self.marker_at(pos, end) {
-                Marker::Bad(why) => {
-                    return self.malformed_rest(parent, pos..end, why);
-                }
-                Marker::Code(SOT) => break,
-                Marker::Code(EOC) => {
-                    return self.eoc(parent, pos);
-                }
-                Marker::Code(SOD) => {
-                    return self.malformed_rest(parent, pos..end, "SOD in the main header");
-                }
-                Marker::Code(c) => match self.segment(parent, pos, end, c, Header::Main)? {
-                    Some(next) => pos = next,
-                    None => return Ok(()),
-                },
-            }
-        }
-
-        // Tile-parts.
-        loop {
-            if pos >= end {
-                return Ok(());
-            }
-            match self.marker_at(pos, end) {
-                Marker::Code(SOT) => {}
-                Marker::Code(EOC) => return self.eoc(parent, pos),
-                // `tile::parse` stops at the first non-SOT marker in
-                // non-strict mode; what follows is left to the caller.
-                _ => return Ok(()),
-            }
-            match self.tile_part(parent, pos, end)? {
-                Some(next) => pos = next,
-                None => return Ok(()),
-            }
-        }
-    }
-
-    fn eoc(&mut self, parent: Option<PartId>, pos: u64) -> Res {
-        self.push(
-            parent,
-            Part::new(
-                PartKind::Segment,
-                PartTag::Marker(EOC),
-                pos..pos + 2,
-                Disposition::Structure,
-            )
-            .with_detail("EOC end of codestream; hayro reads it only in strict mode"),
-        )?;
-        Ok(())
-    }
-
-    fn marker_at(&self, pos: u64, end: u64) -> Marker {
-        if end - pos < 2 {
-            return Marker::Bad("single byte where a marker was expected");
-        }
-        let (a, b) = (self.data[pos as usize], self.data[pos as usize + 1]);
-        if a != 0xFF || b < 0x30 {
-            return Marker::Bad("not a marker");
-        }
-        Marker::Code(b)
-    }
-
-    /// One length-bearing marker segment at `pos`. Returns the next position,
-    /// or `None` when the walk had to stop (a malformed part was recorded).
-    fn segment(
-        &mut self,
-        parent: Option<PartId>,
-        pos: u64,
-        end: u64,
-        code: u8,
-        hdr: Header,
-    ) -> Res<Option<u64>> {
-        // 0xFF30..=0xFF3F carry no parameters; both header loops skip them.
-        if (0x30..=0x3F).contains(&code) {
-            self.push(
-                parent,
-                Part::new(
-                    PartKind::Segment,
-                    PartTag::Marker(code),
-                    pos..pos + 2,
-                    Disposition::Skipped,
-                )
-                .with_detail("reserved marker without parameters"),
-            )?;
-            return Ok(Some(pos + 2));
-        }
-        if end - pos < 4 {
-            self.malformed_rest(parent, pos..end, "truncated marker segment length")?;
-            return Ok(None);
-        }
-        let l = u16::from_be_bytes([self.data[pos as usize + 2], self.data[pos as usize + 3]]);
-        if l < 2 {
-            self.malformed_rest(parent, pos..end, "marker segment length below 2")?;
-            return Ok(None);
-        }
-        let seg_end = pos + 2 + u64::from(l);
-        let payload = &self.data[(pos as usize + 4)..(seg_end.min(end) as usize)];
-        let (disposition, label, detail) = classify_marker(code, hdr, payload);
-        let mut part = Part::new(
-            PartKind::Segment,
-            PartTag::Marker(code),
-            pos..seg_end.min(end),
-            disposition,
-        );
-        if let Some(l) = label {
-            part = part.with_label(l);
-        }
-        let mut detail = detail;
-        if seg_end > end {
-            part.disposition = Disposition::Malformed;
-            detail = format!("{detail}; segment length runs past the codestream");
-        }
-        part = part.with_detail(detail);
-        self.push(parent, part)?;
-        if seg_end > end {
-            return Ok(None);
-        }
-        Ok(Some(seg_end))
-    }
-
-    /// One tile-part starting at the SOT marker at `pos`.
-    fn tile_part(&mut self, parent: Option<PartId>, pos: u64, end: u64) -> Res<Option<u64>> {
-        if end - pos < 12 {
-            self.malformed_rest(parent, pos..end, "truncated SOT segment")?;
-            return Ok(None);
-        }
-        let d = &self.data[pos as usize..pos as usize + 12];
-        let lsot = u16::from_be_bytes([d[2], d[3]]);
-        let isot = u16::from_be_bytes([d[4], d[5]]);
-        let psot = u32::from_be_bytes([d[6], d[7], d[8], d[9]]);
-        let (tpsot, tnsot) = (d[10], d[11]);
-        if lsot != 10 {
-            self.malformed_rest(parent, pos..end, "SOT segment length is not 10")?;
-            return Ok(None);
-        }
-        // `tile::parse_tile_part`: Psot = 0 means "to the end of the stream",
-        // otherwise Psot counts from the SOT marker (hayro subtracts 12).
-        let (tp_end, truncated) = if psot == 0 {
-            // The data end is found after SOD (first EOC; see below).
-            (end, false)
-        } else if u64::from(psot) < 12 {
-            self.malformed_rest(parent, pos..end, "Psot smaller than the SOT segment")?;
-            return Ok(None);
-        } else {
-            let declared = pos + u64::from(psot);
-            (declared.min(end), declared > end)
-        };
-        let ps = if psot == 0 {
-            String::from("Psot=0 (to end of codestream)")
-        } else {
-            format!("Psot={psot}")
-        };
-        self.push(
-            parent,
-            Part::new(
-                PartKind::Segment,
-                PartTag::Marker(SOT),
-                pos..pos + 12,
-                Disposition::Structure,
-            )
-            .with_detail(format!("SOT tile {isot} part {tpsot}/{tnsot}, {ps}")),
-        )?;
-
-        // Tile-part header up to SOD.
-        let mut p = pos + 12;
-        let mut sod = None;
-        while p < tp_end {
-            match self.marker_at(p, tp_end) {
-                Marker::Bad(why) => {
-                    self.malformed_rest(parent, p..tp_end, why)?;
-                    return Ok(Some(tp_end));
-                }
-                Marker::Code(SOD) => {
-                    sod = Some(p);
-                    break;
-                }
-                Marker::Code(SOT) | Marker::Code(EOC) => {
-                    // A header that runs into the next structure: hayro breaks
-                    // on EOC and treats SOT as unsupported.
-                    self.malformed_rest(parent, p..tp_end, "tile-part header without SOD")?;
-                    return Ok(Some(tp_end));
-                }
-                Marker::Code(c) => match self.segment(parent, p, tp_end, c, Header::TilePart)? {
-                    Some(next) => p = next,
-                    None => return Ok(None),
-                },
-            }
-        }
-        let Some(sod) = sod else {
-            return Ok(Some(tp_end));
-        };
-        self.push(
-            parent,
-            Part::new(
-                PartKind::Segment,
-                PartTag::Marker(SOD),
-                sod..sod + 2,
-                Disposition::Structure,
-            )
-            .with_detail("SOD start of tile-part data"),
-        )?;
-        let data_start = sod + 2;
-        // Psot = 0: the tile-part runs to the end of the codestream. Packet
-        // data cannot contain FF D9 (a byte after FF is below 0x90 in coded
-        // data), so the first one is the EOC; whatever follows is not tile
-        // data. hayro-jpeg2000 reads the whole tail as data (`parse_tile_part`)
-        // but bytes after EOC cannot influence the decode.
-        let tp_end = if psot == 0 {
-            let tail = &self.data[data_start as usize..tp_end as usize];
-            match tail.windows(2).position(|w| w == [0xFF, EOC]) {
-                Some(i) => data_start + i as u64,
-                None => tp_end,
-            }
-        } else {
-            tp_end
-        };
-        if data_start < tp_end {
-            let (kind, disp, detail) = if truncated {
-                (
-                    PartKind::ScanData,
-                    Disposition::Malformed,
-                    "tile-part length runs past the codestream",
-                )
-            } else {
-                (PartKind::ScanData, Disposition::ImageData, "packet data")
+/// `get_color_space` plus the repair in `resolve_alpha_and_color_space`.
+/// `csiz` is the component count of the codestream hayro uses.
+fn colr_effect(
+    kind: &ColrKind,
+    csiz: Option<u16>,
+    palette_cols: Option<usize>,
+    mut alpha: bool,
+) -> ColrOutcome {
+    let fatal = |d: String| ColrOutcome {
+        disposition: Disposition::Malformed,
+        detail: format!("hayro-jpeg2000 0.3.5 fails the decode here: {d}"),
+        fatal: true,
+    };
+    let meth_detail = match kind {
+        ColrKind::Enumerated(e, _) => format!("METH=1 enumerated colour space {e}"),
+        ColrKind::Icc { channels: Some(_) } => "METH=2 restricted ICC profile".into(),
+        ColrKind::Icc { channels: None } => {
+            return ColrOutcome {
+                disposition: Disposition::Dropped,
+                detail: "METH=2 profile with an unrecognised colour space signature; hayro \
+                         assumes RGB and drops the profile"
+                    .into(),
+                fatal: false,
             };
-            self.push(
-                parent,
-                Part::new(
-                    kind,
-                    PartTag::Code(u32::from(isot)),
-                    data_start..tp_end,
-                    disp,
-                )
-                .with_detail(detail),
-            )?;
         }
-        if truncated {
-            return Ok(None);
+        ColrKind::Other(n) => {
+            return ColrOutcome {
+                disposition: Disposition::Dropped,
+                detail: format!("METH={n}: unknown method, treated as unspecified"),
+                fatal: false,
+            };
         }
-        Ok(Some(tp_end))
+    };
+    let Some(csiz) = csiz.map(usize::from) else {
+        // No usable codestream to compare against: report what the box says.
+        let (d, extra) = match kind {
+            ColrKind::Icc { .. } => (Disposition::Metadata(MetadataKind::Icc), ""),
+            _ => (Disposition::Metadata(MetadataKind::Colour), ""),
+        };
+        return ColrOutcome {
+            disposition: d,
+            detail: format!("{meth_detail}{extra}"),
+            fatal: false,
+        };
+    };
+    let num_components = palette_cols.unwrap_or(csiz);
+    // The colour space the box asks for.
+    let (mut cs, builtin_icc, sycc_or_lab) = match kind {
+        ColrKind::Enumerated(e, _) => match e {
+            12 => (Cs::Cmyk, false, false),
+            16 | 20 => (Cs::Rgb, false, false),
+            18 => (Cs::Rgb, false, true),
+            17 => (Cs::Gray, false, false),
+            21 => (Cs::Icc(3), true, false),
+            14 => (Cs::Icc(3), true, true),
+            n => return fatal(format!("EnumCS {n} is unsupported")),
+        },
+        ColrKind::Icc { channels: Some(n) } => (Cs::Icc(*n), false, false),
+        _ => (Cs::Rgb, false, false),
+    };
+    let requested = cs;
+    let mut inferred_alpha = false;
+    if palette_cols.is_none() && csiz != cs.channels() + usize::from(alpha) {
+        if csiz == cs.channels() + 1 && !alpha {
+            alpha = true;
+            inferred_alpha = true;
+        } else {
+            cs = match (csiz, alpha) {
+                (1, _) | (2, true) => Cs::Gray,
+                (3, _) => Cs::Rgb,
+                (4, true) => Cs::Rgb,
+                (4, false) => Cs::Cmyk,
+                _ => return fatal(format!("{csiz} components fit no colour space")),
+            };
+        }
     }
-}
-
-enum Marker {
-    Code(u8),
-    Bad(&'static str),
-}
-
-/// Disposition, label and detail for a length-bearing marker segment, from
-/// what hayro-jpeg2000 0.3.5 does with it (`j2c::codestream::read_header` for
-/// the main header, `j2c::tile::parse_tile_part` for tile-part headers).
-fn classify_marker(code: u8, hdr: Header, payload: &[u8]) -> (Disposition, Option<String>, String) {
-    use Disposition::{Skipped, Structure, Unknown};
-    let rejected = "hayro-jpeg2000 0.3.5 fails the decode (Unsupported) on this marker here";
-    match (hdr, code) {
-        (_, SIZ) => (Structure, None, "SIZ image and tile size".into()),
-        (_, COD) => (Structure, None, "COD coding style default".into()),
-        (_, COC) => (Structure, None, "COC coding style component".into()),
-        (_, QCD) => (Structure, None, "QCD quantization default".into()),
-        (_, QCC) => (Structure, None, "QCC quantization component".into()),
-        (Header::Main, PPM) => (Structure, None, "PPM packed packet headers".into()),
-        (Header::TilePart, PPT) => (Structure, None, "PPT packed packet headers".into()),
-        // `skip_marker_segment` only.
-        (Header::Main, RGN) => (Skipped, None, "RGN region of interest, skipped".into()),
-        (Header::Main, TLM) => (Skipped, None, "TLM tile-part lengths, skipped".into()),
-        (Header::Main, CRG) => (Skipped, None, "CRG component registration, skipped".into()),
-        // "Can be inferred ourselves."
-        (Header::TilePart, PLT) => (Skipped, None, "PLT packet lengths, skipped".into()),
-        (_, COM) => {
-            // Rcom: 0 binary, 1 Latin-1 text.
-            let rcom = payload.get(..2).map(|r| u16::from_be_bytes([r[0], r[1]]));
-            let text = payload.get(2..).unwrap_or(&[]);
-            match rcom {
-                Some(1) => (
-                    Skipped,
-                    Some(label_of(text)),
-                    "COM Latin-1 comment, skipped".into(),
-                ),
-                Some(0) => (Skipped, None, "COM binary comment (Rcom=0), skipped".into()),
-                Some(n) => (Skipped, None, format!("COM comment with Rcom={n}, skipped")),
-                None => (Skipped, None, "COM without a registration value".into()),
+    let _ = (alpha, num_components);
+    let overridden = cs != requested;
+    let mut detail = meth_detail;
+    if inferred_alpha {
+        detail.push_str("; the extra component is taken as alpha");
+    }
+    let disposition = match kind {
+        ColrKind::Icc { .. } => {
+            if overridden {
+                detail.push_str(&format!(
+                    "; overridden: the codestream has {csiz} components, the profile {} channels, \
+                     so hayro replaces the colour space and drops the profile",
+                    requested.channels()
+                ));
+                Disposition::Dropped
+            } else {
+                Disposition::Metadata(MetadataKind::Icc)
             }
         }
-        (Header::Main, POC) => (
-            Skipped,
-            None,
-            format!("POC progression order change; {rejected}"),
-        ),
-        (Header::Main, PLM) => (Skipped, None, format!("PLM packet lengths; {rejected}")),
-        (Header::TilePart, POC) => (
-            Skipped,
-            None,
-            format!("POC progression order change; {rejected}"),
-        ),
-        (Header::TilePart, PPM | RGN | TLM | PLM | CRG) => (
-            Skipped,
-            None,
-            format!("marker not valid in a tile-part header; {rejected}"),
-        ),
-        (Header::Main, PPT | PLT) => (
-            Skipped,
-            None,
-            format!("tile-part marker in the main header; {rejected}"),
-        ),
-        _ => (
-            Unknown,
-            None,
-            format!("unrecognised marker 0xFF{code:02X}; {rejected}"),
-        ),
+        _ => {
+            if builtin_icc {
+                detail.push_str("; selects hayro's built-in ICC profile");
+            }
+            if overridden && !sycc_or_lab {
+                detail.push_str(&format!(
+                    "; overridden: the codestream has {csiz} components, so hayro replaces the \
+                     colour space"
+                ));
+                Disposition::Dropped
+            } else {
+                Disposition::Metadata(MetadataKind::Colour)
+            }
+        }
+    };
+    ColrOutcome {
+        disposition,
+        detail,
+        fatal: false,
     }
 }
 
@@ -1002,6 +1049,7 @@ pub(crate) fn inventory(data: &[u8]) -> Result<Inventory, InventoryError> {
         data,
         inv: Inventory::new(ImageFormat::Jp2, len),
         superseded: false,
+        dead: false,
     };
     if data.is_empty() {
         return Ok(w.inv);
