@@ -2466,14 +2466,13 @@ fn wide_pointer_arrays(n: u32, c: u32) -> Vec<u8> {
 #[test]
 fn wide_pointer_arrays_are_read_only_as_far_as_the_ifd_cap() {
     // 1,048,588 bytes: before the fix, 43,690 x 131,072 pointer reads
-    // (4.2 s in a release build).
+    // (4.2 s in a release build). The read count itself is bounded by the
+    // crate's own `wide_pointer_arrays_read_at_most_n_plus_the_ifd_cap`
+    // (src/inventory/mod.rs): a wall-clock bound measures the runner.
     let data = wide_pointer_arrays(43_690, 131_072);
     assert_eq!(data.len(), 1_048_588);
-    let t = std::time::Instant::now();
     let inv = inventory(&data);
-    let took = t.elapsed();
     inv.validate().unwrap();
-    assert!(took.as_secs_f64() < 10.0, "took {took:?}");
     let noted = inv
         .parts()
         .iter()
