@@ -172,7 +172,7 @@ pub(crate) fn dict_type(dict: &[u8]) -> Option<Vec<u8>> {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Tok {
+pub(crate) enum Tok {
     DictOpen,
     DictClose,
     ArrOpen,
@@ -703,7 +703,7 @@ impl<'a> Lexer<'a> {
 
 /// One token at `i` (not white space). Returns its kind and end, or `None`
 /// when a string runs off the end of the input.
-fn token(d: &[u8], i: usize) -> Option<(Tok, usize)> {
+pub(crate) fn token(d: &[u8], i: usize) -> Option<(Tok, usize)> {
     let n = d.len();
     let (tok, end) = match *d.get(i)? {
         b'(' => {
@@ -757,7 +757,7 @@ fn token(d: &[u8], i: usize) -> Option<(Tok, usize)> {
     Some((tok, end.min(n)))
 }
 
-fn skip_ws_comments_in(d: &[u8], mut i: usize, end: usize) -> usize {
+pub(crate) fn skip_ws_comments_in(d: &[u8], mut i: usize, end: usize) -> usize {
     loop {
         while i < end && is_ws(d[i]) {
             i += 1;

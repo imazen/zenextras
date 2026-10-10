@@ -492,6 +492,9 @@ pub(crate) struct Walk {
     pub best: BTreeMap<Id, Reach>,
     /// The work limit stopped the walk early.
     pub truncated: bool,
+    /// Streams the renderer interprets as content: page contents, form
+    /// XObjects, annotation appearances, Type 3 glyphs, tiling patterns.
+    pub content: BTreeSet<Id>,
 }
 
 /// The walk reads dictionaries and arrays from their raw bytes with the
@@ -503,6 +506,11 @@ pub(crate) struct Walk {
 struct Walker<'p> {
     pdf: &'p Pdf,
     render_annotations: bool,
+    /// Resource names content uses; when given, entries of the checked
+    /// resource categories that no content names are not followed as render
+    /// objects.
+    used: Option<&'p super::content::Used>,
+    content: BTreeSet<Id>,
     best: BTreeMap<Id, Reach>,
     seen: BTreeSet<(Id, Ctx)>,
     queue: VecDeque<(Id, Ctx, Cow<'static, str>)>,
@@ -534,10 +542,17 @@ fn resolve<'a>(pdf: &'a Pdf, id: Id) -> Option<Raw<'a>> {
 
 /// Walk the object graph from the trailer the way the decoder reads it.
 /// `trailer` is the trailer dictionary's bytes (hayro does not expose it).
-pub(crate) fn walk(pdf: &Pdf, trailer: Option<&[u8]>, render_annotations: bool) -> Walk {
+pub(crate) fn walk<'p>(
+    pdf: &'p Pdf,
+    trailer: Option<&[u8]>,
+    render_annotations: bool,
+    used: Option<&'p super::content::Used>,
+) -> Walk {
     let mut w = Walker {
         pdf,
         render_annotations,
+        used,
+        content: BTreeSet::new(),
         best: BTreeMap::new(),
         seen: BTreeSet::new(),
         queue: VecDeque::new(),
@@ -568,7 +583,20 @@ pub(crate) fn walk(pdf: &Pdf, trailer: Option<&[u8]>, render_annotations: bool) 
     Walk {
         best: w.best,
         truncated: w.truncated,
+        content: w.content,
     }
+}
+
+/// Whether a stream reached as a render object is interpreted as content.
+fn is_content(d: &[u8], label: &str) -> bool {
+    if matches!(label, "Contents" | "AP/N" | "CharProcs") {
+        return true;
+    }
+    let Some(dict) = Dict::from_bytes(d) else {
+        return false;
+    };
+    dict.get::<Name<'_>>(b"Subtype").as_deref() == Some(b"Form")
+        || dict.get::<i32>(b"PatternType") == Some(1)
 }
 
 impl<'p> Walker<'p> {
@@ -613,7 +641,12 @@ impl<'p> Walker<'p> {
                 return;
             }
             match resolve(pdf, id) {
-                Some(Raw::Dict(d, _)) => self.visit_dict(d, ctx, label, 0),
+                Some(Raw::Dict(d, is_stream)) => {
+                    if is_stream && ctx == Ctx::Render && is_content(d, &label) {
+                        self.content.insert(id);
+                    }
+                    self.visit_dict(d, ctx, label, 0)
+                }
                 Some(Raw::Array(a)) => self.visit_array(a, ctx, label, 0),
                 None => {}
             }
@@ -656,11 +689,31 @@ impl<'p> Walker<'p> {
             self.visit_annot(d, depth);
             return;
         }
+        // A resource map whose category content names by operator: entries
+        // no content names are never looked up.
+        let unused_check = match (ctx, self.used) {
+            (Ctx::RenderMap, Some(used)) => super::content::CHECKED
+                .iter()
+                .find(|c| label.as_bytes() == **c)
+                .map(|c| (*c, used)),
+            _ => None,
+        };
         for e in super::lex::dict_entries(d, 0..d.len()) {
             if !self.spend() {
                 return;
             }
             let key = super::lex::unescape_name(&d[e.key.clone()]);
+            if let Some((cat, used)) = unused_check
+                && !used.contains(&(cat, key.to_vec()))
+            {
+                self.edge(
+                    &d[e.value],
+                    Ctx::Skip,
+                    Cow::Borrowed("unused resource"),
+                    depth + 1,
+                );
+                continue;
+            }
             match rule(ctx, &key, self.render_annotations) {
                 Rule::Ignore => {}
                 Rule::Follow(c, l) => {
@@ -800,6 +853,22 @@ impl<'p> Walker<'p> {
             }
         }
     }
+}
+
+/// Resource names used by the walk's content streams, or `None` when a
+/// stream could not be decoded or tokenised (the check is then abandoned).
+pub(crate) fn content_usage(pdf: &Pdf, content: &BTreeSet<Id>) -> Option<super::content::Used> {
+    let mut used = super::content::Used::new();
+    let mut budget: u64 = 1 << 30;
+    for &(n, g) in content {
+        let stream = pdf.xref().get::<Stream<'_>>(ObjectIdentifier::new(n, g))?;
+        let decoded = stream.decoded().ok()?;
+        budget = budget.checked_sub(decoded.len() as u64)?;
+        if !super::content::scan(&decoded, &mut used) {
+            return None;
+        }
+    }
+    Some(used)
 }
 
 /// Object numbers an object stream declares, in order.

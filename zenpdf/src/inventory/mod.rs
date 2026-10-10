@@ -23,6 +23,7 @@
 //! Every part's `detail` starts with its revision: `rev N` counts the
 //! `%%EOF` markers before it, so each incremental update is one revision.
 
+mod content;
 mod ends;
 mod graph;
 mod lex;
@@ -516,6 +517,8 @@ struct Semantics {
     render_annotations: bool,
     /// The trailer names an encryption dictionary.
     encrypted: bool,
+    /// Resource names content uses, when every content stream was scanned.
+    used: Option<content::Used>,
 }
 
 fn semantics(
@@ -567,7 +570,15 @@ fn semantics(
             .iter()
             .any(|e| &*lex::unescape_name(&t[e.key.clone()]) == b"Encrypt")
     });
-    let walk = graph::walk(pdf, trailer, render_annotations);
+    // First walk: everything a resource map lists counts as read. Its
+    // content streams give the resource names actually used; the second
+    // walk follows only those (when every stream could be scanned).
+    let first = graph::walk(pdf, trailer, render_annotations, None);
+    let used = graph::content_usage(pdf, &first.content);
+    let walk = match &used {
+        Some(u) => graph::walk(pdf, trailer, render_annotations, Some(u)),
+        None => first,
+    };
 
     let mut objstm = BTreeMap::new();
     let mut owner = BTreeMap::new();
@@ -603,6 +614,7 @@ fn semantics(
         stm_live,
         render_annotations,
         encrypted,
+        used,
     }
 }
 
@@ -653,6 +665,68 @@ fn dict_children(
             disposition,
             detail,
         });
+    }
+    out
+}
+
+/// Entries of the resource maps in a consumed object that no content
+/// names: the object's own entries when it is a resource map, else the maps
+/// in its resources dictionary (the object itself, or its direct
+/// `/Resources`). See `content` for why this errs only towards "used".
+fn unused_resource_children(
+    data: &[u8],
+    dict: Range<usize>,
+    reach: &graph::Reach,
+    used: &content::Used,
+) -> Vec<Child> {
+    let category = |k: &[u8]| content::CHECKED.iter().find(|c| **c == k).copied();
+    let is_dict = |r: &Range<usize>| data[r.clone()].starts_with(b"<<");
+    let mut maps: Vec<(&'static [u8], Range<usize>)> = Vec::new();
+    if reach.ctx == Ctx::RenderMap {
+        if let Some(c) = category(reach.label.as_bytes()) {
+            maps.push((c, dict));
+        }
+    } else {
+        let resources = if reach.label == "Resources" {
+            Some(dict.clone())
+        } else {
+            lex::dict_entries(data, dict)
+                .into_iter()
+                .rfind(|e| &*lex::unescape_name(&data[e.key.clone()]) == b"Resources")
+                .map(|e| e.value)
+                .filter(is_dict)
+        };
+        if let Some(r) = resources {
+            for e in lex::dict_entries(data, r) {
+                if let Some(c) = category(&lex::unescape_name(&data[e.key.clone()]))
+                    && is_dict(&e.value)
+                {
+                    maps.push((c, e.value));
+                }
+            }
+        }
+    }
+    let mut out = Vec::new();
+    for (cat, map) in maps {
+        for e in lex::dict_entries(data, map) {
+            let name = lex::unescape_name(&data[e.key.clone()]);
+            if used.contains(&(cat, name.to_vec())) {
+                continue;
+            }
+            let shown = text(&name, 64);
+            out.push(Child {
+                range: e.range.clone(),
+                kind: PartKind::Attribute,
+                tag: PartTag::Name(Cow::Owned(shown.clone())),
+                disposition: Disposition::Skipped,
+                detail: format!(
+                    "unused {} resource: no content operator names /{shown}; {}",
+                    text(cat, 16),
+                    text(&data[e.value.clone()], 64)
+                ),
+                label: Some(shown),
+            });
+        }
     }
     out
 }
@@ -808,9 +882,20 @@ fn object_assign(
                     Ctx::Kid => Ctx::Page,
                     c => c,
                 };
-                a.children = dict_children(data, range, |k| {
+                a.children = dict_children(data, range.clone(), |k| {
                     graph::unread_entry(ctx, k, s.render_annotations, drawn)
                 });
+                if let Some(used) = &s.used {
+                    let mut unused = unused_resource_children(data, range, reach, used);
+                    a.children.sort_by_key(|c| c.range.start);
+                    unused.retain(|u| {
+                        let k = a.children.partition_point(|c| c.range.end <= u.range.start);
+                        a.children
+                            .get(k)
+                            .is_none_or(|c| c.range.start >= u.range.end)
+                    });
+                    a.children.append(&mut unused);
+                }
             }
             a
         }

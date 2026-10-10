@@ -307,6 +307,42 @@ fn hidden_bytes_pdf() -> Vec<u8> {
     b.finish()
 }
 
+/// A page whose resources still list an image and a font its content no
+/// longer uses (a redaction that removed the `Do` but not the image), plus a
+/// form XObject that names a resource of its own.
+fn unused_resources_pdf() -> Vec<u8> {
+    let mut b = PdfBuilder::new();
+    b.obj(1, "<< /Type /Catalog /Pages 2 0 R >>")
+        .obj(2, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>")
+        .obj(
+            3,
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 20 20] /Contents 4 0 R \
+             /Resources << /XObject << /Im1 5 0 R /Im2 6 0 R /Fm1 7 0 R >> \
+             /Font << /F1 8 0 R /F2 9 0 R >> >> >>",
+        )
+        .stream(4, "", b"q 10 0 0 10 0 0 cm /Im1 Do Q /Fm1 Do BT /F1 6 Tf (x) Tj ET")
+        .stream(
+            5,
+            "/Type /XObject /Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceGray /BitsPerComponent 8",
+            b"\x40",
+        )
+        .stream(
+            6,
+            "/Type /XObject /Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceGray /BitsPerComponent 8",
+            b"REDACTED-IMAGE",
+        )
+        .stream(
+            7,
+            "/Type /XObject /Subtype /Form /BBox [0 0 5 5] /Resources << /ExtGState << /GS1 10 0 R >> >>",
+            b"/GS1 gs 0 g 0 0 5 5 re f",
+        )
+        .obj(8, "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
+        .obj(9, "<< /Type /Font /Subtype /Type1 /BaseFont /Courier >>")
+        .obj(10, "<< /Type /ExtGState /CA 0.5 >>");
+    b.end_revision("/Root 1 0 R");
+    b.finish()
+}
+
 // ── Helpers ─────────────────────────────────────────────────────────────
 
 fn inventory(data: &[u8]) -> Inventory {
@@ -383,6 +419,7 @@ fn testkit_check_inventory_on_every_fixture() {
         ("everything", everything_pdf()),
         ("objstm", objstm_pdf()),
         ("hidden_bytes", hidden_bytes_pdf()),
+        ("unused_resources", unused_resources_pdf()),
         ("fixtures/test.pdf", fixture),
     ] {
         zencodec_testkit::check_inventory(PdfDecoderConfig::new(), &bytes)
@@ -398,6 +435,7 @@ fn fixtures_render() {
         everything_pdf(),
         objstm_pdf(),
         hidden_bytes_pdf(),
+        unused_resources_pdf(),
     ] {
         zenpdf::render_page(&bytes, 0, &zenpdf::RenderBounds::Scale(1.0)).expect("fixture renders");
     }
@@ -639,6 +677,40 @@ fn no_hidden_bytes_inside_consumed_parts() {
 }
 
 #[test]
+fn resources_no_content_names_are_unused() {
+    let data = unused_resources_pdf();
+    let inv = inventory(&data);
+    // Used: drawn image, form, the form's own graphics state, the font.
+    for n in [5, 7] {
+        assert_eq!(
+            the_object(&inv, n).disposition,
+            Disposition::ImageData,
+            "obj {n}\n{inv}"
+        );
+    }
+    for n in [8, 10] {
+        assert_eq!(
+            the_object(&inv, n).disposition,
+            Disposition::Structure,
+            "obj {n}\n{inv}"
+        );
+    }
+    // Listed but never named: skipped, as are their entries in the page.
+    for n in [6, 9] {
+        let p = the_object(&inv, n);
+        assert_eq!(p.disposition, Disposition::Skipped, "obj {n}\n{inv}");
+        assert_eq!(label(p), "unused resource");
+    }
+    for name in [&b"/Im2"[..], b"/F2"] {
+        let p = leaf_at(&inv, find(&data, name) as u64);
+        assert_eq!(p.disposition, Disposition::Skipped, "{inv}");
+        assert!(detail(p).contains("no content operator names"), "{p:?}");
+    }
+    let at = find(&data, b"REDACTED-IMAGE") as u64;
+    assert!(!leaf_at(&inv, at).disposition.is_consumed());
+}
+
+#[test]
 fn object_streams_list_their_objects() {
     let data = objstm_pdf();
     let inv = inventory(&data);
@@ -716,7 +788,7 @@ fn oracle_mutool_exiftool() {
     assert!(!files.is_empty(), "no PDFs under {dir:?}");
 
     let mut table = String::from(
-        "file\tbytes\tmutool_n\tmatched\tmutool_o\tin_objstm\tinfo\txmp\tmismatches\n",
+        "file\tbytes\tmutool_n\tmatched\tmutool_o\tin_objstm\tinfo\txmp\tunused_res\tmismatches\n",
     );
     let mut failures = Vec::new();
     for f in &files {
@@ -834,9 +906,14 @@ fn oracle_mutool_exiftool() {
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default();
+        let unused = inv
+            .parts()
+            .iter()
+            .filter(|p| detail(p).contains("no content operator names"))
+            .count();
         writeln!(
             table,
-            "{name}{}\t{}\t{n_total}\t{n_ok}\t{o_total}\t{o_ok}\t{info_ok}\t{xmp_ok}\t{}",
+            "{name}{}\t{}\t{n_total}\t{n_ok}\t{o_total}\t{o_ok}\t{info_ok}\t{xmp_ok}\t{unused}\t{}",
             if repaired { " (mutool repaired)" } else { "" },
             data.len(),
             mism.len()
