@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `DecodeJob::inventory` and the `inventory` decode capability: a byte-exact
+  structural inventory (936735e, 081abf8). A lexer maps the header, every
+  indirect object with its stream data, xref tables, trailers, `startxref`,
+  `%%EOF`, comments and junk, each labelled with its revision. hayro-syntax,
+  the parser the decoder renders with, decides which copy of an object is
+  live (earlier revisions' copies are `Unreferenced`, "superseded in
+  revision N") and what the renderer reaches from the trailer: content
+  streams, images, fonts and drawn appearances are `ImageData`; `/Info` is
+  `Dropped`; XMP, attachments, JavaScript and actions, thumbnails, outlines
+  and unknown keys are `Skipped` with a label. Unread dictionary entries,
+  overwritten duplicate keys, comments, and stream bytes after the first
+  filter's end are child parts. Fuzz target `inventory`, regression seed,
+  mutool/exiftool oracle (`just inventory-oracle DIR`).
+
 ### Fixed
 - `PageSelection::All` is bounded by `Limits::max_pages` before the page-index
   list is materialized (zenextras#2).

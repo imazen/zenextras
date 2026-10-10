@@ -1,0 +1,8 @@
+default:
+    @just --list
+
+# Cross-check the structural inventory against `xmllint --debug` on a
+# directory of real .svg/.svgz files (searched recursively). Writes the
+# result table to `report`.
+inventory-oracle dir report="inventory-oracle-svg.tsv":
+    INVENTORY_ORACLE_XMLLINT="$(command -v xmllint)" INVENTORY_ORACLE_SVG_DIR="{{dir}}" INVENTORY_ORACLE_REPORT="{{report}}" cargo test --test integration inventory::oracle_xmllint -- --nocapture

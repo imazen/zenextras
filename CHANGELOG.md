@@ -10,6 +10,11 @@ member entries here reference those files.
 
 #### Changed
 
+- **Temporary `[patch.crates-io]` for zencodec and zencodec-testkit** on the
+  `feat/inventory` branch (imazen/zencodec#133), in the root and the zenpdf
+  and zensvg fuzz manifests, for `DecodeJob::inventory` (2b30367, 081abf8,
+  4a55611). Swap for the released crates before merging.
+
 - Dependencies: compatible floors and locks refreshed (root and fuzz locks); hayro 0.8 held (zenpdf's hayro-syntax patch is a pinned 0.7 fork), hayro-jpeg2000 0.4 held (needs Rust 1.92) (bfa914b).
 - CI: checkout v7, upload-artifact v7 (c4b01fe).
 - **Third-party dependency pass.** Refreshed `Cargo.lock` within the existing requirements, third-party only (33db91c): every zen-family crate the refresh wanted to move was pinned back to what the lock already held (`archmage`/`archmage-macros` 0.9.26, `magetypes` 0.9.26, `zenpixels` 0.2.14, `zenpixels-convert` 0.2.13), verified by a package-by-package lock diff reporting 43 moved packages and zero zen-family ones. The two `[patch.crates-io]` git forks are untouched, as they must be — both carry security fixes pinned to a rev. Movers include `cc` 1.2.64 → 1.4.4, `flate2` 1.1.9 → 1.1.10, `zlib-rs` 0.6.6 → 0.6.7, `bytemuck` 1.25.0 → 1.25.2, `thiserror` 2.0.18 → 2.0.20, `getrandom` 0.3.4 → 0.4.3, `r-efi` 5.3.0 → 6.0.0, `pic-scale` 0.7.10 → 0.7.11, `zune-core` 0.5.1 → 0.5.3.
@@ -156,6 +161,20 @@ member entries here reference those files.
 
 ### [Unreleased]
 
+#### Added
+
+- **`DecodeJob::inventory`**: a byte-exact structural inventory of SVG and
+  SVGZ files, with each part's disposition taken from what usvg 0.48.1 does
+  with it: elements usvg converts versus skips (`title`, `desc`, `metadata`,
+  `script`, `foreignObject`, editor namespaces), `<style>` read as CSS,
+  attributes usvg ignores (`sodipodi:docname`, `inkscape:export-filename`,
+  `data-*`) as labelled attribute parts, `href`s that leave the document
+  (data URIs, local paths the default image resolver opens, external `use`),
+  the DOCTYPE's entities, and SVGZ gzip framing (FNAME/FCOMMENT, deflate
+  stream, trailer, extra members). Capability `inventory` declared. Fuzz
+  target `inventory`, regression seed, xmllint oracle (`just
+  inventory-oracle`) (4a55611).
+
 #### Fixed (2026-08-27, zenextras#15, #16)
 
 - **Untrusted SVG can no longer take the process down through a third-party
@@ -292,6 +311,14 @@ member entries here reference those files.
 ## zenpdf
 
 ### [Unreleased]
+
+#### Added
+
+- **`DecodeJob::inventory`**: a byte-exact structural inventory of PDF files
+  (every object, xref section, trailer, revision and comment, superseded and
+  unreferenced copies, /Info, XMP, attachments, JavaScript, thumbnails), with
+  dispositions resolved through hayro-syntax. See
+  [zenpdf/CHANGELOG.md](zenpdf/CHANGELOG.md) (936735e, 081abf8).
 
 #### Fixed (2026-08-27, zenextras#2, #13, #14)
 
