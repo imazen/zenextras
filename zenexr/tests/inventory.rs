@@ -52,7 +52,7 @@ fn checked(bytes: &[u8], what: &str) -> Inventory {
 fn has_children(inv: &Inventory) -> Vec<bool> {
     let mut kids = vec![false; inv.parts().len()];
     for p in inv.parts() {
-        if let Some(parent) = p.parent {
+        if let Some(parent) = p.parent() {
             kids[parent.index()] = true;
         }
     }
@@ -67,7 +67,7 @@ fn check(bytes: &[u8], image_data: bool) {
         assert!(
             inv.parts()
                 .iter()
-                .any(|p| p.disposition == Disposition::ImageData),
+                .any(|p| p.disposition() == Disposition::ImageData),
             "no image data\n{inv}"
         );
     }
@@ -77,13 +77,13 @@ fn check(bytes: &[u8], image_data: bool) {
     let kids = has_children(&inv);
     let tail = bytes.len() as u64..junked.len() as u64;
     for (i, p) in inv.parts().iter().enumerate() {
-        let overlaps = p.range.start < tail.end && p.range.end > tail.start;
+        let overlaps = p.range().start < tail.end && p.range().end > tail.start;
         assert!(
-            !(overlaps && !kids[i] && p.disposition.is_consumed()),
+            !(overlaps && !kids[i] && p.disposition().is_consumed()),
             "part {}..{} covers appended junk but is {}\n{inv}",
-            p.range.start,
-            p.range.end,
-            p.disposition
+            p.range().start,
+            p.range().end,
+            p.disposition()
         );
     }
     for n in truncation_lengths(bytes.len()) {
@@ -123,7 +123,7 @@ fn decoded(bytes: &[u8]) -> Result<Decoded, String> {
 /// Whether the inventory says `decode()` rejects the file.
 fn predicts_rejection(inv: &Inventory) -> bool {
     inv.parts().iter().any(|p| {
-        p.detail
+        p.detail()
             .as_deref()
             .is_some_and(|d| d.contains("decode() rejects"))
     })
@@ -138,13 +138,13 @@ fn leaves(inv: &Inventory) -> Vec<usize> {
 fn explained(inv: &Inventory, mut i: usize, needles: &[&str]) -> bool {
     loop {
         let p = &inv.parts()[i];
-        if p.detail
+        if p.detail()
             .as_deref()
             .is_some_and(|d| needles.iter().any(|n| d.contains(n)))
         {
             return true;
         }
-        match p.parent {
+        match p.parent() {
             Some(parent) => i = parent.index(),
             None => return false,
         }
@@ -155,8 +155,8 @@ fn explained(inv: &Inventory, mut i: usize, needles: &[&str]) -> bool {
 /// which is framing; every other byte flips, zeros included.
 fn flip_unconsumed(inv: &Inventory, i: usize, bytes: &mut [u8]) {
     let p = &inv.parts()[i];
-    let range = p.range.start as usize..p.range.end as usize;
-    let text = matches!(&p.tag, PartTag::Name(n) if n == "name" || n == "type");
+    let range = p.range().start as usize..p.range().end as usize;
+    let text = matches!(&p.tag(), PartTag::Name(n) if n == "name" || n == "type");
     let end = if text && bytes[range.end - 1] == 0 {
         range.end - 1
     } else {
@@ -169,7 +169,7 @@ fn flip_unconsumed(inv: &Inventory, i: usize, bytes: &mut [u8]) {
 
 fn flip_consumed(inv: &Inventory, i: usize, bytes: &mut [u8]) {
     let p = &inv.parts()[i];
-    for b in &mut bytes[p.range.start as usize..p.range.end as usize] {
+    for b in &mut bytes[p.range().start as usize..p.range().end as usize] {
         *b ^= 0x5A;
     }
 }
@@ -195,7 +195,7 @@ fn mutate_both_directions(bytes: &[u8]) -> Mutations {
     for i in leaves(&inv) {
         let p = &inv.parts()[i];
         let mut copy = bytes.to_vec();
-        if p.disposition.is_consumed() {
+        if p.disposition().is_consumed() {
             flip_consumed(&inv, i, &mut copy);
             m.consumed += 1;
             if decoded(&copy).as_ref() == Ok(&base) {
@@ -203,10 +203,10 @@ fn mutate_both_directions(bytes: &[u8]) -> Mutations {
                 assert!(
                     explained(&inv, i, &["validity only", "redundant"]),
                     "consumed part {}..{} ({:?} {}) changed nothing when overwritten\n{inv}",
-                    p.range.start,
-                    p.range.end,
-                    p.tag,
-                    p.disposition
+                    p.range().start,
+                    p.range().end,
+                    p.tag(),
+                    p.disposition()
                 );
             }
         } else {
@@ -214,9 +214,13 @@ fn mutate_both_directions(bytes: &[u8]) -> Mutations {
             m.unconsumed += 1;
             match decoded(&copy) {
                 Ok(out) => assert_eq!(
-                    out, base,
+                    out,
+                    base,
                     "overwriting unconsumed part {}..{} ({:?} {}) changed the decode\n{inv}",
-                    p.range.start, p.range.end, p.tag, p.disposition
+                    p.range().start,
+                    p.range().end,
+                    p.tag(),
+                    p.disposition()
                 ),
                 Err(e) => {
                     m.unconsumed_rejected += 1;
@@ -224,10 +228,10 @@ fn mutate_both_directions(bytes: &[u8]) -> Mutations {
                         explained(&inv, i, &["rejects"]),
                         "overwriting unconsumed part {}..{} ({:?} {}) made decode fail ({e}) \
                          without a documented reason\n{inv}",
-                        p.range.start,
-                        p.range.end,
-                        p.tag,
-                        p.disposition
+                        p.range().start,
+                        p.range().end,
+                        p.tag(),
+                        p.disposition()
                     );
                 }
             }
@@ -243,7 +247,7 @@ fn unconsumed_bulk_unchanged(bytes: &[u8], inv: &Inventory, base: &Decoded) -> u
     let mut copy = bytes.to_vec();
     let mut n = 0;
     for i in leaves(inv) {
-        if inv.parts()[i].disposition.is_consumed() || explained(inv, i, &["rejects"]) {
+        if inv.parts()[i].disposition().is_consumed() || explained(inv, i, &["rejects"]) {
             continue;
         }
         flip_unconsumed(inv, i, &mut copy);
@@ -260,7 +264,7 @@ fn unconsumed_bulk_unchanged(bytes: &[u8], inv: &Inventory, base: &Decoded) -> u
 fn find<'a>(inv: &'a Inventory, label: &str) -> Vec<&'a zencodec::inventory::Part> {
     inv.parts()
         .iter()
-        .filter(|p| p.label.as_deref() == Some(label))
+        .filter(|p| p.label() == Some(label))
         .collect()
 }
 
@@ -435,12 +439,12 @@ fn rows(inv: &Inventory) -> Vec<Row> {
         .map(|i| {
             let p = &inv.parts()[i];
             (
-                p.range.start,
-                p.range.end - p.range.start,
-                p.kind.name(),
-                p.tag.to_string(),
-                p.disposition.name(),
-                p.label.as_deref().map(str::to_string),
+                p.range().start,
+                p.range().end - p.range().start,
+                p.kind().name(),
+                p.tag().to_string(),
+                p.disposition().name(),
+                p.label().map(str::to_string),
             )
         })
         .collect()
@@ -562,11 +566,11 @@ fn pinned_hand_built_file() {
     }
     // The superseded `owner` and the identifying custom string.
     let owners = find(&inv, "owner");
-    assert!(owners[0].detail.as_deref().unwrap().contains("superseded"));
+    assert!(owners[0].detail().unwrap().contains("superseded"));
     let serial = find(&inv, "serial")[0];
     assert!(
         serial
-            .detail
+            .detail()
             .as_deref()
             .unwrap()
             .contains("SN-PRIVATE-0042")
@@ -588,25 +592,25 @@ fn piz_fixture() {
     let tagged = |name: &str| -> Vec<&zencodec::inventory::Part> {
         inv.parts()
             .iter()
-            .filter(|p| p.tag == PartTag::Name(name.to_string().into()))
+            .filter(|p| *p.tag() == PartTag::Name(name.to_string().into()))
             .collect()
     };
     // The first chunk is PIZ-coded and split into its framing; the last
     // one-row block is stored raw.
     assert_eq!(tagged("data").len(), 1, "{inv}");
-    assert_eq!(tagged("data")[0].detail, None);
+    assert_eq!(tagged("data")[0].detail(), None);
     let bits = tagged("Huffman bits");
     assert_eq!(bits.len(), 1, "{inv}");
     assert!(
         bits[0]
-            .detail
+            .detail()
             .as_deref()
             .unwrap()
             .contains("not distinguished")
     );
     for ignored in ["Huffman table size", "Huffman reserved"] {
         assert_eq!(
-            tagged(ignored)[0].disposition,
+            tagged(ignored)[0].disposition(),
             Disposition::Unreferenced,
             "{inv}"
         );
@@ -713,32 +717,36 @@ fn attributes_fixture_dispositions() {
         ] {
             let parts = find(&inv, name);
             assert_eq!(parts.len(), 1, "{name}\n{inv}");
-            assert_eq!(parts[0].kind, PartKind::Attribute);
-            assert_eq!(parts[0].disposition, Disposition::Dropped, "{name}\n{inv}");
+            assert_eq!(parts[0].kind(), PartKind::Attribute);
+            assert_eq!(
+                parts[0].disposition(),
+                Disposition::Dropped,
+                "{name}\n{inv}"
+            );
         }
         // exr 1.74.2 writes a 24-byte keycode (KeyCode::write drops
         // perforations_per_frame) that its own 28-byte reader rejects, so
         // decode() ignores it.
         let key = find(&inv, "keyCode");
         assert_eq!(key.len(), 1, "{inv}");
-        assert_eq!(key[0].disposition, Disposition::Malformed, "{inv}");
+        assert_eq!(key[0].disposition(), Disposition::Malformed, "{inv}");
         assert!(
             find(&inv, "owner")[0]
-                .detail
+                .detail()
                 .as_deref()
                 .unwrap()
                 .contains("OWNER-Jane Example")
         );
         assert!(
             find(&inv, "cameraSerial")[0]
-                .detail
+                .detail()
                 .as_deref()
                 .unwrap()
                 .contains("SN-PRIVATE-0042")
         );
         let chroma = find(&inv, "chromaticities")[0];
         assert_eq!(
-            chroma.disposition,
+            chroma.disposition(),
             Disposition::Metadata(MetadataKind::Colour)
         );
         let long = find(&inv, "a custom attribute name longer than thirty-two bytes");
@@ -806,28 +814,28 @@ fn tiled_mip_levels_and_preview_are_skipped() {
     let chunks: Vec<_> = inv
         .parts()
         .iter()
-        .filter(|p| p.kind == PartKind::Chunk)
+        .filter(|p| p.kind() == PartKind::Chunk)
         .collect();
     // 21x13 in 8x8 tiles: 3x2 at level 0; levels 1-4 (10x6, 5x3, 2x1, 1x1)
     // take 2x1 + 1x1 + 1x1 + 1x1.
     let image = chunks
         .iter()
-        .filter(|p| p.disposition == Disposition::ImageData)
+        .filter(|p| p.disposition() == Disposition::ImageData)
         .count();
     let skipped: Vec<_> = chunks
         .iter()
-        .filter(|p| p.disposition == Disposition::Skipped)
+        .filter(|p| p.disposition() == Disposition::Skipped)
         .collect();
     assert_eq!(image, 6, "{inv}");
     assert_eq!(skipped.len(), 5, "{inv}");
     assert!(
         skipped
             .iter()
-            .all(|p| p.detail.as_deref().unwrap().contains("largest level"))
+            .all(|p| p.detail().unwrap().contains("largest level"))
     );
     let preview = find(&inv, "preview")[0];
-    assert_eq!(preview.disposition, Disposition::Skipped);
-    assert!(preview.detail.as_deref().unwrap().contains("2x2"));
+    assert_eq!(preview.disposition(), Disposition::Skipped);
+    assert!(preview.detail().unwrap().contains("2x2"));
     let m = mutate_both_directions(&bytes);
     eprintln!("{m:?}");
 }
@@ -858,25 +866,25 @@ fn multipart_files_are_rejected_and_their_chunks_skipped() {
     let headers: Vec<_> = inv
         .parts()
         .iter()
-        .filter(|p| p.kind == PartKind::Header && matches!(p.tag, PartTag::Code(_)))
+        .filter(|p| p.kind() == PartKind::Header && matches!(p.tag(), PartTag::Code(_)))
         .collect();
     assert_eq!(headers.len(), 2);
-    assert_eq!(headers[1].label.as_deref(), Some("right"));
+    assert_eq!(headers[1].label(), Some("right"));
     assert!(find(&inv, "end of headers").is_empty());
     assert!(
         inv.parts()
             .iter()
-            .any(|p| p.tag == PartTag::Name("end of headers".into()))
+            .any(|p| *p.tag() == PartTag::Name("end of headers".into()))
     );
-    for p in inv.parts().iter().filter(|p| p.kind == PartKind::Chunk) {
-        assert_eq!(p.disposition, Disposition::Skipped, "{inv}");
+    for p in inv.parts().iter().filter(|p| p.kind() == PartKind::Chunk) {
+        assert_eq!(p.disposition(), Disposition::Skipped, "{inv}");
     }
     for p in inv
         .parts()
         .iter()
-        .filter(|p| p.label.as_deref() == Some("offset table"))
+        .filter(|p| p.label() == Some("offset table"))
     {
-        assert_eq!(p.disposition, Disposition::Skipped, "{inv}");
+        assert_eq!(p.disposition(), Disposition::Skipped, "{inv}");
     }
 }
 
@@ -889,8 +897,8 @@ fn single_part_with_multipart_flag_decodes() {
     assert!(
         inv.parts()
             .iter()
-            .any(|p| p.tag == PartTag::Name("part number".into())
-                && p.disposition == Disposition::Structure),
+            .any(|p| *p.tag() == PartTag::Name("part number".into())
+                && p.disposition() == Disposition::Structure),
         "{inv}"
     );
     mutate_both_directions(&bytes);
@@ -929,13 +937,13 @@ fn layout(bytes: &[u8]) -> (std::ops::Range<usize>, Vec<u64>) {
     let table = inv
         .parts()
         .iter()
-        .find(|p| p.label.as_deref() == Some("offset table"))
+        .find(|p| p.label() == Some("offset table"))
         .unwrap();
     assert_eq!(
-        (table.range.end - table.range.start) / 8,
+        (table.range().end - table.range().start) / 8,
         meta.headers[0].chunk_count as u64
     );
-    let range = table.range.start as usize..table.range.end as usize;
+    let range = table.range().start as usize..table.range().end as usize;
     let offsets = range
         .clone()
         .step_by(8)
@@ -960,14 +968,14 @@ fn zlib_slack_inside_a_chunk_is_unreferenced() {
         let slack: Vec<_> = inv
             .parts()
             .iter()
-            .filter(|p| p.tag == PartTag::Name("slack".into()))
+            .filter(|p| *p.tag() == PartTag::Name("slack".into()))
             .collect();
         assert_eq!(slack.len(), 1, "{compression:?}\n{inv}");
         assert_eq!(
-            slack[0].range,
+            slack[0].range(),
             data_end as u64..(data_end + junk.len()) as u64
         );
-        assert_eq!(slack[0].disposition, Disposition::Unreferenced);
+        assert_eq!(slack[0].disposition(), Disposition::Unreferenced);
         mutate_both_directions(&patched);
     }
 }
@@ -992,11 +1000,11 @@ fn junk_between_and_after_chunks_is_unconsumed() {
     let gap = inv
         .parts()
         .iter()
-        .find(|p| p.kind == PartKind::Gap && p.disposition == Disposition::Unreferenced)
+        .find(|p| p.kind() == PartKind::Gap && p.disposition() == Disposition::Unreferenced)
         .expect("unreferenced gap");
     assert_eq!(gap.len(), 22);
     let tail = inv.parts().last().unwrap();
-    assert_eq!(tail.disposition, Disposition::Trailing);
+    assert_eq!(tail.disposition(), Disposition::Trailing);
     assert_eq!(tail.len(), 24);
     mutate_both_directions(&patched);
 }
@@ -1023,7 +1031,7 @@ fn short_gaps_make_exr_read_from_the_wrong_offset() {
     assert!(predicts_rejection(&inv), "{inv}");
     assert!(
         inv.parts().iter().any(|p| p
-            .detail
+            .detail()
             .as_deref()
             .is_some_and(|d| d.contains("counted twice"))),
         "{inv}"
@@ -1065,8 +1073,8 @@ fn rle_data_past_the_block_rejects() {
     assert!(
         inv.parts()
             .iter()
-            .any(|p| p.disposition == Disposition::Malformed
-                && p.detail.as_deref().unwrap_or("").contains("RLE")),
+            .any(|p| p.disposition() == Disposition::Malformed
+                && p.detail().unwrap_or("").contains("RLE")),
         "{inv}"
     );
 }
@@ -1089,8 +1097,8 @@ fn limits_change_the_verdict() {
     assert!(
         inv.parts()
             .iter()
-            .filter(|p| p.kind == PartKind::Chunk)
-            .all(|p| p.disposition == Disposition::Skipped)
+            .filter(|p| p.kind() == PartKind::Chunk)
+            .all(|p| p.disposition() == Disposition::Skipped)
     );
     let err = ExrDecoderConfig::new()
         .with_max_input_bytes(10)
@@ -1111,7 +1119,7 @@ fn not_exr_and_empty_inputs() {
         assert!(
             inv.parts()
                 .iter()
-                .all(|p| !p.disposition.is_consumed() || p.range.end <= 4)
+                .all(|p| !p.disposition().is_consumed() || p.range().end <= 4)
         );
     }
 }
@@ -1309,14 +1317,14 @@ fn exiftool_oracle_agrees() {
             .into_iter()
             .find(|id| {
                 let p = &inv.parts()[id.index()];
-                p.kind == PartKind::Header && p.tag == PartTag::Code(0)
+                p.kind() == PartKind::Header && *p.tag() == PartTag::Code(0)
             })
             .unwrap();
         let attrs: Vec<_> = inv
             .children(Some(header0))
             .into_iter()
             .map(|id| &inv.parts()[id.index()])
-            .filter(|p| p.kind == PartKind::Attribute)
+            .filter(|p| p.kind() == PartKind::Attribute)
             .collect();
         listed += attrs.len();
         let mut cursor = 0;
@@ -1324,7 +1332,7 @@ fn exiftool_oracle_agrees() {
             units += 1;
             let found = attrs[cursor..]
                 .iter()
-                .position(|a| a.label.as_deref() == Some(tag.name.as_str()));
+                .position(|a| a.label() == Some(tag.name.as_str()));
             let Some(k) = found else {
                 failures.push(format!(
                     "{}: exiftool tag '{}' not in the first header",
@@ -1335,9 +1343,9 @@ fn exiftool_oracle_agrees() {
             };
             let a = attrs[cursor + k];
             cursor += k + 1;
-            let detail = a.detail.as_deref().unwrap_or("");
+            let detail = a.detail().unwrap_or("");
             // The value is the attribute's last `size` bytes.
-            let value_start = a.range.end - tag.size;
+            let value_start = a.range().end - tag.size;
             let ok = detail.starts_with(&tag.ty) && tag.offset.is_none_or(|o| o == value_start);
             if ok {
                 matched += 1;
@@ -1349,8 +1357,8 @@ fn exiftool_oracle_agrees() {
                     tag.size,
                     tag.ty,
                     tag.offset,
-                    a.range.start,
-                    a.range.end
+                    a.range().start,
+                    a.range().end
                 ));
             }
         }
@@ -1408,8 +1416,8 @@ fn rle_overshoot_rejects() {
     assert!(
         inv.parts()
             .iter()
-            .any(|p| p.disposition == Disposition::Malformed
-                && p.detail
+            .any(|p| p.disposition() == Disposition::Malformed
+                && p.detail()
                     .as_deref()
                     .is_some_and(|d| d.contains("block needs"))),
         "{inv}"
@@ -1447,7 +1455,7 @@ fn uncompressed_size_mismatch_rejects() {
 fn tagged<'a>(inv: &'a Inventory, name: &str) -> Vec<&'a zencodec::inventory::Part> {
     inv.parts()
         .iter()
-        .filter(|p| p.tag == PartTag::Name(name.to_string().into()))
+        .filter(|p| *p.tag() == PartTag::Name(name.to_string().into()))
         .collect()
 }
 
@@ -1457,7 +1465,7 @@ fn leaf_at(inv: &Inventory, offset: u64) -> &zencodec::inventory::Part {
     let i = (0..inv.parts().len())
         .find(|&i| {
             let p = &inv.parts()[i];
-            !kids[i] && p.range.start <= offset && offset < p.range.end
+            !kids[i] && p.range().start <= offset && offset < p.range().end
         })
         .unwrap();
     &inv.parts()[i]
@@ -1534,9 +1542,9 @@ fn tile_fully_covered_by_a_later_tile_is_dropped() {
     let inv = inventory(&bytes);
     let first = tagged(&inv, "data")
         .into_iter()
-        .min_by_key(|p| p.range.start)
+        .min_by_key(|p| p.range().start)
         .unwrap();
-    assert_eq!(first.disposition, Disposition::Dropped, "{inv}");
+    assert_eq!(first.disposition(), Disposition::Dropped, "{inv}");
     mutate_both_directions(&bytes);
 }
 
@@ -1565,15 +1573,15 @@ fn zlib_fdict_slack_is_unreferenced() {
         let inv = inventory(&patched);
         let leaf = leaf_at(&inv, (data + size) as u64);
         assert_eq!(
-            leaf.tag,
+            *leaf.tag(),
             PartTag::Name("slack".into()),
             "{compression:?}\n{inv}"
         );
         assert_eq!(
-            leaf.range,
+            leaf.range(),
             (data + size) as u64..(data + size + junk.len()) as u64
         );
-        assert_eq!(leaf.disposition, Disposition::Unreferenced);
+        assert_eq!(leaf.disposition(), Disposition::Unreferenced);
         mutate_both_directions(&patched);
     }
 }
@@ -1591,28 +1599,28 @@ fn piz_bytes_after_the_bit_count_are_read() {
         let chunk = inv
             .parts()
             .iter()
-            .find(|p| p.kind == PartKind::Chunk && p.range.contains(&bits.range.start))
+            .find(|p| p.kind() == PartKind::Chunk && p.range().contains(&bits.range().start))
             .unwrap()
             .clone();
         let size_at = tagged(&inv, "size")
             .into_iter()
-            .find(|p| chunk.range.contains(&p.range.start))
+            .find(|p| chunk.range().contains(&p.range().start))
             .unwrap()
-            .range
+            .range()
             .start as usize;
-        let at = bits.range.end as usize;
+        let at = bits.range().end as usize;
         let planted = b"PIZ-SLACK-PII";
         let mut patched = insert(&bytes, table, at, planted, Some(size_at));
-        let l = length.range.start as usize;
+        let l = length.range().start as usize;
         let v = i32::from_le_bytes(patched[l..l + 4].try_into().unwrap());
         patched[l..l + 4].copy_from_slice(&(v + planted.len() as i32).to_le_bytes());
         assert!(decoded(&patched).is_err());
         check(&patched, false);
         let inv = inventory(&patched);
         let leaf = leaf_at(&inv, at as u64);
-        assert_eq!(leaf.tag, PartTag::Name("Huffman bits".into()), "{inv}");
-        assert!(leaf.disposition.is_consumed());
-        assert!(leaf.detail.as_deref().unwrap().contains("likely rejects"));
+        assert_eq!(*leaf.tag(), PartTag::Name("Huffman bits".into()), "{inv}");
+        assert!(leaf.disposition().is_consumed());
+        assert!(leaf.detail().unwrap().contains("likely rejects"));
     }
 }
 
@@ -1656,15 +1664,15 @@ fn scanline_y_remainder_is_noted() {
         assert_eq!(decoded(&copy), decoded(&bytes));
         let inv = inventory(&copy);
         let field = leaf_at(&inv, first as u64);
-        assert_eq!(field.tag, PartTag::Name("y".into()));
+        assert_eq!(*field.tag(), PartTag::Name("y".into()));
         assert!(
             field
-                .detail
+                .detail()
                 .as_deref()
                 .unwrap_or("")
                 .contains("remainder 13 is ignored"),
             "{compression:?}: {:?}",
-            field.detail
+            field.detail()
         );
     }
 }
@@ -1684,9 +1692,9 @@ fn superseded_values_say_they_are_still_validated() {
         let inv = inventory(&bytes);
         let first = find(&inv, name)[0];
         assert!(
-            first.detail.as_deref().unwrap().contains("still validated"),
+            first.detail().unwrap().contains("still validated"),
             "{name}: {:?}",
-            first.detail
+            first.detail()
         );
         mutate_both_directions(&bytes);
     }
