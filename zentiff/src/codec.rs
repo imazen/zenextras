@@ -88,7 +88,8 @@ static TIFF_DECODE_CAPS: DecodeCapabilities = DecodeCapabilities::new()
     // Multi-page TIFF: decode reports `ImageSequence::Multi` for >1 IFD.
     .with_multi_image(true)
     .with_enforces_max_pixels(true)
-    .with_enforces_max_memory(true);
+    .with_enforces_max_memory(true)
+    .with_inventory(true);
 
 /// Pixel formats the TIFF encoder accepts.
 ///
@@ -658,6 +659,49 @@ impl<'a> zencodec::decode::DecodeJob<'a> for TiffDecodeJob {
     fn with_orientation(mut self, hint: OrientationHint) -> Self {
         self.orientation = hint;
         self
+    }
+
+    /// Map every byte of `data` without decoding pixels; see
+    /// [`crate::inventory`] for the walk and the dispositions.
+    fn inventory(
+        &self,
+        data: &[u8],
+    ) -> Result<Option<zencodec::inventory::Inventory>, At<CodecError>> {
+        let stop: &dyn Stop = match &self.stop {
+            Some(s) => s,
+            None => &enough::Unstoppable,
+        };
+        stop.check()
+            .map_err(|e| CodecError::of(at!(TiffError::from(e))))?;
+        // The same input-size limit `decoder()` enforces.
+        if let Some(max) = self.max_input_bytes
+            && data.len() as u64 > max
+        {
+            return Err(CodecError::of(at!(TiffError::from(
+                zencodec::LimitExceeded::InputSize {
+                    actual: data.len() as u64,
+                    max,
+                }
+            ))));
+        }
+        let policy = self.policy.as_ref();
+        let surf = crate::inventory::Surfaced {
+            icc: policy.is_none_or(|p| p.resolve_icc(true)),
+            exif: policy.is_none_or(|p| p.resolve_exif(true)),
+            xmp: policy.is_none_or(|p| p.resolve_xmp(true)),
+            // The value limit the decode applies (`decode::decode_inner`).
+            decoding_buffer_size: crate::decode::derive_tiff_limits(&self.effective_decode_config())
+                .decoding_buffer_size as u64,
+        };
+        match crate::inventory::inventory(data, surf, stop) {
+            Ok(inv) => Ok(Some(inv)),
+            Err(crate::inventory::Failed::Stopped(r)) => {
+                Err(CodecError::of(at!(TiffError::from(r))))
+            }
+            Err(crate::inventory::Failed::Parts(e)) => {
+                Err(CodecError::of(at!(TiffError::LimitExceeded(e.to_string()))))
+            }
+        }
     }
 
     fn probe(&self, data: &[u8]) -> Result<ImageInfo, At<CodecError>> {
