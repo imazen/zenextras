@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "zentiff",
+    "zenifd",
     "zensvg",
     "zenjp2",
     "zenpdf",

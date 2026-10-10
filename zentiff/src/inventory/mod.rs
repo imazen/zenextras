@@ -10,8 +10,8 @@
 //! lone word-alignment byte becomes `Padding`); bytes after the last
 //! referenced byte are `Trailing`.
 
-mod tags;
-mod tiff_walk;
+use zenifd::tags;
+use zenifd::walk as tiff_walk;
 
 use alloc::borrow::Cow;
 use alloc::format;

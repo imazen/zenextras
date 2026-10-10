@@ -7,13 +7,13 @@
 use alloc::borrow::Cow;
 use alloc::format;
 
-use super::tiff_walk::Kind;
+use crate::walk::Kind;
 
-pub(super) fn tag_known(kind: Kind, tag: u16) -> bool {
+pub fn tag_known(kind: Kind, tag: u16) -> bool {
     lookup(kind, tag).is_some()
 }
 
-pub(super) fn tag_name(kind: Kind, tag: u16) -> Cow<'static, str> {
+pub fn tag_name(kind: Kind, tag: u16) -> Cow<'static, str> {
     match lookup(kind, tag) {
         Some(n) => Cow::Borrowed(n),
         None => Cow::Owned(format!("tag {tag}")),

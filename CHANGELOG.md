@@ -72,9 +72,25 @@ member entries here reference those files.
   all members already implement the two-level `ErrorCategory` taxonomy that
   0.1.26 ships.
 
+## zenifd
+
+### [Unreleased]
+
+#### QUEUED BREAKING CHANGES
+
+- None.
+
+#### Added
+
+- New crate: the TIFF IFD walker for structural inventories, moved out of zentiff and zenraw, which each carried an identical copy (`tiff_walk.rs` + `tags.rs`, 2,860 lines). Decoder policy stays with the caller through `walk::Rules`.
+
 ## zentiff
 
 ### [Unreleased]
+
+#### Changed (inventory)
+
+- The inventory's TIFF walker comes from `zenifd` instead of an in-crate copy.
 
 #### Fixed (2026-08-27, zenextras#3)
 

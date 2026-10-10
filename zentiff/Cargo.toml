@@ -19,6 +19,8 @@ whereat = { version = "0.1.5", default-features = false }
 enough = { version = "0.4.4", default-features = false }
 zenpixels = { version = ">=0.2.10, <0.4.0", default-features = false }
 zencodec = { version = ">=0.1.26, <0.3.0", optional = true }
+# The TIFF IFD walker the inventory shares with zenraw.
+zenifd = { version = "0.1.0", path = "../zenifd", optional = true }
 # Two zencodec-adapter uses, gated under `zencodec` so the no_std core stays
 # dependency-free: (1) orientation baking (apply_orientation) for the bake
 # path — image-tiff itself has no orientation bake (see decode.rs Orientation
@@ -56,7 +58,7 @@ zstd = ["tiff/zstd"]
 # lib.rs) and `TiffError::Io` always holds a real `std::io::Error` — this just
 # unlocks zencodec's `CodecIoKind::from(&std::io::Error)` so the `Io` category
 # preserves the real `ErrorKind` instead of falling back to `CodecIoKind::opaque()`.
-zencodec = ["dep:zencodec", "dep:zenpixels-convert", "zencodec/std"]
+zencodec = ["dep:zencodec", "dep:zenpixels-convert", "zencodec/std", "dep:zenifd"]
 # Palette TIFF support requires tiff crate's color_map() API, which is
 # not available in tiff 0.11.x (only on git main). Enable this feature
 # once tiff 0.12+ is released. Not included in all-codecs or default.

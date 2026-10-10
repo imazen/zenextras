@@ -1886,6 +1886,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "zenifd"
+version = "0.1.0"
+dependencies = [
+ "zencodec",
+]
+
+[[package]]
 name = "zenjp2"
 version = "0.1.0"
 dependencies = [
@@ -1975,6 +1982,7 @@ dependencies = [
  "zenbench",
  "zencodec",
  "zencodec-testkit",
+ "zenifd",
  "zenpixels",
  "zenpixels-convert",
 ]
