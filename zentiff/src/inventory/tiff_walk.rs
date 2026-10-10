@@ -237,6 +237,9 @@ pub(super) struct Ifd {
     pub(super) last: BTreeMap<u16, usize>,
     /// Index of the first entry with a field type TIFF does not define.
     pub(super) first_unknown: Option<usize>,
+    /// Pointer hops from the first directory of the walk (chained IFDs keep
+    /// their predecessor's depth), as decoders that cap recursion count.
+    pub(super) depth: u8,
 }
 
 impl Ifd {
@@ -471,6 +474,7 @@ fn parse_ifd(
         roles: alloc::vec![(kind, followed)],
         last: BTreeMap::new(),
         first_unknown: None,
+        depth: 0,
     };
     let count = if lay.big {
         lay.u64(d, at)
@@ -758,6 +762,11 @@ pub(super) struct ChunkUse {
     /// shorter declared length is read past (image-tiff reads uncompressed
     /// data by row size).
     pub(super) past_count: bool,
+    /// Another chunk's extent already covers this one (a decoder reading
+    /// every row from the first strip): not listed on its own.
+    pub(super) covered: bool,
+    /// The decoder never reads this chunk: listed alone as `Skipped`, why.
+    pub(super) unread: Option<&'static str>,
 }
 
 /// The decoded layout of one strip or tile.
@@ -1092,14 +1101,14 @@ pub(super) fn walk<'a>(data: &'a [u8], base: u64, limit: u64, rules: &dyn Rules)
     }
 
     let first = w.abs(ifd0);
-    run_queue(&mut w, first, Kind::Page(0), "IFD0".into(), rules);
+    run_queue(&mut w, first, Kind::Page(0), "IFD0".into(), 0, rules);
     w
 }
 
 /// Walk the directories starting at the absolute offset `at`, which has no
 /// TIFF header of its own (a maker-note IFD): offsets inside are relative to
 /// `base`, and `lay` gives the byte order. Every position stays below
-/// `limit`.
+/// `limit`; the first directory is at pointer depth `depth`.
 #[allow(clippy::too_many_arguments, dead_code)] // not every crate walks maker notes
 pub(super) fn walk_ifd<'a>(
     data: &'a [u8],
@@ -1109,6 +1118,7 @@ pub(super) fn walk_ifd<'a>(
     at: u64,
     kind: Kind,
     name: String,
+    depth: u8,
     rules: &dyn Rules,
 ) -> Walk<'a> {
     let limit = limit.min(data.len() as u64);
@@ -1129,7 +1139,7 @@ pub(super) fn walk_ifd<'a>(
         by_at: BTreeMap::new(),
         cancelled: false,
     };
-    run_queue(&mut w, Some(at), kind, name, rules);
+    run_queue(&mut w, Some(at), kind, name, depth, rules);
     w
 }
 
@@ -1147,12 +1157,20 @@ struct Pending {
     name: String,
     followed: bool,
     from: From,
+    depth: u8,
 }
 
 /// Walk every directory reachable from the first one, breadth first. A
 /// directory reached again by another kind of path records that kind, and
 /// the pointers that kind follows are queued too.
-fn run_queue(w: &mut Walk<'_>, first: Option<u64>, kind: Kind, name: String, rules: &dyn Rules) {
+fn run_queue(
+    w: &mut Walk<'_>,
+    first: Option<u64>,
+    kind: Kind,
+    name: String,
+    depth: u8,
+    rules: &dyn Rules,
+) {
     let d = w.d;
     let lay = w.lay;
     let mut queue = VecDeque::new();
@@ -1162,6 +1180,7 @@ fn run_queue(w: &mut Walk<'_>, first: Option<u64>, kind: Kind, name: String, rul
         name,
         followed: true,
         from: From::Header,
+        depth,
     });
     while let Some(p) = queue.pop_front() {
         let note = |w: &mut Walk<'_>, text: String| match p.from {
@@ -1240,6 +1259,7 @@ fn run_queue(w: &mut Walk<'_>, first: Option<u64>, kind: Kind, name: String, rul
         if let From::Entry(i, e) = p.from {
             ifd.parent = Some((i, e));
         }
+        ifd.depth = p.depth;
         if p.kind == Kind::Page(0) && ifd.problem.is_some() {
             w.fatal = Some(format!(
                 "IFD0 {}",
@@ -1300,6 +1320,7 @@ fn enqueue(
                 name,
                 followed,
                 from: From::Entry(idx, ei),
+                depth: w.ifds[idx].depth.saturating_add(1),
             });
         }
     }
@@ -1320,6 +1341,7 @@ fn enqueue(
             name,
             followed: followed_next,
             from: From::Next(idx),
+            depth: w.ifds[idx].depth,
         });
     }
 }
@@ -1680,7 +1702,12 @@ pub(super) fn place(w: &mut Walk<'_>, rules: &dyn Rules, first: Vec<Cand>) -> Pl
                 if let Some(n) = &rule.fate.note {
                     push_note(&mut detail, n);
                 }
-                if pixels && (first..=last).any(|k| uses.get(k).is_none_or(|u| u.used.is_none())) {
+                if pixels
+                    && (first..=last).any(|k| {
+                        uses.get(k)
+                            .is_none_or(|u| u.used.is_none() && u.unread.is_none())
+                    })
+                {
                     push_note(
                         &mut detail,
                         "bytes after the end of the coded data are not split out",
@@ -1708,13 +1735,32 @@ pub(super) fn place(w: &mut Walk<'_>, rules: &dyn Rules, first: Vec<Cand>) -> Pl
             let mut run: Option<(Range<u64>, usize, usize)> = None;
             for (k, (&o, &n)) in offs.iter().zip(cnts.iter()).enumerate() {
                 let Some(start) = w.abs(o) else { continue };
-                if n == 0 {
+                if n == 0 || uses.get(k).is_some_and(|u| u.covered) {
                     continue;
                 }
                 if extents_left == 0 {
                     break;
                 }
                 extents_left -= 1;
+                // A chunk the decoder never reads is listed alone.
+                if let Some(why) = uses.get(k).and_then(|u| u.unread) {
+                    if let Some((r, first, last)) = run.take() {
+                        emit(r, first, last, &mut values, &mut notes);
+                    }
+                    let before = values.len();
+                    let end = start.saturating_add(n);
+                    logical_end = logical_end.max(end.min(limit));
+                    emit(start..end, k, k, &mut values, &mut notes);
+                    if values.len() > before
+                        && let Some(c) = values.last_mut()
+                    {
+                        if c.disp != Disposition::Malformed {
+                            c.disp = Disposition::Skipped;
+                        }
+                        push_note(&mut c.detail, why);
+                    }
+                    continue;
+                }
                 // A chunk the decoder reads by size runs to what it reads.
                 let read = uses
                     .get(k)

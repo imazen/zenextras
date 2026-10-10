@@ -771,7 +771,7 @@ fn over_limit_in(w: &Walk<'_>, e: &Entry, dbs: u64) -> Option<String> {
     let limit = if e.typ == 2 { dbs } else { dbs / VALUE_SIZE };
     (e.count > limit).then(|| {
         format!(
-            "{} elements exceed image-tiff's per-value limit of {limit}; reading it fails",
+            "{} elements exceed image-tiff's per-value limit of {limit}; reading it fails (zenextras#36)",
             e.count
         )
     })

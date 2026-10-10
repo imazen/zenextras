@@ -24,7 +24,17 @@ semantic versioning.
   cross-checks `exiftool -v3` (154 files, 3166 units, 0 unexplained). Fuzz
   target `inventory` (3b22e7d). The `[patch.crates-io]` git entries for
   zencodec/zencodec-testkit (a60e28a) must be swapped for the release
-  before merge.
+  before merge. Review round 1 (31a1420, 85ec28f): bounded walk (O(log n)
+  overlap checks, entry/extent/scan budgets, overlapping IFD tables refused,
+  stop token and `max_input_bytes`); a directory reached by several pointers
+  takes the strongest fate of its paths (EXIF data the decoder surfaces
+  through any path is metadata); layout-dependent tags, image-tiff's
+  per-value limit, suppressed EXIF, pages after a rejected page, IFD/LONG8
+  resolution pairs, edge-tile padding, PackBits tails, inline-field slack and
+  short uncompressed strips (read past their count) follow image-tiff; ICC and
+  XMP bytes past their internal end are split off as metadata. A reverse
+  decode-mutation check requires every read part to change the decode or
+  say why not (1,963 parts, 101 corpus files).
 - **`tests/fuzz_regression.rs` — the committed crash corpus is now actually
   replayed.** `fuzz/regression/` has carried four minimized seeds
   (`fuzz_decode/`: one crash and the two BigTIFF/GDAL OOM repros;

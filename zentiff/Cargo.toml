@@ -91,3 +91,7 @@ harness = false
 [[example]]
 name = "inventory_dump"
 required-features = ["zencodec"]
+
+[[example]]
+name = "inventory_stress"
+required-features = ["zencodec"]
