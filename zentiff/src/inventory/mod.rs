@@ -815,7 +815,12 @@ pub(crate) fn inventory(
             stop.check().err().unwrap_or(enough::StopReason::Cancelled),
         ));
     }
-    let gap = if placement.ifd0_ok {
+    let gap = if placement.ifd0_ok && placement.budget_hit {
+        (
+            Disposition::Unknown,
+            Some(String::from(tiff_walk::BUDGET_GAP)),
+        )
+    } else if placement.ifd0_ok {
         (Disposition::Unreferenced, None)
     } else {
         (Disposition::Malformed, w.fatal.clone())
