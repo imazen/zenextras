@@ -29,9 +29,25 @@ pub(crate) enum Ctx {
     /// An intermediate `/Pages` node.
     PageTree,
     /// An entry of a `/Kids` array: a page or a page-tree node, decided by
-    /// its `/Type` when visited (hayro's `resolve_pages`).
+    /// its `/Type` when visited (hayro's `resolve_pages`), and by whether it
+    /// is the decoded page or one of its ancestors ([`classify`]).
     Kid,
+    /// The page the job decodes.
     Page,
+    /// A page the job does not decode: hayro builds a `Page` for it (geometry
+    /// and resource maps) but never reads its content or annotations.
+    OtherPage,
+    /// A page-tree node that is not an ancestor of the decoded page.
+    OtherTree,
+    /// The `/Resources` dictionary of the decoded page or an ancestor node:
+    /// the decoded page's lookups search its resource maps.
+    PageRes,
+    /// The `/Resources` dictionary of another page or node: hayro's
+    /// `Resources::new` resolves its maps, no lookup searches them.
+    OtherRes,
+    /// A resource map of an [`Ctx::OtherRes`] dictionary: its entries are
+    /// never resolved.
+    OtherMap,
     /// Objects the renderer reads to draw a page: content streams, resources,
     /// fonts, images, forms, patterns, shadings, functions, colour spaces.
     Render,
@@ -63,15 +79,19 @@ impl Ctx {
     /// disposition.
     pub(crate) fn rank(self) -> u8 {
         match self {
-            Ctx::Render | Ctx::RenderMap => 5,
+            Ctx::Render | Ctx::RenderMap => 6,
             Ctx::Catalog
             | Ctx::PageTree
             | Ctx::Kid
             | Ctx::Page
+            | Ctx::PageRes
             | Ctx::Annot
             | Ctx::Leaf
             | Ctx::OcProps
-            | Ctx::Encrypt => 4,
+            | Ctx::Encrypt => 5,
+            // Parsed while hayro builds the page list, nothing more: an
+            // object also reached for the decoded page takes that role.
+            Ctx::OtherPage | Ctx::OtherTree | Ctx::OtherRes | Ctx::OtherMap => 4,
             Ctx::OcHidden => 3,
             Ctx::Info => 2,
             Ctx::Names | Ctx::Skip => 1,
@@ -409,13 +429,19 @@ fn rule(ctx: Ctx, key: &[u8], render_annotations: bool) -> Rule {
             _ => skip_key(key),
         },
         // `resolve_pages` and `Page::new` (hayro-syntax page.rs) read only
-        // these keys; `interpret_page` adds `/Annots`.
-        Ctx::PageTree | Ctx::Kid | Ctx::Page => match key {
-            b"Kids" if ctx != Ctx::Page => follow(Ctx::Kid, "Kids"),
+        // these keys; `interpret_page`, for the decoded page only, adds
+        // `/Contents` and `/Annots`.
+        Ctx::PageTree | Ctx::OtherTree | Ctx::Kid | Ctx::Page | Ctx::OtherPage => match key {
+            b"Kids" if !matches!(ctx, Ctx::Page | Ctx::OtherPage) => follow(Ctx::Kid, "Kids"),
             b"Contents" if ctx == Ctx::Page => follow(Ctx::Render, "Contents"),
+            b"Contents" if ctx == Ctx::OtherPage => skip(NOT_DECODED_CONTENTS),
             b"Annots" if ctx == Ctx::Page && render_annotations => follow(Ctx::Annot, "Annots"),
             b"Annots" if ctx == Ctx::Page => skip("Annots (annotations off)"),
-            b"Resources" => follow(Ctx::Render, "Resources"),
+            b"Annots" if ctx == Ctx::OtherPage => skip("Annots (page not decoded)"),
+            b"Resources" if matches!(ctx, Ctx::OtherPage | Ctx::OtherTree) => {
+                follow(Ctx::OtherRes, "Resources")
+            }
+            b"Resources" => follow(Ctx::PageRes, "Resources"),
             b"MediaBox" | b"CropBox" | b"Rotate" => follow(Ctx::Leaf, "page geometry"),
             b"Parent" | b"Type" | b"Count" => Rule::Ignore,
             _ => other(),
@@ -430,9 +456,166 @@ fn rule(ctx: Ctx, key: &[u8], render_annotations: bool) -> Rule {
             }
             _ => other(),
         },
+        Ctx::PageRes => match key {
+            k if PAGE_MAPS.contains(&k) => {
+                Rule::Follow(Ctx::RenderMap, Some(Cow::Owned(text(k, 64))))
+            }
+            _ => other(),
+        },
+        Ctx::OtherRes => match key {
+            k if PAGE_MAPS.contains(&k) => Rule::Follow(
+                Ctx::OtherMap,
+                Some(Cow::Owned(format!("{} (page not decoded)", text(k, 64)))),
+            ),
+            _ => other(),
+        },
         Ctx::RenderMap => Rule::Follow(Ctx::Render, None),
+        // The label is already "<category> (page not decoded)".
+        Ctx::OtherMap => Rule::Follow(Ctx::Skip, None),
         Ctx::Skip => Rule::Follow(Ctx::Skip, None),
     }
+}
+
+/// The resource maps hayro's `Resources::new` resolves from a resources
+/// dictionary.
+const PAGE_MAPS: &[&[u8]] = &[
+    b"ColorSpace",
+    b"ExtGState",
+    b"Font",
+    b"Pattern",
+    b"Properties",
+    b"Shading",
+    b"XObject",
+];
+
+const NOT_DECODED_CONTENTS: &str = "Contents (page not decoded)";
+
+/// The page the job decodes, and the page-tree nodes above it.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct Selection {
+    /// The decoded page's index: the job's start frame, clamped to the page
+    /// count as the decoder clamps it.
+    pub index: usize,
+    /// The object that is the decoded page's dictionary (pages found by
+    /// hayro's brute-force scan are reached through it).
+    pub page_id: Option<Id>,
+    /// The decoded page's dictionary bytes, when it is written directly
+    /// inside a `/Kids` array instead of as its own object.
+    pub page_bytes: Option<Vec<u8>>,
+    /// The objects holding the page-tree nodes on hayro's path from the root
+    /// to the decoded page (`resolve_pages`): the decoded page's lookups
+    /// search their resources too (`Resources::parent`).
+    pub ancestors: BTreeSet<Id>,
+}
+
+impl Selection {
+    /// The page `start_frame` selects, as `PdfDecoder` selects it
+    /// (`start_frame.min(count - 1)`). A `rejected` job draws no page.
+    pub(crate) fn new(pdf: &Pdf, start_frame: u32, rejected: bool) -> Self {
+        let pages = pdf.pages();
+        if pages.is_empty() {
+            return Self::default();
+        }
+        let index = (start_frame as usize).min(pages.len() - 1);
+        if rejected {
+            return Self {
+                index,
+                ..Self::default()
+            };
+        }
+        let raw = pages[index].raw();
+        let page_id = raw
+            .obj_id()
+            .map(|o| (o.obj_number, o.gen_number))
+            .filter(|&id| matches!(resolve(pdf, id), Some(Raw::Dict(d, false)) if d == raw.data()));
+        let mut ancestors = BTreeSet::new();
+        let xref = pdf.xref();
+        if let Some(root) = xref
+            .get::<Dict<'_>>(xref.root_id())
+            .and_then(|c| c.get_ref(b"Pages"))
+            && let Some(node) = xref.get::<Dict<'_>>(root.into())
+        {
+            let mut path = Vec::new();
+            let mut count = 0usize;
+            let mut budget = 1usize << 20;
+            if let Some(found) = path_to(&node, index, &mut count, &mut path, &mut budget) {
+                ancestors = found;
+            }
+        }
+        Self {
+            index,
+            page_id,
+            page_bytes: page_id.is_none().then(|| raw.data().to_vec()),
+            ancestors,
+        }
+    }
+}
+
+/// hayro's `resolve_pages`, counting pages until the `target`-th: the
+/// objects holding the nodes on the way. hayro has already run the same
+/// traversal while loading the document.
+fn path_to(
+    node: &Dict<'_>,
+    target: usize,
+    count: &mut usize,
+    path: &mut Vec<Id>,
+    budget: &mut usize,
+) -> Option<BTreeSet<Id>> {
+    if path.len() >= 256 {
+        return None;
+    }
+    if let Some(o) = node.obj_id() {
+        path.push((o.obj_number, o.gen_number));
+    }
+    let found = (|| {
+        let kids = node.get::<hayro_syntax::object::Array<'_>>(b"Kids")?;
+        for kid in kids.iter::<Dict<'_>>() {
+            *budget = budget.checked_sub(1)?;
+            if kid.get::<Name<'_>>(b"Type").as_deref() == Some(b"Pages") {
+                if let Some(f) = path_to(&kid, target, count, path, budget) {
+                    return Some(f);
+                }
+            } else {
+                if *count == target {
+                    return Some(path.iter().copied().collect());
+                }
+                *count += 1;
+            }
+        }
+        None
+    })();
+    if node.obj_id().is_some() {
+        path.pop();
+    }
+    found
+}
+
+/// Resolve a page-tree context (the root node, or a `/Kids` entry): a node
+/// on the path to the decoded page, another node, the decoded page, or
+/// another page. `id` is the object the dictionary is, when it is one; a
+/// dictionary written directly inside `/Kids` is matched by its bytes, and
+/// a node written that way counts as on the path (its resources may be
+/// searched).
+pub(crate) fn classify(ctx: Ctx, id: Option<Id>, d: &[u8], sel: &Selection) -> Ctx {
+    let node = || match id {
+        Some(id) if !sel.ancestors.contains(&id) => Ctx::OtherTree,
+        _ => Ctx::PageTree,
+    };
+    match ctx {
+        // The root node (`/Pages` of the catalog) is a node whatever its
+        // `/Type`; it is on the path only when a page is drawn.
+        Ctx::PageTree => return node(),
+        Ctx::Kid => {}
+        _ => return ctx,
+    }
+    if super::lex::dict_type(d).as_deref() == Some(b"Pages") {
+        return node();
+    }
+    let decoded = match id {
+        Some(id) => sel.page_id == Some(id),
+        None => sel.page_bytes.as_deref() == Some(d),
+    };
+    if decoded { Ctx::Page } else { Ctx::OtherPage }
 }
 
 /// For a dictionary the decoder reads in context `ctx`: `None` when it
@@ -449,7 +632,7 @@ pub(crate) fn unread_entry(
 ) -> Option<Cow<'static, str>> {
     let read = match ctx {
         Ctx::Catalog => matches!(key, b"Pages" | b"OCProperties" | b"Version"),
-        Ctx::PageTree | Ctx::Kid => matches!(
+        Ctx::PageTree | Ctx::OtherTree | Ctx::Kid => matches!(
             key,
             b"Type" | b"Kids" | b"Resources" | b"MediaBox" | b"CropBox" | b"Rotate"
         ),
@@ -459,6 +642,12 @@ pub(crate) fn unread_entry(
                 b"Type" | b"Contents" | b"Resources" | b"MediaBox" | b"CropBox" | b"Rotate"
             ) || (key == b"Annots" && render_annotations)
         }
+        Ctx::OtherPage => matches!(
+            key,
+            b"Type" | b"Resources" | b"MediaBox" | b"CropBox" | b"Rotate"
+        ),
+        Ctx::PageRes | Ctx::OtherRes => PAGE_MAPS.contains(&key),
+        Ctx::OtherMap => false,
         Ctx::Annot => matches!(key, b"F" | b"Rect" | b"AS") || (key == b"AP" && annot_drawn),
         Ctx::Render => RENDER_MAPS.contains(&key) || RENDER_KEYS.binary_search(&key).is_ok(),
         Ctx::OcHidden => RENDER_MAPS.contains(&key) || RENDER_KEYS.binary_search(&key).is_ok(),
@@ -470,6 +659,10 @@ pub(crate) fn unread_entry(
     }
     Some(match side_data(key) {
         Some(Rule::Follow(_, Some(l))) => l,
+        _ if ctx == Ctx::OtherMap => Cow::Borrowed("page not decoded"),
+        _ if ctx == Ctx::OtherPage && matches!(key, b"Contents" | b"Annots") => {
+            Cow::Borrowed("page not decoded")
+        }
         _ if key == b"Names" => Cow::Borrowed("Names"),
         _ if key == b"AP" => Cow::Borrowed("Appearance (not drawn)"),
         _ => Cow::Owned(text(key, 64)),
@@ -533,6 +726,10 @@ struct Walker<'p> {
     used: Option<&'p super::content::Usage>,
     /// Optional-content groups that are off.
     inactive: &'p BTreeSet<Id>,
+    /// The page the job decodes.
+    sel: &'p Selection,
+    /// The walk reached the decoded page through the page tree.
+    found_page: bool,
     content: BTreeSet<Id>,
     properties: BTreeMap<Vec<u8>, BTreeSet<Id>>,
     best: BTreeMap<Id, Reach>,
@@ -572,12 +769,15 @@ pub(crate) fn walk<'p>(
     render_annotations: bool,
     used: Option<&'p super::content::Usage>,
     inactive: &'p BTreeSet<Id>,
+    sel: &'p Selection,
 ) -> Walk {
     let mut w = Walker {
         pdf,
         render_annotations,
         used,
         inactive,
+        sel,
+        found_page: false,
         content: BTreeSet::new(),
         properties: BTreeMap::new(),
         best: BTreeMap::new(),
@@ -607,6 +807,20 @@ pub(crate) fn walk<'p>(
         }
     }
     w.run();
+    // When the page tree cannot be read, hayro finds pages by scanning every
+    // object (`Pages::new_brute_force`); the decoded page is then reachable
+    // only that way.
+    if !w.found_page
+        && !w.truncated
+        && let Some(id) = sel.page_id
+    {
+        w.enqueue(
+            id,
+            Ctx::Page,
+            Cow::Borrowed("Page (found by hayro's object scan)"),
+        );
+        w.run();
+    }
     Walk {
         best: w.best,
         truncated: w.truncated,
@@ -641,6 +855,13 @@ impl<'p> Walker<'p> {
         if !self.seen.insert((id, ctx)) {
             return;
         }
+        let ctx = match ctx {
+            Ctx::Kid | Ctx::PageTree => match resolve(self.pdf, id) {
+                Some(Raw::Dict(d, _)) => classify(ctx, Some(id), d, self.sel),
+                _ => ctx,
+            },
+            _ => ctx,
+        };
         match self.best.get_mut(&id) {
             Some(r) if r.ctx.rank() >= ctx.rank() => {}
             Some(r) => {
@@ -708,11 +929,11 @@ impl<'p> Walker<'p> {
         if depth > MAX_DEPTH || !self.spend() {
             return;
         }
-        let ctx = match ctx {
-            Ctx::Kid if super::lex::dict_type(d).as_deref() == Some(b"Pages") => Ctx::PageTree,
-            Ctx::Kid => Ctx::Page,
-            c => c,
-        };
+        // Indirect `/Kids` entries were classified when queued.
+        let ctx = classify(ctx, None, d, self.sel);
+        if ctx == Ctx::Page {
+            self.found_page = true;
+        }
         if ctx == Ctx::Annot {
             self.visit_annot(d, depth);
             return;

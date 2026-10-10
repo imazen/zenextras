@@ -19,6 +19,12 @@
 //!   [`Skipped`](Disposition::Skipped); copies replaced by a later revision,
 //!   and objects nothing references, are
 //!   [`Unreferenced`](Disposition::Unreferenced).
+//! - The job decodes one page (its start frame, clamped to the page count).
+//!   hayro builds every page's geometry and resource maps, so other pages'
+//!   dictionaries stay `Structure`, but their content streams, annotations
+//!   and the entries of resource maps the decoded page never searches are
+//!   `Skipped` as "page not decoded". The decoded page searches its own
+//!   resources and every ancestor node's.
 //!
 //! Every part's `detail` starts with its revision: `rev N` counts the
 //! `%%EOF` markers before it, so each incremental update is one revision.
@@ -105,14 +111,19 @@ impl Assign {
 }
 
 /// Build the inventory. `render_annotations` mirrors the decoder config: with
-/// it off, hayro never reads `/Annots`.
+/// it off, hayro never reads `/Annots`. `start_frame` is the job's page
+/// index: only that page's content, annotations and resources are drawn.
+/// `rejected` is why the decoder refuses the job before drawing, if it does
+/// (page geometry, output size, limits): then no page is drawn.
 pub(crate) fn pdf_inventory(
     data: &[u8],
     format: ImageFormat,
     render_annotations: bool,
+    start_frame: u32,
+    rejected: Option<String>,
 ) -> Result<Inventory, InventoryError> {
     let units = lex::lex(data);
-    let assign = assign(data, &units, render_annotations);
+    let assign = assign(data, &units, render_annotations, start_frame, rejected);
     emit(data, format, &units, &assign)
 }
 
@@ -273,7 +284,13 @@ enum Outcome {
     Elsewhere,
 }
 
-fn assign(data: &[u8], units: &[Unit], render_annotations: bool) -> Vec<Assign> {
+fn assign(
+    data: &[u8],
+    units: &[Unit],
+    render_annotations: bool,
+    start_frame: u32,
+    rejected: Option<String>,
+) -> Vec<Assign> {
     let chain = chain(data, units);
     // Labels from every trailer in the file (any revision), for copies
     // that are no longer live.
@@ -300,7 +317,15 @@ fn assign(data: &[u8], units: &[Unit], render_annotations: bool) -> Vec<Assign> 
     let semantics = match loaded {
         Ok(Ok(pdf)) => {
             let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                semantics(&pdf, data, units, &chain, render_annotations)
+                semantics(
+                    &pdf,
+                    data,
+                    units,
+                    &chain,
+                    render_annotations,
+                    start_frame,
+                    rejected.as_deref(),
+                )
             }));
             match r {
                 Ok(s) => Ok(s),
@@ -515,6 +540,11 @@ struct Semantics {
     /// Liveness of objects stored in object streams.
     stm_live: BTreeMap<u32, Live>,
     render_annotations: bool,
+    /// The page the job decodes.
+    sel: graph::Selection,
+    /// Why other pages' content is not read: the page this job draws, or
+    /// why the decoder refuses to draw any.
+    not_drawn: String,
     /// The trailer names an encryption dictionary.
     encrypted: bool,
     /// Resource names content uses, when every content stream was scanned.
@@ -527,6 +557,8 @@ fn semantics(
     units: &[Unit],
     chain: &Chain,
     render_annotations: bool,
+    start_frame: u32,
+    rejected: Option<&str>,
 ) -> Semantics {
     let mut by_id: BTreeMap<Id, Vec<usize>> = BTreeMap::new();
     for (i, u) in units.iter().enumerate() {
@@ -574,7 +606,12 @@ fn semantics(
     // content streams give the resource names actually used; the second
     // walk follows only those (when every stream could be scanned).
     let inactive = graph::inactive_ocgs(pdf);
-    let first = graph::walk(pdf, trailer, render_annotations, None, &inactive);
+    let sel = graph::Selection::new(pdf, start_frame, rejected.is_some());
+    let not_drawn = match rejected {
+        Some(e) => format!("the decoder rejects this job before drawing any page ({e})"),
+        None => format!("this job decodes page index {}", sel.index),
+    };
+    let first = graph::walk(pdf, trailer, render_annotations, None, &inactive, &sel);
     // A properties name hides content only when every object it names (in
     // any resource dictionary) is optional content that is off.
     let oc_name_hidden = |r: content::OcRef<'_>| match r {
@@ -585,7 +622,7 @@ fn semantics(
     };
     let used = graph::content_usage(pdf, &first.content, &oc_name_hidden);
     let walk = match &used {
-        Some(u) => graph::walk(pdf, trailer, render_annotations, Some(u), &inactive),
+        Some(u) => graph::walk(pdf, trailer, render_annotations, Some(u), &inactive, &sel),
         None => first,
     };
 
@@ -622,6 +659,8 @@ fn semantics(
         owner,
         stm_live,
         render_annotations,
+        sel,
+        not_drawn,
         encrypted,
         used,
     }
@@ -686,15 +725,12 @@ fn deep_children(
     dict: Range<usize>,
     ctx: Ctx,
     render_annotations: bool,
+    sel: &graph::Selection,
     depth: u32,
 ) -> Vec<Child> {
-    let ctx = match ctx {
-        Ctx::Kid if lex::dict_type(&data[dict.clone()]).as_deref() == Some(b"Pages") => {
-            Ctx::PageTree
-        }
-        Ctx::Kid => Ctx::Page,
-        c => c,
-    };
+    // The object itself was classified by the walk; a `/Kids` entry seen
+    // here is a dictionary written directly inside the array.
+    let ctx = graph::classify(ctx, None, &data[dict.clone()], sel);
     let drawn = ctx == Ctx::Annot && graph::annot_drawn(&data[dict.clone()]);
     let mut out = dict_children(data, dict.clone(), |k| {
         graph::unread_entry(ctx, k, render_annotations, drawn)
@@ -717,13 +753,27 @@ fn deep_children(
         let v = e.value.clone();
         match lex::value_kind(&data[v.clone()]) {
             lex::ValueKind::Dict => {
-                out.extend(deep_children(data, v, cc, render_annotations, depth + 1));
+                out.extend(deep_children(
+                    data,
+                    v,
+                    cc,
+                    render_annotations,
+                    sel,
+                    depth + 1,
+                ));
             }
             lex::ValueKind::Array => {
                 for item in lex::array_items(&data[v.clone()]) {
                     let abs = v.start + item.start..v.start + item.end;
                     if lex::value_kind(&data[abs.clone()]) == lex::ValueKind::Dict {
-                        out.extend(deep_children(data, abs, cc, render_annotations, depth + 1));
+                        out.extend(deep_children(
+                            data,
+                            abs,
+                            cc,
+                            render_annotations,
+                            sel,
+                            depth + 1,
+                        ));
                     }
                 }
             }
@@ -736,37 +786,44 @@ fn deep_children(
 /// Entries of the resource maps in a consumed object that no content
 /// names: the object's own entries when it is a resource map, else the maps
 /// in its resources dictionary (the object itself, or its direct
-/// `/Resources`). See `content` for why this errs only towards "used".
+/// `/Resources`). A page-level map counts only when the decoded page's
+/// lookups search it; the others' entries are listed by `deep_children`. See
+/// `content` for why this errs only towards "used".
 fn unused_resource_children(
     data: &[u8],
     dict: Range<usize>,
     reach: &graph::Reach,
     used: &content::Usage,
+    sel: &graph::Selection,
 ) -> Vec<Child> {
     let category = |k: &[u8]| content::CHECKED.iter().find(|c| **c == k).copied();
     let is_dict = |r: &Range<usize>| data[r.clone()].starts_with(b"<<");
     let mut maps: Vec<(&'static [u8], Range<usize>)> = Vec::new();
-    if reach.ctx == Ctx::RenderMap {
-        if let Some(c) = category(reach.label.as_bytes()) {
-            maps.push((c, dict));
+    // The maps the decoded page's lookups search: its own and its ancestor
+    // nodes' resources, and the resources of whatever it draws. Other pages'
+    // maps are listed entry by entry by `deep_children`.
+    let resources = match reach.ctx {
+        Ctx::RenderMap => {
+            if let Some(c) = category(reach.label.as_bytes()) {
+                maps.push((c, dict.clone()));
+            }
+            None
         }
-    } else {
-        let resources = if reach.label == "Resources" {
-            Some(dict.clone())
-        } else {
-            lex::dict_entries(data, dict)
-                .into_iter()
-                .rfind(|e| &*lex::unescape_name(&data[e.key.clone()]) == b"Resources")
-                .map(|e| e.value)
-                .filter(is_dict)
-        };
-        if let Some(r) = resources {
-            for e in lex::dict_entries(data, r) {
-                if let Some(c) = category(&lex::unescape_name(&data[e.key.clone()]))
-                    && is_dict(&e.value)
-                {
-                    maps.push((c, e.value));
-                }
+        Ctx::PageRes => Some(dict.clone()),
+        Ctx::Render if reach.label == "Resources" => Some(dict.clone()),
+        Ctx::Render | Ctx::Page | Ctx::PageTree => lex::dict_entries(data, dict)
+            .into_iter()
+            .rfind(|e| &*lex::unescape_name(&data[e.key.clone()]) == b"Resources")
+            .map(|e| e.value)
+            .filter(is_dict),
+        _ => None,
+    };
+    if let Some(r) = resources {
+        for e in lex::dict_entries(data, r) {
+            if let Some(c) = category(&lex::unescape_name(&data[e.key.clone()]))
+                && is_dict(&e.value)
+            {
+                maps.push((c, e.value));
             }
         }
     }
@@ -780,8 +837,9 @@ fn unused_resource_children(
                 (
                     Disposition::Skipped,
                     format!(
-                        "unused {} resource: no content operator names /{shown}",
-                        text(cat, 16)
+                        "unused {} resource: no content operator on page index {} names /{shown}",
+                        text(cat, 16),
+                        sel.index
                     ),
                 )
             } else if used.hidden_only(&k) {
@@ -969,12 +1027,18 @@ fn object_assign(
                 && !s.objstm.contains_key(&i)
             {
                 let _ = r;
-                let mut children =
-                    deep_children(data, range.clone(), reach.ctx, s.render_annotations, 0);
+                let mut children = deep_children(
+                    data,
+                    range.clone(),
+                    reach.ctx,
+                    s.render_annotations,
+                    &s.sel,
+                    0,
+                );
                 if let Some(used) = &s.used {
                     // An unused resource entry covers its whole value: it wins
                     // over anything listed inside it.
-                    let unused = unused_resource_children(data, range, reach, used);
+                    let unused = unused_resource_children(data, range, reach, used, &s.sel);
                     children.retain(|c| {
                         !unused
                             .iter()
@@ -1104,14 +1168,34 @@ fn live_assign(i: usize, o: &lex::ObjUnit, s: &Semantics, dict: Option<&[u8]>) -
     match s.walk.best.get(&id) {
         Some(r) => {
             let disposition = reach_disposition(r.ctx, o.stream.is_some());
-            let why = match r.ctx {
-                Ctx::Info => "parsed by hayro into Pdf::metadata(); zenpdf never reports it",
-                Ctx::OcHidden => {
-                    "parsed but never drawn: used only inside optional content that is off, \
-                     or its own /OC is off"
+            let not_drawn = &s.not_drawn;
+            let why: Cow<'static, str> = match r.ctx {
+                Ctx::Info => "parsed by hayro into Pdf::metadata(); zenpdf never reports it".into(),
+                Ctx::OcHidden => "parsed but never drawn: used only inside optional content \
+                                  that is off, or its own /OC is off"
+                    .into(),
+                Ctx::Names | Ctx::Skip if r.label.ends_with("(page not decoded)") => {
+                    format!("not read by the decoder: {not_drawn}").into()
                 }
-                Ctx::Names | Ctx::Skip => "not read by the decoder",
-                _ => "",
+                Ctx::Skip if r.label == "unused resource" => format!(
+                    "not read by the decoder: no content operator on page index {} names it",
+                    s.sel.index
+                )
+                .into(),
+                Ctx::Names | Ctx::Skip => "not read by the decoder".into(),
+                Ctx::OtherPage => format!(
+                    "page not decoded: hayro reads its geometry and resource maps to build \
+                     the page list; {not_drawn}"
+                )
+                .into(),
+                Ctx::OtherTree => {
+                    format!("page-tree node above pages not decoded; {not_drawn}").into()
+                }
+                Ctx::OtherRes | Ctx::OtherMap => {
+                    format!("resources of a page not decoded: parsed, never searched; {not_drawn}")
+                        .into()
+                }
+                _ => "".into(),
             };
             let mut a = Assign::new(disposition, why);
             a.label = match r.ctx {

@@ -214,17 +214,7 @@ fn render_pages_inner(pdf: &Pdf, config: &PdfConfig) -> Result<Vec<RenderedPage>
     for idx in indices {
         let page = &pages[idx as usize];
         let (page_w, page_h) = page.render_dimensions();
-
-        // Reject zero-area or non-finite page dimensions early, before any
-        // scale computation that could produce NaN or Inf. This is the PDF's
-        // own declared page (MediaBox) geometry — an image-bytes fault, not a
-        // request fault (contrast `InvalidRenderBounds` below, which is about
-        // the caller-supplied `RenderBounds` instead).
-        if !page_w.is_finite() || !page_h.is_finite() || page_w <= 0.0 || page_h <= 0.0 {
-            return Err(PdfError::ZeroDimensions { page: idx });
-        }
-
-        let settings = compute_render_settings(
+        let settings = page_settings(
             &config.bounds,
             page_w,
             page_h,
@@ -322,6 +312,48 @@ fn resolve_page_indices(
             Ok(indices.clone())
         }
     }
+}
+
+/// The render settings for one page, after the checks that reject it.
+fn page_settings(
+    bounds: &RenderBounds,
+    page_w: f32,
+    page_h: f32,
+    page_idx: u32,
+    bg: AlphaColor<Srgb>,
+    max_pixels: u64,
+) -> Result<hayro::RenderSettings> {
+    // Reject zero-area or non-finite page dimensions early, before any
+    // scale computation that could produce NaN or Inf. This is the PDF's
+    // own declared page (MediaBox) geometry — an image-bytes fault, not a
+    // request fault (contrast `InvalidRenderBounds` below, which is about
+    // the caller-supplied `RenderBounds` instead).
+    if !page_w.is_finite() || !page_h.is_finite() || page_w <= 0.0 || page_h <= 0.0 {
+        return Err(PdfError::ZeroDimensions { page: page_idx });
+    }
+    compute_render_settings(bounds, page_w, page_h, page_idx, bg, max_pixels)
+}
+
+/// The checks `render_pages` runs on a page before drawing it, without
+/// drawing it (the structural inventory asks whether the page is drawn).
+#[cfg(feature = "zencodec")]
+pub(crate) fn check_page(
+    bounds: &RenderBounds,
+    page_w: f32,
+    page_h: f32,
+    page_idx: u32,
+    limits: &RenderLimits,
+) -> Result<()> {
+    let bg = AlphaColor::<Srgb>::from_rgba8(0, 0, 0, 0);
+    page_settings(
+        bounds,
+        page_w,
+        page_h,
+        page_idx,
+        bg,
+        limits.max_pixels_per_page,
+    )
+    .map(|_| ())
 }
 
 fn compute_render_settings(

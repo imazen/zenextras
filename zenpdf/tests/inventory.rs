@@ -390,11 +390,72 @@ fn hidden_layer_pdf() -> Vec<u8> {
     b.finish()
 }
 
+/// Two pages under different page-tree nodes. Page 0 draws `/ImA` and the
+/// root node's inherited `/ImTop`; page 1 (under node 20) draws `/ImB` and
+/// node 20's inherited `/ImMid`, and carries an annotation. Each image's one
+/// data byte is unique in the file (0x01-0x04).
+fn two_page_pdf() -> Vec<u8> {
+    const GRAY: &str = "/Type /XObject /Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceGray /BitsPerComponent 8";
+    let mut b = PdfBuilder::new();
+    b.obj(1, "<< /Type /Catalog /Pages 2 0 R >>")
+        .obj(
+            2,
+            "<< /Type /Pages /Kids [3 0 R 20 0 R] /Count 2 \
+             /Resources << /XObject << /ImTop 9 0 R >> >> >>",
+        )
+        .obj(
+            3,
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 4 4] /Contents 4 0 R \
+             /Resources << /XObject << /ImA 5 0 R >> >> >>",
+        )
+        .stream(
+            4,
+            "",
+            b"q 4 0 0 4 0 0 cm /ImA Do Q q 1 0 0 1 0 0 cm /ImTop Do Q",
+        )
+        .stream(5, GRAY, b"\x01")
+        .obj(
+            6,
+            "<< /Type /Page /Parent 20 0 R /MediaBox [0 0 4 4] /Contents 8 0 R \
+             /Resources << /XObject << /ImB 11 0 R >> >> /Annots [12 0 R] >>",
+        )
+        .stream(
+            8,
+            "",
+            b"q 4 0 0 4 0 0 cm /ImB Do Q q 2 0 0 2 0 0 cm /ImMid Do Q",
+        )
+        .stream(9, GRAY, b"\x02")
+        .stream(11, GRAY, b"\x03")
+        .obj(
+            12,
+            "<< /Type /Annot /Subtype /Square /Rect [0 0 4 4] /AP << /N 13 0 R >> >>",
+        )
+        .stream(
+            13,
+            "/Type /XObject /Subtype /Form /BBox [0 0 4 4]",
+            b"0 g 0 0 2 2 re f",
+        )
+        .obj(
+            20,
+            "<< /Type /Pages /Parent 2 0 R /Kids [6 0 R] /Count 1 \
+             /Resources << /XObject << /ImMid 21 0 R >> >> >>",
+        )
+        .stream(21, GRAY, b"\x04");
+    b.end_revision("/Root 1 0 R");
+    b.finish()
+}
+
 // ── Helpers ─────────────────────────────────────────────────────────────
 
 fn inventory(data: &[u8]) -> Inventory {
+    inventory_of_page(data, 0)
+}
+
+/// The inventory of a job that decodes page `page`.
+fn inventory_of_page(data: &[u8], page: u32) -> Inventory {
     let inv = PdfDecoderConfig::new()
         .job()
+        .with_start_frame_index(page)
         .inventory(data)
         .expect("inventory never errors below the part cap")
         .expect("zenpdf implements inventory");
@@ -468,6 +529,7 @@ fn testkit_check_inventory_on_every_fixture() {
         ("hidden_bytes", hidden_bytes_pdf()),
         ("unused_resources", unused_resources_pdf()),
         ("hidden_layer", hidden_layer_pdf()),
+        ("two_page", two_page_pdf()),
         ("fixtures/test.pdf", fixture),
     ] {
         zencodec_testkit::check_inventory(PdfDecoderConfig::new(), &bytes)
@@ -485,6 +547,7 @@ fn fixtures_render() {
         hidden_bytes_pdf(),
         unused_resources_pdf(),
         hidden_layer_pdf(),
+        two_page_pdf(),
     ] {
         zenpdf::render_page(&bytes, 0, &zenpdf::RenderBounds::Scale(1.0)).expect("fixture renders");
     }
@@ -753,7 +816,10 @@ fn resources_no_content_names_are_unused() {
     for name in [&b"/Im2"[..], b"/F2"] {
         let p = leaf_at(&inv, find(&data, name) as u64);
         assert_eq!(p.disposition, Disposition::Skipped, "{inv}");
-        assert!(detail(p).contains("no content operator names"), "{p:?}");
+        assert!(
+            detail(p).contains("resource: no content operator on page index 0 names"),
+            "{p:?}"
+        );
     }
     let at = find(&data, b"REDACTED-IMAGE") as u64;
     assert!(!leaf_at(&inv, at).disposition.is_consumed());
@@ -796,6 +862,184 @@ fn hidden_optional_content_is_not_drawn() {
         px.chunks(4).any(|p| p[0] == 0),
         "the visible image is drawn"
     );
+}
+
+// ── Pages the job does not decode ───────────────────────────────────────
+
+/// The data byte of the image whose single byte is `b`.
+fn image_byte(data: &[u8], b: u8) -> usize {
+    find(data, &[b's', b't', b'r', b'e', b'a', b'm', b'\n', b, b'\n']) + 7
+}
+
+#[test]
+fn only_the_decoded_page_is_drawn() {
+    let data = two_page_pdf();
+    let not_decoded = |inv: &Inventory, n: u32, what: &str| {
+        let p = the_object(inv, n);
+        assert_eq!(p.disposition, Disposition::Skipped, "obj {n}\n{inv}");
+        assert_eq!(label(p), format!("{what} (page not decoded)"), "obj {n}");
+    };
+    // Page 0: its content and images, plus the root node's inherited image.
+    let inv = inventory_of_page(&data, 0);
+    for n in [4, 5, 9] {
+        assert_eq!(
+            the_object(&inv, n).disposition,
+            Disposition::ImageData,
+            "obj {n}\n{inv}"
+        );
+    }
+    for n in [3, 6, 2, 20] {
+        assert_eq!(
+            the_object(&inv, n).disposition,
+            Disposition::Structure,
+            "obj {n}\n{inv}"
+        );
+    }
+    assert!(
+        detail(the_object(&inv, 6)).contains("page not decoded"),
+        "{inv}"
+    );
+    not_decoded(&inv, 8, "Contents");
+    not_decoded(&inv, 11, "XObject");
+    // Node 20 is not an ancestor of page 0: its map is never searched.
+    not_decoded(&inv, 21, "XObject");
+    not_decoded(&inv, 12, "Annots");
+    not_decoded(&inv, 13, "Annots");
+    for entry in [
+        &b"/Contents 8 0 R"[..],
+        b"/ImB 11 0 R",
+        b"/ImMid 21 0 R",
+        b"/Annots",
+    ] {
+        let p = leaf_at(&inv, find(&data, entry) as u64);
+        assert_eq!(p.disposition, Disposition::Skipped, "{p:?}\n{inv}");
+        assert!(detail(p).contains("page not decoded"), "{p:?}");
+    }
+
+    // Page 1 (and any start frame past the end, clamped as the decoder
+    // clamps it): the other page's content is skipped, node 20's image is
+    // drawn, and the root node's image is searched but never named.
+    for start in [1, 7] {
+        let inv = inventory_of_page(&data, start);
+        for n in [8, 11, 21, 13] {
+            assert_eq!(
+                the_object(&inv, n).disposition,
+                Disposition::ImageData,
+                "obj {n}\n{inv}"
+            );
+        }
+        assert_eq!(
+            the_object(&inv, 12).disposition,
+            Disposition::Structure,
+            "{inv}"
+        );
+        not_decoded(&inv, 4, "Contents");
+        not_decoded(&inv, 5, "XObject");
+        let top = the_object(&inv, 9);
+        assert_eq!(top.disposition, Disposition::Skipped, "{inv}");
+        assert_eq!(label(top), "unused resource");
+    }
+
+    // The decoder agrees in both directions: bytes reported unconsumed for
+    // page 0 change nothing when overwritten; a consumed image byte does.
+    let render = |d: &[u8], page: u32| {
+        let p = zenpdf::render_page(d, page, &zenpdf::RenderBounds::Scale(1.0)).unwrap();
+        p.buffer.as_contiguous_bytes().unwrap().to_vec()
+    };
+    let page0 = render(&data, 0);
+    let mut other = data.clone();
+    for b in [3, 4] {
+        other[image_byte(&data, b)] = 0xff;
+    }
+    assert_eq!(render(&other, 0), page0, "page 1's images reached page 0");
+    assert_ne!(
+        render(&other, 1),
+        render(&data, 1),
+        "page 1 draws its images"
+    );
+    let mut own = data.clone();
+    own[image_byte(&data, 1)] = 0xff;
+    assert_ne!(render(&own, 0), page0, "page 0 draws /ImA");
+}
+
+#[test]
+fn a_job_the_decoder_rejects_draws_no_page() {
+    // The 4x4 pt page renders at 4x4 px: over a 15-pixel limit, the
+    // decoder refuses the job before drawing.
+    let data = two_page_pdf();
+    let job = || {
+        PdfDecoderConfig::new()
+            .job()
+            .with_limits(zencodec::ResourceLimits::none().with_max_pixels(15))
+    };
+    assert!(job().output_info(&data).is_err());
+    let inv = job().inventory(&data).unwrap().unwrap();
+    inv.validate().unwrap();
+    for (n, what) in [
+        (4, "Contents"),
+        (5, "XObject"),
+        (9, "XObject"),
+        (8, "Contents"),
+    ] {
+        let p = the_object(&inv, n);
+        assert_eq!(p.disposition, Disposition::Skipped, "obj {n}\n{inv}");
+        assert_eq!(label(p), format!("{what} (page not decoded)"), "obj {n}");
+        assert!(detail(p).contains("rejects this job"), "{p:?}");
+    }
+    // At 16 pixels the same job draws page 0.
+    let inv = PdfDecoderConfig::new()
+        .job()
+        .with_limits(zencodec::ResourceLimits::none().with_max_pixels(16))
+        .inventory(&data)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        the_object(&inv, 5).disposition,
+        Disposition::ImageData,
+        "{inv}"
+    );
+}
+
+#[test]
+fn a_page_hayro_finds_by_scanning_is_drawn() {
+    // The root /Pages has no /Kids, so hayro falls back to scanning every
+    // object for page dictionaries (`Pages::new_brute_force`).
+    let mut b = PdfBuilder::new();
+    b.obj(1, "<< /Type /Catalog /Pages 2 0 R >>")
+        .obj(2, "<< /Type /Pages /Count 1 >>")
+        .obj(
+            3,
+            "<< /Type /Page /MediaBox [0 0 4 4] /Contents 4 0 R \
+             /Resources << /XObject << /Im 5 0 R >> >> >>",
+        )
+        .stream(4, "", b"q 4 0 0 4 0 0 cm /Im Do Q")
+        .stream(
+            5,
+            "/Type /XObject /Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceGray /BitsPerComponent 8",
+            b"\x01",
+        );
+    b.end_revision("/Root 1 0 R");
+    let data = b.finish();
+    let page = zenpdf::render_page(&data, 0, &zenpdf::RenderBounds::Scale(1.0)).unwrap();
+    let px = page.buffer.as_contiguous_bytes().unwrap();
+    assert!(
+        px.chunks(4).all(|p| p[0] == 1),
+        "hayro draws the scanned page"
+    );
+    let inv = inventory(&data);
+    assert_eq!(
+        the_object(&inv, 3).disposition,
+        Disposition::Structure,
+        "{inv}"
+    );
+    for n in [4, 5] {
+        assert_eq!(
+            the_object(&inv, n).disposition,
+            Disposition::ImageData,
+            "obj {n}\n{inv}"
+        );
+    }
+    zencodec_testkit::check_inventory(PdfDecoderConfig::new(), &data).unwrap();
 }
 
 #[test]
@@ -997,7 +1241,7 @@ fn oracle_mutool_exiftool() {
         let unused = inv
             .parts()
             .iter()
-            .filter(|p| detail(p).contains("no content operator names"))
+            .filter(|p| detail(p).contains("resource: no content operator on page index"))
             .count();
         writeln!(
             table,
