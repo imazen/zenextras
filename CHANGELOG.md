@@ -209,6 +209,11 @@ member entries here reference those files.
   outside `use` and marker content, recursive pattern paints, and patterns
   whose content paints nothing no longer make a shape count as drawn
   (ec58603, 2be2967).
+- **Inventory review round 3.** A cycle of three or more patterns, clip
+  paths, masks, filters or markers reached from drawn content no longer
+  aborts `inventory()`: the model finds it before the decoder's checks run
+  usvg, and the document is reported `Unknown` with the cycle named. The
+  decoder still aborts on such files (zenextras#41) (8f5a4d4).
 
 #### Fixed (2026-08-27, zenextras#15, #16)
 
