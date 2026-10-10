@@ -88,9 +88,14 @@ fn svgz_all_fields(crc_delta: u16, flg_extra_bits: u8) -> Vec<u8> {
     let mut c = flate2::Crc::new();
     c.update(&h);
     h.extend_from_slice(&((c.sum() as u16).wrapping_add(crc_delta)).to_le_bytes());
-    let mut e = flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::default());
-    e.write_all(svg).unwrap();
-    h.extend(e.finish().unwrap());
+    // One final stored deflate block (BFINAL=1, BTYPE=00; LEN, NLEN; the
+    // bytes), written by hand: compressed output differs between flate2
+    // backends and versions, and the pinned part list fixes its length.
+    h.push(0x01);
+    let len = u16::try_from(svg.len()).unwrap();
+    h.extend_from_slice(&len.to_le_bytes());
+    h.extend_from_slice(&(!len).to_le_bytes());
+    h.extend_from_slice(svg);
     let mut body = flate2::Crc::new();
     body.update(svg);
     h.extend_from_slice(&body.sum().to_le_bytes());
@@ -953,8 +958,8 @@ const PINNED_SVGZ_ALL_FIELDS: &[&str] = &[
     "  attribute 17..33 FNAME dropped \"FNAME\"",
     "  attribute 33..50 FCOMMENT dropped \"FCOMMENT\"",
     "  attribute 50..52 FHCRC structure \"FHCRC\"",
-    "chunk 52..141 deflate image-data",
-    "chunk 141..149 gzip trailer structure",
+    "chunk 52..171 deflate image-data",
+    "chunk 171..179 gzip trailer structure",
 ];
 
 const PINNED_SMALL: &[&str] = &[
