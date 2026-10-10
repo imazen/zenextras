@@ -582,3 +582,98 @@ fn corpus_planted_tile_slack_is_unconsumed() {
     assert!(planted > 0);
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
+
+/// R3-2 (reviewer's `r3_ppt_header_slack`): append text to the last PPT
+/// segment of the last tile-part of every bare codestream that has one
+/// (growing Lppt and Psot). Where the decode is unchanged, hayro never read the
+/// text, so it must come out unconsumed; where the decode changes, hayro
+/// parsed it as packet headers and it must not be reported as unreferenced.
+#[test]
+fn corpus_planted_ppt_header_slack() {
+    let Some(files) = corpus_files() else {
+        eprintln!("INVENTORY_ORACLE_DIR not set; not run");
+        return;
+    };
+    use zencodec::decode::Decode;
+    let decode = |d: &[u8]| -> Option<Vec<u8>> {
+        let out = Jp2DecoderConfig::new()
+            .job()
+            .decoder(std::borrow::Cow::Borrowed(d), &[])
+            .and_then(|x| x.decode())
+            .ok()?;
+        let px = out.pixels();
+        Some((0..px.rows()).flat_map(|y| px.row(y).to_vec()).collect())
+    };
+    let text = b"PPT-HEADER-SLACK: owner Jane Doe, serial 12345";
+    let (mut unchanged, mut changed) = (Vec::new(), Vec::new());
+    let mut failures = Vec::new();
+    for f in &files {
+        let data = std::fs::read(f).unwrap();
+        if data.len() > 2_000_000 || !data.starts_with(&[0xFF, 0x4F]) {
+            continue;
+        }
+        let Some(base) = decode(&data) else { continue };
+        let inv = inventory_of(&data);
+        let Some(last) = inv
+            .parts()
+            .iter()
+            .filter(|p| p.tag == PartTag::Marker(0x90))
+            .map(|p| p.range.start)
+            .max()
+        else {
+            continue;
+        };
+        let Some(ppt) = inv
+            .parts()
+            .iter()
+            .filter(|p| p.tag == PartTag::Marker(0x61) && p.range.start > last)
+            .max_by_key(|p| p.range.start)
+        else {
+            continue;
+        };
+        let l = last as usize;
+        let psot = u32::from_be_bytes(data[l + 6..l + 10].try_into().unwrap());
+        let (ps, pe) = (ppt.range.start as usize, ppt.range.end as usize);
+        let lppt = u16::from_be_bytes([data[ps + 2], data[ps + 3]]) as usize;
+        if psot == 0 || ps + 2 + lppt != pe {
+            continue;
+        }
+        let mut m = data.clone();
+        m.splice(pe..pe, text.iter().copied());
+        m[ps + 2..ps + 4].copy_from_slice(&((lppt + text.len()) as u16).to_be_bytes());
+        m[l + 6..l + 10].copy_from_slice(&(psot + text.len() as u32).to_be_bytes());
+        let name = f.file_name().unwrap().to_string_lossy().into_owned();
+        let mi = inventory_of(&m);
+        let leaf = mi
+            .parts()
+            .iter()
+            .filter(|p| p.range.start <= pe as u64 && (pe as u64) < p.range.end)
+            .min_by_key(|p| p.len())
+            .unwrap();
+        let same = decode(&m).as_ref() == Some(&base);
+        let row = format!(
+            "{name}: {} {}..{} ({:?})",
+            leaf.disposition, leaf.range.start, leaf.range.end, leaf.detail
+        );
+        if same {
+            if leaf.disposition.is_consumed() || leaf.range.end < (pe + text.len()) as u64 {
+                failures.push(format!("unchanged decode, but {row}"));
+            }
+            unchanged.push(row);
+        } else {
+            if leaf.disposition == Disposition::Unreferenced {
+                failures.push(format!("decode changes, but {row}"));
+            }
+            changed.push(row);
+        }
+    }
+    eprintln!(
+        "corpus_ppt_header_slack: {} decode unchanged:\n{}\n{} decode changed:\n{}",
+        unchanged.len(),
+        unchanged.join("\n"),
+        changed.len(),
+        changed.join("\n")
+    );
+    assert!(!unchanged.is_empty());
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}

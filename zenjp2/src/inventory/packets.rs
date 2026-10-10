@@ -110,6 +110,9 @@ pub(super) struct PartOut {
     pub end: u64,
     pub stop: Stop,
     pub packets: u32,
+    /// For packed headers: per header stream (same order as
+    /// [`TpIn::headers`]), the absolute end of the bytes hayro read from it.
+    pub headers_used: Vec<u64>,
 }
 
 pub(super) enum Fail {
@@ -147,11 +150,19 @@ struct Rd<'a> {
     d: &'a [u8],
     /// Position in bits.
     pos: usize,
+    /// Furthest bit position a look-ahead (`peek`) reached: hayro's
+    /// coding-pass decision reads up to 9 bits past the cursor.
+    hi: usize,
 }
 
 impl<'a> Rd<'a> {
     fn new(d: &'a [u8]) -> Self {
-        Self { d, pos: 0 }
+        Self { d, pos: 0, hi: 0 }
+    }
+    /// Bytes hayro has looked at, from the start: the cursor or the furthest
+    /// look-ahead, rounded up to a byte.
+    fn used_bytes(&self) -> usize {
+        self.pos.max(self.hi).div_ceil(8).min(self.d.len())
     }
     fn byte_pos(&self) -> usize {
         self.pos / 8
@@ -189,8 +200,11 @@ impl<'a> Rd<'a> {
         }
         Some(v)
     }
-    fn peek(&self, n: u8) -> Option<u32> {
-        self.clone().bits(n)
+    fn peek(&mut self, n: u8) -> Option<u32> {
+        let mut c = self.clone();
+        let v = c.bits(n);
+        self.hi = self.hi.max(c.pos).max(c.hi);
+        v
     }
     fn read_bytes(&mut self, n: u64) -> Option<()> {
         let start = self.byte_pos();
@@ -1149,6 +1163,7 @@ fn run(
         let mut body = Rd::new(slice(&part.data)?);
         let mut last_ok = 0usize;
         let mut packets = 0u32;
+        let mut headers_used = Vec::new();
         let stop = if part.headers.is_empty() {
             // `TilePart::Merged`: headers and bodies interleave in the data.
             loop {
@@ -1179,7 +1194,7 @@ fn run(
                 hdrs.push(Rd::new(slice(h)?));
             }
             let mut active = 0usize;
-            loop {
+            let stop = loop {
                 if hdrs[active].at_end() && hdrs.len() - 1 > active {
                     active += 1;
                 }
@@ -1197,12 +1212,20 @@ fn run(
                     Err(Fail::Parse(why)) => break Stop::Failed(why),
                     Err(f) => return Err(f),
                 }
+            };
+            headers_used
+                .try_reserve_exact(hdrs.len())
+                .map_err(|_| Fail::Unsupported("out of memory".into()))?;
+            for (h, r) in part.headers.iter().zip(&hdrs) {
+                headers_used.push(h.start + r.used_bytes() as u64);
             }
+            stop
         };
         out.push(PartOut {
             end: part.data.start + last_ok as u64,
             stop,
             packets,
+            headers_used,
         });
     }
     Ok(out)

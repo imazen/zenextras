@@ -331,6 +331,26 @@ struct Tp {
     ppt: Vec<Range<u64>>,
 }
 
+/// A PPM or PPT segment whose payload Phase B splits into children.
+struct PackedSeg {
+    id: PartId,
+    /// Header streams inside the payload (PPM: one per `Nppm` chunk).
+    streams: Vec<Range<u64>>,
+    /// Disposition of the payload bytes outside the streams (Zppm/Zppt and
+    /// the `Nppm` fields).
+    fill: Disposition,
+}
+
+/// What the packet walk says about one header stream.
+enum HdrUse {
+    /// Walked: hayro read up to `end`; `failed` when the tile-part's walk
+    /// stopped on a failed packet.
+    Read { end: u64, failed: bool },
+    /// Not walked, with the reason (and whether the tile is past a
+    /// decode-fatal point).
+    NotWalked { why: String, dead: bool },
+}
+
 /// State of one codestream walk.
 struct Cs {
     csiz: u16,
@@ -345,6 +365,8 @@ struct Cs {
     tp_count: usize,
     /// PPT payloads of the tile-part being walked: (Zppt, range).
     cur_ppt: Vec<(u8, Range<u64>)>,
+    /// Every PPM/PPT segment pushed, for Phase B to split its payload.
+    packed: Vec<PackedSeg>,
     last: BTreeMap<(u8, u16), PartId>,
     tiles: BTreeMap<u32, TileAcc>,
 }
@@ -432,6 +454,7 @@ impl Walker<'_> {
             ppm: Vec::new(),
             tp_count: 0,
             cur_ppt: Vec::new(),
+            packed: Vec::new(),
             last: BTreeMap::new(),
             tiles: BTreeMap::new(),
         };
@@ -772,6 +795,11 @@ impl Walker<'_> {
         if let Some(l) = label {
             part = part.with_label(l);
         }
+        // Packed headers: Phase B splits the payload into the header bytes
+        // hayro reads and the rest (`finish_tiles`).
+        if matches!(code, PPM | PPT) {
+            part = part.with_body(pos + 4..seg_end);
+        }
         let id = self.push(parent, part)?;
 
         // Later duplicates override earlier ones (hayro keeps the last).
@@ -802,6 +830,11 @@ impl Walker<'_> {
             (Scope::Main, QCD) => cs.qcd_seen = true,
             (Scope::Main, PPM) => {
                 if let Some(Packed::Ppm(seq, chunks)) = packed {
+                    cs.packed.push(PackedSeg {
+                        id,
+                        streams: chunks.clone(),
+                        fill: Disposition::Structure,
+                    });
                     cs.ppm.push((seq, chunks));
                 }
             }
@@ -824,7 +857,17 @@ impl Walker<'_> {
                         "hayro-jpeg2000 0.3.5 fails the decode here: PPT together with PPM",
                     );
                     self.dead = true;
+                    cs.packed.push(PackedSeg {
+                        id,
+                        streams: Vec::new(),
+                        fill: Disposition::Malformed,
+                    });
                 } else if let Some(Packed::Ppt(seq, r)) = packed {
+                    cs.packed.push(PackedSeg {
+                        id,
+                        streams: alloc::vec![r.clone()],
+                        fill: Disposition::Structure,
+                    });
                     cs.cur_ppt.push((seq, r));
                 }
             }
@@ -955,7 +998,9 @@ impl Walker<'_> {
             }
             return Ok(Flow::Stop);
         }
-        if p < data_end {
+        // Recorded even when empty: with packed headers hayro still reads the
+        // tile-part's packet headers (zero-length bodies).
+        {
             let dead = self.dead;
             let mut ppt = core::mem::take(&mut cs.cur_ppt);
             ppt.sort_by_key(|(seq, _)| *seq);
@@ -980,8 +1025,10 @@ impl Walker<'_> {
             coc,
             mut ppm,
             tiles,
+            packed,
             ..
         } = cs;
+        let mut hdr_use: BTreeMap<u64, HdrUse> = BTreeMap::new();
         // `read_header`: PPM segments sorted by Zppm, their packets in order,
         // empty ones dropped; tile-part N takes entry N.
         ppm.sort_by_key(|(seq, _)| *seq);
@@ -1019,9 +1066,115 @@ impl Walker<'_> {
             for (i, tp) in acc.parts.iter().enumerate() {
                 let out = result.as_ref().ok().map(|v| &v[i]);
                 self.tile_part_parts(parent, tp, out, result.as_ref().err())?;
+                for (k, h) in ranges[i].headers.iter().enumerate() {
+                    let u = match &result {
+                        Ok(v) => HdrUse::Read {
+                            end: v[i].headers_used.get(k).copied().unwrap_or(h.end),
+                            failed: matches!(v[i].stop, Stop::Failed(_)),
+                        },
+                        Err(why) => HdrUse::NotWalked {
+                            why: why.clone(),
+                            dead: tp.dead,
+                        },
+                    };
+                    hdr_use.insert(h.start, u);
+                }
             }
         }
+        for seg in packed {
+            self.packed_children(&seg, &hdr_use)?;
+        }
         Ok(())
+    }
+
+    /// Split a PPM/PPT payload: per header stream, the bytes hayro reads and
+    /// the rest; the Zppm/Zppt and `Nppm` fields fill the gaps.
+    fn packed_children(&mut self, seg: &PackedSeg, hdr_use: &BTreeMap<u64, HdrUse>) -> Res {
+        let id = Some(seg.id);
+        let field = |r: Range<u64>, d: Disposition, detail: &str| {
+            Part::new(
+                PartKind::Field,
+                PartTag::Name(alloc::borrow::Cow::Borrowed("packet headers")),
+                r,
+                d,
+            )
+            .with_detail(detail)
+        };
+        for s in seg.streams.iter().filter(|s| !s.is_empty()) {
+            match hdr_use.get(&s.start) {
+                Some(HdrUse::Read { end, failed }) => {
+                    let end = (*end).clamp(s.start, s.end);
+                    if s.start < end {
+                        self.push(
+                            id,
+                            field(
+                                s.start..end,
+                                Disposition::Structure,
+                                "packet headers hayro reads",
+                            ),
+                        )?;
+                    }
+                    if end < s.end {
+                        let (d, detail) = if *failed {
+                            (
+                                Disposition::Malformed,
+                                "hayro stops reading this tile-part's packet headers here: a packet \
+                                 fails to parse",
+                            )
+                        } else {
+                            (
+                                Disposition::Unreferenced,
+                                "packet-header bytes after the last header bit hayro reads; nothing \
+                                 references them",
+                            )
+                        };
+                        self.inv.push(
+                            id,
+                            Part::new(PartKind::Gap, PartTag::None, end..s.end, d)
+                                .with_detail(detail),
+                        )?;
+                    }
+                }
+                Some(HdrUse::NotWalked { why, dead }) => {
+                    let part = if why == packets::BUDGET_EXHAUSTED {
+                        field(s.clone(), Disposition::Malformed, BUDGET_DETAIL)
+                    } else if *dead {
+                        field(
+                            s.clone(),
+                            Disposition::Dropped,
+                            "packet headers; the decode fails earlier in the codestream",
+                        )
+                    } else {
+                        field(
+                            s.clone(),
+                            Disposition::Structure,
+                            &format!("packet headers; unreferenced tail not detected: {why}"),
+                        )
+                    };
+                    self.push(id, part)?;
+                }
+                None => {
+                    // No tile-part hands this stream to hayro: a PPM entry past
+                    // the last tile-part, or the PPT of a tile-part that ends
+                    // before its data.
+                    let d = if self.dead {
+                        Disposition::Dropped
+                    } else {
+                        Disposition::Unreferenced
+                    };
+                    self.inv.push(
+                        id,
+                        field(
+                            s.clone(),
+                            d,
+                            "packet headers no tile-part reads; nothing references them",
+                        ),
+                    )?;
+                }
+            }
+        }
+        let fill = self.disp(seg.fill);
+        self.inv.fill_gaps(id, fill)
     }
 
     fn scan_part(

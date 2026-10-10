@@ -801,6 +801,12 @@ fn r2_4_position_progression_elements_count_against_the_budget() {
 /// empty (one header byte, `0x00`), so the body bytes after SOD are never
 /// read by hayro: they are where a writer can hide data.
 fn packed_headers_cs(ppm: bool, body: &[u8]) -> Vec<u8> {
+    packed_headers_cs_with(ppm, &[], body)
+}
+
+/// `packed_headers_cs` with `header_slack` appended to the header stream
+/// (the PPT payload, or the PPM `Nppm` chunk, grows to hold it).
+fn packed_headers_cs_with(ppm: bool, header_slack: &[u8], body: &[u8]) -> Vec<u8> {
     let c = Cs {
         xsiz: 16,
         ysiz: 16,
@@ -814,7 +820,8 @@ fn packed_headers_cs(ppm: bool, body: &[u8]) -> Vec<u8> {
         prec: vec![],
     };
     // Two packets (2 layers x 1 resolution x 1 component x 1 precinct).
-    let headers = [0x00u8, 0x00];
+    let mut headers = vec![0x00u8, 0x00];
+    headers.extend_from_slice(header_slack);
     let base = build_cs(&c, &[]);
     let mut f = base[..base.len() - 2].to_vec(); // drop EOC
     if ppm {
@@ -957,5 +964,33 @@ fn r3_1_budget_exhaustion_does_not_vouch_for_later_tiles() {
             decode(&plain).map(|o| rows(&o)).ok(),
             "the text does not change the decode"
         );
+    }
+}
+
+/// R3-2: bytes in a packed-header stream after the last header bit hayro
+/// reads are unreferenced, like body bytes after the last packet. Here the
+/// two packets of the tile use two header bytes; the planted text after them
+/// is never read (the progression is exhausted), in a PPT payload and in a
+/// PPM `Nppm` chunk.
+#[test]
+fn r3_2_packed_header_slack_is_unreferenced() {
+    let text = b"PPT-HEADER-SLACK: owner Jane Doe, serial 12345";
+    for ppm in [false, true] {
+        let f = packed_headers_cs_with(ppm, text, b"");
+        let plain = packed_headers_cs_with(ppm, &[], b"");
+        assert_eq!(
+            decode(&f).map(|o| rows(&o)).ok(),
+            decode(&plain).map(|o| rows(&o)).ok(),
+            "ppm={ppm}: the text does not change the decode"
+        );
+        let i = inv(&f);
+        let at = find(&f, b"PPT-HEADER-SLACK") as u64;
+        let p = leaf_at(&i, at);
+        assert_eq!(p.disposition, Disposition::Unreferenced, "ppm={ppm}: {i}");
+        assert_eq!(p.range, at..at + text.len() as u64, "ppm={ppm}: {i}");
+        // The two header bytes before it are what hayro reads.
+        let read = leaf_at(&i, at - 1);
+        assert_eq!(read.disposition, Disposition::Structure, "ppm={ppm}: {i}");
+        assert_eq!(read.range, at - 2..at, "ppm={ppm}: {i}");
     }
 }
