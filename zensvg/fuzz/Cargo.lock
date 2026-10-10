@@ -665,9 +665,13 @@ dependencies = [
 name = "zensvg"
 version = "0.1.0"
 dependencies = [
+ "data-url",
  "enough",
  "flate2",
+ "imagesize",
  "resvg",
+ "simplecss",
+ "svgtypes",
  "tiny-skia",
  "usvg",
  "whereat",
