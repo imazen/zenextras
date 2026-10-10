@@ -299,12 +299,16 @@ impl<'a> zencodec::decode::DecodeJob<'a> for SvgDecodeJob {
             Some(s) => s,
             None => &enough::Unstoppable,
         };
-        // The decoder's own checks before drawing: a document it refuses
-        // draws nothing.
+        // The decoder's own checks before drawing, its render options and
+        // the fonts it would load decide what is drawn.
         let options = &self.config.render_options;
-        let gate =
-            |doc: &[u8]| crate::render::check_render(doc, options).map_err(|e| e.to_string());
-        match crate::inventory::svg_inventory(data, svg_format(), stop, &gate) {
+        let fonts = crate::inventory::FontLookup::new(options);
+        let job = crate::inventory::Job {
+            stop,
+            options,
+            fonts: &fonts,
+        };
+        match crate::inventory::svg_inventory(data, svg_format(), &job) {
             Ok(inv) => Ok(Some(inv)),
             Err(crate::inventory::InvError::Stopped(r)) => Err(SvgError::Stopped(r).into()),
             Err(crate::inventory::InvError::Parts(e)) => {

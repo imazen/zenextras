@@ -6,3 +6,8 @@ default:
 # result table to `report`.
 inventory-oracle dir report="inventory-oracle-svg.tsv":
     INVENTORY_ORACLE_XMLLINT="$(command -v xmllint)" INVENTORY_ORACLE_SVG_DIR="{{dir}}" INVENTORY_ORACLE_REPORT="{{report}}" cargo test --test integration inventory::oracle_xmllint -- --nocapture
+
+# The review probes' resource tests (deep nesting, entity chains, SVGZ
+# amplification), release build. Run one with `just inventory-heavy d01`.
+inventory-heavy filter="":
+    REVIEW_HEAVY=1 cargo test --release --test review_adversarial {{filter}} -- --nocapture --test-threads=1

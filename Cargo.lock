@@ -1950,10 +1950,14 @@ dependencies = [
 name = "zensvg"
 version = "0.1.0"
 dependencies = [
+ "data-url",
  "enough",
  "flate2",
+ "imagesize",
  "quick-xml",
  "resvg",
+ "simplecss",
+ "svgtypes",
  "tiny-skia",
  "usvg",
  "whereat",

@@ -90,15 +90,46 @@ pub fn parse_svg(data: &[u8], options: &RenderOptions) -> Result<usvg::Tree, Svg
     // Font loading
     let fontdb = Arc::get_mut(&mut usvg_options.fontdb)
         .expect("fontdb Arc should be uniquely owned at this point");
+    load_fonts(fontdb, options);
 
+    guard_panic(|| usvg::Tree::from_data(data, &usvg_options).map_err(SvgError::from))
+}
+
+/// Load the fonts `options` ask for: the system's, then the font files.
+fn load_fonts(fontdb: &mut usvg::fontdb::Database, options: &RenderOptions) {
     if options.load_system_fonts {
         fontdb.load_system_fonts();
     }
     for path in &options.font_paths {
         fontdb.load_font_file(path).ok();
     }
+}
 
-    guard_panic(|| usvg::Tree::from_data(data, &usvg_options).map_err(SvgError::from))
+/// The fonts [`parse_svg`] loads for `options`, for the structural
+/// inventory's question of whether a `<text>` finds a font. The system
+/// font scan is done once per process.
+pub(crate) fn inventory_fonts(options: &RenderOptions) -> Arc<usvg::fontdb::Database> {
+    static SYSTEM: std::sync::OnceLock<Arc<usvg::fontdb::Database>> = std::sync::OnceLock::new();
+    if options.load_system_fonts {
+        let system = SYSTEM
+            .get_or_init(|| {
+                let mut db = usvg::fontdb::Database::new();
+                db.load_system_fonts();
+                Arc::new(db)
+            })
+            .clone();
+        if options.font_paths.is_empty() {
+            return system;
+        }
+        let mut db = (*system).clone();
+        for path in &options.font_paths {
+            db.load_font_file(path).ok();
+        }
+        return Arc::new(db);
+    }
+    let mut db = usvg::fontdb::Database::new();
+    load_fonts(&mut db, options);
+    Arc::new(db)
 }
 
 /// Run a usvg/resvg call with a panic boundary: a panic inside the
@@ -222,6 +253,22 @@ pub(crate) fn check_render(data: &[u8], options: &RenderOptions) -> Result<(), S
     };
     let tree = guard_panic(|| usvg::Tree::from_data(data, &usvg_options).map_err(SvgError::from))?;
     output_plan(&tree, options).map(|_| ())
+}
+
+/// Whether usvg parses an SVG embedded in an `<image>` `data:` URI
+/// (`ImageHrefResolver::default_data_resolver` → `load_sub_svg` →
+/// `Tree::from_data_nested`): the nested tree resolves no files. Nested
+/// images and fonts are not loaded; neither changes whether it parses.
+pub(crate) fn check_nested(data: &[u8], options: &RenderOptions) -> Result<(), SvgError> {
+    let usvg_options = usvg::Options {
+        dpi: options.dpi,
+        image_href_resolver: usvg::ImageHrefResolver {
+            resolve_data: Box::new(|_, _, _| None),
+            resolve_string: Box::new(|_, _| None),
+        },
+        ..usvg::Options::default()
+    };
+    guard_panic(|| usvg::Tree::from_data(data, &usvg_options).map_err(SvgError::from)).map(|_| ())
 }
 
 /// Compute output dimensions and transform from SVG size + render options.

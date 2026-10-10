@@ -2,47 +2,60 @@
 //! [`DecodeJob::inventory`](zencodec::decode::DecodeJob::inventory).
 //!
 //! [`xml`] splits the text into nodes with exact byte ranges. Dispositions
-//! follow what the decode path (`usvg::Tree::from_data`, usvg 0.48.1) does:
+//! follow what the decode path (`usvg::Tree::from_data`, usvg 0.48.1) does
+//! with the document it parses:
 //!
-//! - the document must be UTF-8 and parse with roxmltree (`allow_dtd`), and
-//!   the root element must be `svg`; otherwise nothing is rendered and every
-//!   part is [`Dropped`](Disposition::Dropped);
-//! - usvg converts only elements in the SVG namespace (or none) whose names
-//!   it knows ([`ELEMENTS`]), and skips every other element together with
-//!   everything inside it: `title`, `desc`, `metadata`, `script`,
-//!   `foreignObject` and editor elements (`sodipodi:namedview`) are
-//!   [`Skipped`](Disposition::Skipped);
-//! - every `style` element whose `type` is absent or `text/css` is read as
-//!   CSS wherever it is (`resolve_css` matches the local name only);
-//! - character data is rendered only inside text content elements;
-//! - attributes outside the SVG/XLink/XML namespaces, or with names usvg
-//!   does not know ([`ATTRIBUTES`]), become skipped attribute parts, as do
-//!   `href`s that point outside the document (external files, URLs, `data:`
-//!   URIs).
+//! - the document must be UTF-8, parse with roxmltree (`allow_dtd`), have
+//!   an `svg` root and pass the decoder's checks before drawing (usvg's
+//!   parse, the output size, the job's limits); otherwise nothing is
+//!   rendered and every part is [`Dropped`](Disposition::Dropped). Nesting
+//!   is bounded first ([`xml::nesting_bound`]): roxmltree recurses once
+//!   per level;
+//! - [`model`] replays usvg's parse and converter on the roxmltree
+//!   document, so an element is consumed exactly when something drawn
+//!   depends on it: CSS and `style` are evaluated with simplecss,
+//!   references parsed with svgtypes, `use` and `tref` reach into skipped
+//!   subtrees, `display`, transforms, conditions, `switch`, `visibility`,
+//!   paint, clip paths, masks, filters, markers, images and fonts decide
+//!   what is drawn;
+//! - elements usvg does not convert (`title`, `desc`, `metadata`,
+//!   `script`, `foreignObject`, editor elements, other namespaces) are
+//!   [`Skipped`](Disposition::Skipped) with their subtree, unless a `use`
+//!   or `tref` draws them;
+//! - attributes usvg ignores, or that CSS overrides, are attribute parts;
+//!   `data:` URIs on images are decoded and their contents inventoried
+//!   ([`datauri`]);
+//! - `<style>` text is split into the rule sets usvg applies and the rest.
 //!
 //! SVGZ (gzip) is mapped as its header fields, the deflate stream, the
 //! trailer and anything after the first member; the decompressed document
 //! has no file offsets, so the deflate part's detail summarises its inner
 //! inventory.
 
+mod datauri;
+mod model;
 mod xml;
 
 use std::borrow::Cow;
-use std::collections::{HashMap, HashSet};
+use std::cell::RefCell;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ops::Range;
+use std::rc::Rc;
+use std::sync::{Arc, OnceLock};
 
 use enough::{Stop, StopReason};
+use usvg::roxmltree as rx;
 use zencodec::ImageFormat;
 use zencodec::inventory::{
     Disposition, Inventory, InventoryError, Part, PartId, PartKind, PartTag,
 };
 
+use crate::render::RenderOptions;
 use xml::{DtdItem, XAttr, XKind, XTree};
 
 const SVG_NS: &[u8] = b"http://www.w3.org/2000/svg";
 const XLINK_NS: &[u8] = b"http://www.w3.org/1999/xlink";
 const XML_NS: &[u8] = b"http://www.w3.org/XML/1998/namespace";
-
 /// Element names usvg 0.48.1 converts (`svgtree::EId`), sorted.
 const ELEMENTS: &[&[u8]] = &[
     b"a",
@@ -345,8 +358,6 @@ const FEATURES: &[&[u8]] = &[
     b"http://www.w3.org/TR/SVG11/feature#XlinkAttribute",
 ];
 
-const UNREFERENCED: &str = "drawn only through a reference (in <defs>, or a symbol, gradient, \
-                            pattern, clipPath, mask, filter or marker) and nothing references it";
 const NOT_SELECTED: &str = "a <switch> child after the first one whose conditions pass";
 
 /// Why an inventory could not be produced.
@@ -362,15 +373,147 @@ impl From<InventoryError> for InvError {
     }
 }
 
-/// usvg's deepest element nesting (`parse_xml_node`: `depth > 1024` is an
-/// error).
+/// usvg's deepest element nesting (`parse_xml_node`: `depth > 1024` is
+/// `NodesLimitReached`, the root element at depth 0).
 const MAX_USVG_DEPTH: usize = 1024;
 
-/// Decompressed bytes kept for the inner inventory of an SVGZ file.
-const MAX_INNER: usize = 32 << 20;
+/// Nesting up to which documents are parsed on the caller's stack.
+const SHALLOW: usize = 200;
+
+/// Nesting past which the inventory does not parse a document at all.
+/// usvg rejects anything nested deeper than [`MAX_USVG_DEPTH`] in content
+/// it converts; deeper nesting inside content it skips would parse, but
+/// roxmltree recurses once per level, so the decoder's own parse
+/// overflows a normal thread stack long before this.
+const MAX_PARSE_NESTING: usize = 8192;
+
+/// Stack for parsing documents nested deeper than [`SHALLOW`].
+const DEEP_STACK: usize = 256 << 20;
+
+/// Decompressed bytes of an SVGZ document that are mapped and checked.
+const MAX_INNER: usize = 128 << 20;
+
+/// Parts of an inner (SVGZ or nested `data:` SVG) inventory: past this the
+/// summary covers the parts mapped so far.
+const MAX_INNER_PARTS: u32 = 200_000;
 
 /// Inflate work cap when locating the end of an SVGZ deflate stream.
 const MAX_INFLATE: u64 = 512 << 20;
+
+/// Nested `data:` SVG documents inventoried inside each other.
+const MAX_NEST: u32 = 4;
+
+/// flate2's longest FNAME/FCOMMENT (`MAX_HEADER_BUF`): a longer field makes
+/// its header parser fail.
+const MAX_GZIP_FIELD: usize = 65_535;
+
+/// Where usvg 0.48.1 reads an attribute it knows (`AId`), from a scan of
+/// every `AId::…` use outside `svgtree/names.rs` and `writer.rs`:
+/// `Some(elements)` when only those elements read it (`[]`: none does);
+/// `None` when any element may.
+fn attr_scope(name: &[u8]) -> Option<&'static [&'static str]> {
+    const FE: &[&str] = &["fe*", "filter"];
+    Some(match name {
+        // Parsed into usvg's tree but never used to draw.
+        b"clip"
+        | b"color-profile"
+        | b"enable-background"
+        | b"font-feature-settings"
+        | b"font-synthesis"
+        | b"inline-size"
+        | b"kernelUnitLength"
+        | b"mask-border"
+        | b"mask-border-mode"
+        | b"mask-border-outset"
+        | b"mask-border-repeat"
+        | b"mask-border-slice"
+        | b"mask-border-source"
+        | b"mask-border-width"
+        | b"mask-clip"
+        | b"mask-composite"
+        | b"mask-image"
+        | b"mask-mode"
+        | b"mask-origin"
+        | b"mask-position"
+        | b"mask-size"
+        | b"path"
+        | b"pathLength"
+        | b"shape-image-threshold"
+        | b"shape-inside"
+        | b"shape-margin"
+        | b"shape-padding"
+        | b"shape-subtract"
+        | b"side"
+        | b"text-align"
+        | b"text-align-last"
+        | b"text-decoration-color"
+        | b"text-decoration-fill"
+        | b"text-decoration-line"
+        | b"text-decoration-stroke"
+        | b"text-decoration-style"
+        | b"text-indent"
+        | b"text-orientation"
+        | b"text-underline-position"
+        | b"transform-box"
+        | b"unicode-range"
+        | b"color-interpolation"
+        | b"color-rendering"
+        | b"glyph-orientation-horizontal"
+        | b"glyph-orientation-vertical"
+        | b"text-overflow"
+        | b"unicode-bidi"
+        | b"vector-effect"
+        | b"white-space"
+        | b"font-variant-caps"
+        | b"font-variant-east-asian"
+        | b"font-variant-ligatures"
+        | b"font-variant-numeric"
+        | b"font-variant-position"
+        | b"line-height"
+        | b"font-size-adjust"
+        | b"direction"
+        | b"font" => &[],
+        // Filters (`filter.rs`).
+        b"amplitude" | b"azimuth" | b"baseFrequency" | b"bias" | b"divisor" | b"edgeMode"
+        | b"elevation" | b"exponent" | b"filterUnits" | b"in" | b"in2" | b"k1" | b"k2" | b"k3"
+        | b"k4" | b"mode" | b"numOctaves" | b"operator" | b"order" | b"pointsAtX"
+        | b"pointsAtY" | b"pointsAtZ" | b"radius" | b"result" | b"scale" | b"seed"
+        | b"specularConstant" | b"specularExponent" | b"stdDeviation" | b"targetX" | b"targetY"
+        | b"values" | b"xChannelSelector" | b"yChannelSelector" | b"diffuseConstant"
+        | b"intercept" | b"kernelMatrix" | b"limitingConeAngle" | b"preserveAlpha" | b"slope"
+        | b"stitchTiles" | b"surfaceScale" | b"tableValues" | b"z" | b"primitiveUnits" => FE,
+        // `type` is also read on `style` (resolve_css).
+        b"type" => &["fe*", "filter", "style"],
+        b"offset" => &["fe*", "stop"],
+        b"gradientTransform" | b"gradientUnits" | b"spreadMethod" => {
+            &["linearGradient", "radialGradient"]
+        }
+        b"fr" | b"fx" | b"fy" => &["radialGradient"],
+        b"patternContentUnits" | b"patternTransform" | b"patternUnits" => &["pattern"],
+        b"markerUnits" | b"orient" | b"markerHeight" | b"markerWidth" | b"refX" | b"refY" => {
+            &["marker"]
+        }
+        b"clipPathUnits" => &["clipPath"],
+        b"maskUnits" | b"maskContentUnits" | b"mask-type" => &["mask"],
+        b"d" => &["path"],
+        b"points" => &["polyline", "polygon"],
+        b"cx" | b"cy" => &["circle", "ellipse", "radialGradient"],
+        b"r" => &["circle", "radialGradient"],
+        b"rx" | b"ry" => &["rect", "ellipse"],
+        b"x1" | b"y1" | b"x2" | b"y2" => &["line", "linearGradient"],
+        b"lengthAdjust" | b"startOffset" | b"textLength" | b"rotate" => {
+            &["text", "tspan", "tref", "textPath", "a"]
+        }
+        _ => return None,
+    })
+}
+
+fn in_scope(scope: &[&str], element: &[u8]) -> bool {
+    scope.iter().any(|&s| match s.strip_suffix('*') {
+        Some(prefix) => element.starts_with(prefix.as_bytes()),
+        None => s.as_bytes() == element,
+    })
+}
 
 /// Printable text: UTF-8 when valid, else Latin-1; control characters
 /// become `.`; at most `max` characters.
@@ -382,79 +525,542 @@ fn text(b: &[u8], max: usize) -> String {
     }
 }
 
-/// The decoder's checks before drawing an uncompressed document (usvg's
-/// parse, the output size, the limits): `Err` names why it refuses.
-pub(crate) type Gate<'g> = &'g dyn Fn(&[u8]) -> Result<(), String>;
+/// What the job decides that changes the answer.
+pub(crate) struct Job<'j> {
+    pub stop: &'j dyn Stop,
+    pub options: &'j RenderOptions,
+    pub fonts: &'j FontLookup<'j>,
+}
+
+/// The fonts the decoder would load for `<text>` (`render::parse_svg`),
+/// loaded the first time a drawn text asks.
+pub(crate) struct FontLookup<'o> {
+    options: &'o RenderOptions,
+    db: OnceLock<Arc<usvg::fontdb::Database>>,
+}
+
+impl<'o> FontLookup<'o> {
+    pub(crate) fn new(options: &'o RenderOptions) -> Self {
+        Self {
+            options,
+            db: OnceLock::new(),
+        }
+    }
+
+    fn db(&self) -> &usvg::fontdb::Database {
+        self.db
+            .get_or_init(|| crate::render::inventory_fonts(self.options))
+    }
+
+    /// `FontResolver::default_font_selector`: the families, then serif.
+    fn query(&self, families: &[svgtypes::FontFamily]) -> bool {
+        use svgtypes::FontFamily as F;
+        use usvg::fontdb::Family;
+        let db = self.db();
+        if db.is_empty() {
+            return false;
+        }
+        let mut list: Vec<Family> = families
+            .iter()
+            .map(|f| match f {
+                F::Serif => Family::Serif,
+                F::SansSerif => Family::SansSerif,
+                F::Cursive => Family::Cursive,
+                F::Fantasy => Family::Fantasy,
+                F::Monospace => Family::Monospace,
+                F::Named(s) => Family::Name(s),
+            })
+            .collect();
+        list.push(Family::Serif);
+        db.query(&usvg::fontdb::Query {
+            families: &list,
+            ..Default::default()
+        })
+        .is_some()
+    }
+}
+
+/// The fonts a document sees: the job's, or for an SVG nested in a `data:`
+/// URI the same database with usvg's default family
+/// (`Tree::from_data_nested` does not copy `font_family`).
+struct DocFonts<'f> {
+    lookup: &'f FontLookup<'f>,
+    nested: bool,
+}
+
+impl model::Fonts for DocFonts<'_> {
+    fn resolves(&self, families: &[svgtypes::FontFamily]) -> bool {
+        self.lookup.query(families)
+    }
+
+    fn default_family(&self) -> &str {
+        match (&self.lookup.options.default_font_family, self.nested) {
+            (Some(f), false) => f,
+            _ => "Times New Roman",
+        }
+    }
+}
 
 pub(crate) fn svg_inventory(
     data: &[u8],
     format: ImageFormat,
-    stop: &dyn Stop,
-    gate: Gate<'_>,
+    job: &Job,
 ) -> Result<Inventory, InvError> {
     let mut inv = Inventory::new(format, data.len() as u64);
-    if data.starts_with(&[0x1f, 0x8b]) {
-        svgz(data, &mut inv, format, stop, gate)?;
-    } else {
-        walk_xml(data, &mut inv, None, stop, gate)?;
-    }
+    inventory_into(data, &mut inv, format, job, 0)?;
     inv.fill_gaps(None, Disposition::Trailing)?;
     Ok(inv)
 }
 
-/// Whether the decode path accepts the document, and if not, why.
-fn accept(d: &[u8], tree: &XTree, gate: Gate<'_>) -> Result<(), String> {
+/// Map `data` (SVG or SVGZ) into `inv`; `nest` counts enclosing `data:`
+/// documents. Returns whether the decoder draws from it.
+fn inventory_into(
+    data: &[u8],
+    inv: &mut Inventory,
+    format: ImageFormat,
+    job: &Job,
+    nest: u32,
+) -> Result<Walked, InvError> {
+    if data.starts_with(&[0x1f, 0x8b]) {
+        svgz(data, inv, format, job, nest)
+    } else {
+        walk_xml(data, inv, None, job, nest)
+    }
+}
+
+/// The outcome of mapping one document.
+#[derive(Clone, Debug, Default)]
+struct Walked {
+    /// The decoder draws from it.
+    accepted: bool,
+    /// Why not, when it does not.
+    why: Option<String>,
+    elements: usize,
+}
+
+/// Run `f` on a thread with a deep stack when `deep`; `None` when that
+/// thread cannot be started.
+fn deep_stack<R: Send>(deep: bool, f: impl FnOnce() -> R + Send) -> Option<R> {
+    #[cfg(not(target_family = "wasm"))]
+    if deep {
+        return std::thread::scope(|s| {
+            let h = std::thread::Builder::new()
+                .name("zensvg-inventory".into())
+                .stack_size(DEEP_STACK)
+                .spawn_scoped(s, f)
+                .ok()?;
+            match h.join() {
+                Ok(v) => Some(v),
+                Err(p) => std::panic::resume_unwind(p),
+            }
+        });
+    }
+    let _ = deep;
+    Some(f())
+}
+
+/// Parse with roxmltree as `usvg::Tree::from_str` does, once the nesting
+/// is known to be safe.
+fn parse_doc(d: &[u8], bound: Option<usize>) -> Result<rx::Document<'_>, String> {
     let s = std::str::from_utf8(d).map_err(|_| "not UTF-8 (usvg requires UTF-8)".to_string())?;
-    let opt = usvg::roxmltree::ParsingOptions {
+    match bound {
+        None => {
+            return Err(
+                "an entity reference chain loops or nests deeper than roxmltree allows \
+                 (EntityReferenceLoop)"
+                    .into(),
+            );
+        }
+        Some(n) if n > MAX_PARSE_NESTING => {
+            return Err(format!(
+                "elements nest {n} deep; usvg rejects nesting past {} levels in what it \
+                 converts, and the decoder's parser recurses once per level (the inventory \
+                 does not parse it)",
+                MAX_USVG_DEPTH + 1
+            ));
+        }
+        Some(_) => {}
+    }
+    let opt = rx::ParsingOptions {
         allow_dtd: true,
         ..Default::default()
     };
-    let doc = usvg::roxmltree::Document::parse_with_options(s, opt)
+    let doc = rx::Document::parse_with_options(s, opt)
         .map_err(|e| format!("roxmltree rejects it: {e}"))?;
     let root = doc.root_element();
     if root.tag_name().name() != "svg"
-        || !matches!(
-            root.tag_name().namespace(),
-            None | Some("http://www.w3.org/2000/svg")
-        )
+        || !matches!(root.tag_name().namespace(), None | Some(model::SVG_NS))
     {
         return Err("the root element is not <svg> (usvg: NoRootNode)".into());
     }
-    if max_depth(tree) > MAX_USVG_DEPTH {
-        return Err(format!(
-            "elements nest deeper than {MAX_USVG_DEPTH} (usvg: NodesLimitReached)"
-        ));
-    }
-    gate(d).map_err(|e| format!("the decoder rejects it before drawing: {e}"))
+    Ok(doc)
 }
 
-fn max_depth(tree: &XTree) -> usize {
-    let mut best = 0;
-    let mut stack: Vec<(usize, usize)> = tree.roots.iter().map(|&r| (r, 1)).collect();
-    while let Some((n, depth)) = stack.pop() {
-        if matches!(tree.nodes[n].kind, XKind::Element { .. }) {
-            best = best.max(depth);
-            stack.extend(tree.nodes[n].children.iter().map(|&c| (c, depth + 1)));
+/// Map an SVG document at `d` into `inv` (whose input is `d`).
+fn walk_xml(
+    d: &[u8],
+    inv: &mut Inventory,
+    rejected: Option<String>,
+    job: &Job,
+    nest: u32,
+) -> Result<Walked, InvError> {
+    let tree = xml::lex(d);
+    let bound = xml::nesting_bound(d, &tree);
+    let deep = bound.is_none_or(|b| b > SHALLOW);
+    let parse = rejected.is_none();
+    match deep_stack(deep && parse, || {
+        walk_parsed(d, &tree, bound, inv, rejected.clone(), job, nest)
+    }) {
+        Some(r) => r,
+        None => walk_parsed(
+            d,
+            &tree,
+            bound,
+            inv,
+            Some("nested too deeply for the inventory to parse on this thread".into()),
+            job,
+            nest,
+        ),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn walk_parsed(
+    d: &[u8],
+    tree: &XTree,
+    bound: Option<usize>,
+    inv: &mut Inventory,
+    rejected: Option<String>,
+    job: &Job,
+    nest: u32,
+) -> Result<Walked, InvError> {
+    let mut accepted: Result<(), String> = rejected.map_or(Ok(()), Err);
+    let doc = match accepted {
+        Ok(()) => match parse_doc(d, bound) {
+            Ok(doc) => Some(doc),
+            Err(e) => {
+                accepted = Err(e);
+                None
+            }
+        },
+        Err(_) => None,
+    };
+    if accepted.is_ok() {
+        let gate = if nest == 0 {
+            crate::render::check_render(d, job.options)
+        } else {
+            crate::render::check_nested(d, job.options)
+        };
+        if let Err(e) = gate {
+            accepted = Err(format!("the decoder rejects it before drawing: {e}"));
         }
     }
-    best
+    let uris = UriCache::default();
+    let fonts = DocFonts {
+        lookup: job.fonts,
+        nested: nest > 0,
+    };
+    let languages = vec!["en".to_string()];
+    let value_at: HashMap<usize, Range<usize>> = tree
+        .nodes
+        .iter()
+        .filter_map(|n| match &n.kind {
+            XKind::Element { attrs, .. } => Some(attrs),
+            _ => None,
+        })
+        .flatten()
+        .map(|a| (a.range.start, a.value.clone()))
+        .collect();
+    let model = match (&doc, &accepted) {
+        (Some(doc), Ok(())) => {
+            let resolve = |at: usize, value: &str| -> Option<bool> {
+                let raw = &d[value_at.get(&at)?.clone()];
+                uris.get(at, raw, value, job, nest).map(|u| u.drawn)
+            };
+            let env = model::Env {
+                languages: &languages,
+                fonts: &fonts,
+                resolve_data: &resolve,
+            };
+            match model::build(doc, &env) {
+                Some(m) => Some(m),
+                None => {
+                    accepted = Err("more than 1,000,000 nodes (usvg: NodesLimitReached)".into());
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
+    let ok = accepted.is_ok();
+    let mut w = Walker::new(
+        d,
+        tree,
+        inv,
+        accepted,
+        doc.as_ref(),
+        model.as_ref(),
+        job,
+        nest,
+        &uris,
+    );
+    w.run()?;
+    w.finish_entities()?;
+    Ok(Walked {
+        accepted: ok,
+        why: w.accepted.as_ref().err().cloned(),
+        elements: w.elements,
+    })
+}
+
+/// Analysed `data:` URIs, by attribute start offset.
+#[derive(Default)]
+struct UriCache {
+    map: RefCell<HashMap<usize, Rc<UriInfo>>>,
+}
+
+/// A `data:` URI on an image: whether it draws, a summary, and the
+/// unconsumed units of its payload (file ranges).
+#[derive(Debug)]
+struct UriInfo {
+    drawn: bool,
+    detail: String,
+    children: Vec<(Range<usize>, Disposition, String, String)>,
+}
+
+impl UriCache {
+    fn get(&self, at: usize, raw: &[u8], value: &str, job: &Job, nest: u32) -> Option<Rc<UriInfo>> {
+        if let Some(u) = self.map.borrow().get(&at) {
+            return Some(u.clone());
+        }
+        if !datauri::is_data_url(value) {
+            return None;
+        }
+        let info = Rc::new(analyze_uri(raw, value, job, nest));
+        self.map.borrow_mut().insert(at, info.clone());
+        Some(info)
+    }
+}
+
+/// Decode a `data:` URI as usvg does and inventory its payload. `raw` is
+/// the attribute value as it stands in the file, `value` as roxmltree
+/// reports it; payload positions are mapped only when they agree.
+fn analyze_uri(raw: &[u8], value: &str, job: &Job, nest: u32) -> UriInfo {
+    let raw_start = 0usize;
+    let decoded = match datauri::decode(value, raw == value.as_bytes()) {
+        None => {
+            return UriInfo {
+                drawn: false,
+                detail: "not a data URL".into(),
+                children: Vec::new(),
+            };
+        }
+        Some(Err(why)) => {
+            return UriInfo {
+                drawn: false,
+                detail: format!("data URI; {why}, so usvg draws nothing"),
+                children: Vec::new(),
+            };
+        }
+        Some(Ok(d)) => d,
+    };
+    let mut children = Vec::new();
+    if let Some(f) = &decoded.fragment {
+        children.push((
+            raw_start + f.start..raw_start + f.end,
+            Disposition::Dropped,
+            "#fragment".to_string(),
+            "after '#': data-url never decodes the fragment".to_string(),
+        ));
+    }
+    let head = format!(
+        "data URI: {}, {} bytes decoded{}",
+        text(decoded.mime.as_bytes(), 64),
+        decoded.data.len(),
+        if decoded.base64 { " (base64)" } else { "" }
+    );
+    let Some(kind) = datauri::kind(&decoded.mime, &decoded.data) else {
+        return UriInfo {
+            drawn: false,
+            detail: format!("{head}; usvg's default data resolver does not accept this type"),
+            children,
+        };
+    };
+    let (drawn, units, summary): (bool, Vec<datauri::Unit>, String) = if kind == datauri::Kind::Svg
+    {
+        if nest >= MAX_NEST {
+            (
+                true,
+                Vec::new(),
+                format!(
+                    "nested SVG {} levels deep; its contents are not inventoried",
+                    nest + 1
+                ),
+            )
+        } else {
+            let mut inner = Inventory::new(ImageFormat::Svg, decoded.data.len() as u64)
+                .with_max_parts(MAX_INNER_PARTS);
+            let walked = inventory_into(&decoded.data, &mut inner, ImageFormat::Svg, job, nest + 1);
+            let capped = matches!(walked, Err(InvError::Parts(_)));
+            let w = walked.clone_walked();
+            let _ = inner.fill_gaps(None, Disposition::Trailing);
+            let units = unconsumed_units(&inner);
+            let mut s = summary(&inner, &w, "nested SVG");
+            if capped {
+                s.push_str(&format!("; stopped at {MAX_INNER_PARTS} parts"));
+            }
+            (w.accepted, units, s)
+        }
+    } else {
+        match datauri::raster_size(&decoded.data) {
+            None => (
+                false,
+                Vec::new(),
+                format!(
+                    "{} whose size usvg cannot read; it draws nothing",
+                    kind.name()
+                ),
+            ),
+            Some((wd, ht)) => {
+                let units = datauri::raster_units(&kind, &decoded.data);
+                let notable: Vec<String> = units
+                    .iter()
+                    .filter(|u| !u.1.is_consumed())
+                    .take(12)
+                    .map(|u| {
+                        if u.2.is_empty() {
+                            u.1.name().to_string()
+                        } else {
+                            u.2.clone()
+                        }
+                    })
+                    .collect();
+                let mut s = format!("{} {wd}x{ht}, {} units", kind.name(), units.len());
+                if !notable.is_empty() {
+                    s.push_str("; not consumed: ");
+                    s.push_str(&notable.join(", "));
+                }
+                if let Some(u) = units.iter().find(|u| u.1.is_consumed() && !u.3.is_empty()) {
+                    s.push_str("; ");
+                    s.push_str(&u.3);
+                }
+                (
+                    true,
+                    units.into_iter().filter(|u| !u.1.is_consumed()).collect(),
+                    s,
+                )
+            }
+        }
+    };
+    match &decoded.map {
+        Some(map) => {
+            for (r, disp, label, detail) in units {
+                if let Some(src) = datauri::source(map, &r) {
+                    children.push((src, disp, label, detail));
+                }
+            }
+        }
+        None if !units.is_empty() => {
+            return UriInfo {
+                drawn,
+                detail: format!(
+                    "{head}; {summary}; positions inside the value are not mapped (entity or \
+                     character references, or CR, change them), so the units above are not \
+                     split out"
+                ),
+                children,
+            };
+        }
+        None => {}
+    }
+    UriInfo {
+        drawn,
+        detail: format!("{head}; {summary}"),
+        children: merge_children(children),
+    }
+}
+
+/// Sort and merge overlapping child ranges (payload units sharing a
+/// base64 character).
+fn merge_children(
+    mut v: Vec<(Range<usize>, Disposition, String, String)>,
+) -> Vec<(Range<usize>, Disposition, String, String)> {
+    v.sort_by_key(|c| c.0.start);
+    let mut out: Vec<(Range<usize>, Disposition, String, String)> = Vec::new();
+    for c in v {
+        match out.last_mut() {
+            Some(last) if c.0.start < last.0.end => {
+                last.0.end = last.0.end.max(c.0.end);
+                if !c.2.is_empty() && !last.2.contains(&c.2) {
+                    if !last.2.is_empty() {
+                        last.2.push_str(" + ");
+                    }
+                    last.2.push_str(&c.2);
+                }
+                if last.1 != c.1 {
+                    // Mixed dispositions: the less specific one.
+                    last.1 = Disposition::Dropped;
+                }
+                if last.3.len() < 200 && !c.3.is_empty() && !last.3.contains(&c.3) {
+                    last.3.push_str("; ");
+                    last.3.push_str(&c.3);
+                }
+            }
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
+/// The maximal unconsumed parts of an inventory: (range, disposition,
+/// label, detail).
+fn unconsumed_units(inv: &Inventory) -> Vec<datauri::Unit> {
+    let parts = inv.parts();
+    parts
+        .iter()
+        .filter(|p| {
+            !p.disposition.is_consumed()
+                && !matches!(p.disposition, Disposition::Padding)
+                && p.parent
+                    .is_none_or(|q| parts[q.index()].disposition.is_consumed())
+        })
+        .map(|p| {
+            let label = match (&p.tag, &p.label) {
+                (PartTag::Name(n), Some(l)) if n.as_ref() != l.as_ref() => format!("{n} {l}"),
+                (PartTag::Name(n), _) => n.to_string(),
+                (_, Some(l)) => l.to_string(),
+                _ => p.kind.name().to_string(),
+            };
+            (
+                p.range.start as usize..p.range.end as usize,
+                p.disposition,
+                label,
+                p.detail.clone().unwrap_or_default(),
+            )
+        })
+        .collect()
+}
+
+trait CloneWalked {
+    fn clone_walked(&self) -> Walked;
+}
+
+impl CloneWalked for Result<Walked, InvError> {
+    fn clone_walked(&self) -> Walked {
+        match self {
+            Ok(w) => w.clone(),
+            Err(_) => Walked::default(),
+        }
+    }
 }
 
 /// How the parent of a node is treated by usvg.
 #[derive(Clone, Copy, Debug)]
 struct Ctx {
-    /// The parent is converted (or this is the document level).
-    converted: bool,
-    /// The parent is converted text content (`text`, `tspan`, `textPath`).
-    text: bool,
     /// The parent is a `style` element read as CSS.
     css: bool,
     /// Document level.
     top: bool,
-    /// Why usvg does not draw this subtree, when it converts it but never
-    /// draws it (an unreferenced `defs` child, `display: none`, a failed
-    /// condition, a `switch` child it does not select).
-    not_drawn: Option<&'static str>,
 }
 
 enum Frame {
@@ -468,176 +1074,36 @@ enum Frame {
     },
 }
 
-struct Walker<'a, 'i> {
+struct Walker<'a, 'i, 'r> {
     d: &'a [u8],
     tree: &'a XTree,
     inv: &'i mut Inventory,
     /// `Err` when the decode path rejects the document.
     accepted: Result<(), String>,
-    /// Prefix (empty for the default namespace) → stack of URIs.
+    doc: Option<&'a rx::Document<'r>>,
+    model: Option<&'a model::Model>,
+    /// roxmltree elements and text nodes by start offset.
+    elems: HashMap<usize, rx::NodeId>,
+    texts: BTreeMap<usize, rx::NodeId>,
+    /// Per roxmltree node: it or a descendant is drawn.
+    drawn_below: Vec<bool>,
+    /// Prefix (empty for the default namespace) → stack of URIs (for
+    /// documents roxmltree rejects).
     ns: HashMap<Vec<u8>, Vec<Vec<u8>>>,
-    stop: &'a dyn Stop,
+    job: &'a Job<'a>,
+    nest: u32,
+    uris: &'a UriCache,
     steps: u64,
     /// The root element has been emitted.
     after_root: bool,
     /// Elements mapped.
     elements: usize,
-    /// Internal general entities from the DOCTYPE: name → literal.
-    entities: HashMap<Vec<u8>, Vec<u8>>,
-    /// Per node: the `<defs>` child or `<symbol>` subtree it belongs to.
-    def_root: Vec<Option<usize>>,
-    /// Those subtrees nothing outside them references.
-    unused_defs: HashSet<usize>,
-    /// Some CSS text mentions `display`, so CSS could override a
-    /// `display="none"`: such elements are then not reported undrawn.
-    css_mentions_display: bool,
-}
-
-/// Map an SVG document at `d` into `inv` (whose input is `d`). Returns
-/// whether the decode path accepts it, and the number of elements.
-fn walk_xml(
-    d: &[u8],
-    inv: &mut Inventory,
-    accepted_override: Option<String>,
-    stop: &dyn Stop,
-    gate: Gate<'_>,
-) -> Result<(bool, usize), InvError> {
-    let tree = xml::lex(d);
-    let accepted = match accepted_override {
-        Some(why) => Err(why),
-        None => accept(d, &tree, gate),
-    };
-    let ok = accepted.is_ok();
-    let mut entities = HashMap::new();
-    for &r in &tree.roots {
-        if let XKind::Doctype { items, .. } = &tree.nodes[r].kind {
-            for (_, item) in items {
-                if let DtdItem::Entity {
-                    name,
-                    value: Some(v),
-                    ..
-                } = item
-                {
-                    entities
-                        .entry(d[name.clone()].to_vec())
-                        .or_insert_with(|| d[v.clone()].to_vec());
-                }
-            }
-        }
-    }
-    let (def_root, unused_defs) = unreferenced_defs(d, &tree);
-    let css_mentions_display = tree.nodes.iter().any(|n| {
-        matches!(n.kind, XKind::Text | XKind::CData)
-            && d[n.range.clone()]
-                .windows(7)
-                .any(|w| w.eq_ignore_ascii_case(b"display"))
-    });
-    let mut w = Walker {
-        d,
-        tree: &tree,
-        inv,
-        accepted,
-        ns: HashMap::new(),
-        stop,
-        steps: 0,
-        after_root: false,
-        elements: 0,
-        entities,
-        def_root,
-        unused_defs,
-        css_mentions_display,
-    };
-    w.run()?;
-    Ok((ok, w.elements))
-}
-
-/// usvg draws an element inside `<defs>`, and a `symbol`, gradient,
-/// `pattern`, `clipPath`, `mask`, `filter` or `marker` anywhere, only
-/// through a reference (`url(#id)`, `href="#id"`); its converter walks only
-/// graphic elements, `g`, `switch` and `svg`. For every such subtree, find
-/// whether anything outside it refers to one of its ids. Deliberately one-sided: a reference from
-/// anywhere counts (skipped content, other unused subtrees, every `<style>`
-/// text, any attribute value), so a subtree is reported unused only when no
-/// reference to it exists at all.
-fn unreferenced_defs(d: &[u8], tree: &XTree) -> (Vec<Option<usize>>, HashSet<usize>) {
-    let local = |q: &[u8]| -> Vec<u8> { split_qname(q).1.to_vec() };
-    let mut root_of: Vec<Option<usize>> = vec![None; tree.nodes.len()];
-    let mut owner: HashMap<Vec<u8>, usize> = HashMap::new();
-    let mut refs: Vec<(Option<usize>, Vec<u8>)> = Vec::new();
-    let mut roots: HashSet<usize> = HashSet::new();
-    let scan_urls = |text: &[u8], from: Option<usize>, refs: &mut Vec<(Option<usize>, Vec<u8>)>| {
-        let mut rest = text;
-        while let Some(p) = rest.windows(5).position(|w| w == b"url(#") {
-            let tail = &rest[p + 5..];
-            let end = tail
-                .iter()
-                .position(|&b| matches!(b, b')' | b'"' | b'\'' | b' '))
-                .unwrap_or(tail.len());
-            refs.push((from, tail[..end].to_vec()));
-            rest = &tail[end..];
-        }
-    };
-    // (node, parent is a defs element, the subtree it inherits)
-    let mut stack: Vec<(usize, bool, Option<usize>)> =
-        tree.roots.iter().rev().map(|&r| (r, false, None)).collect();
-    while let Some((n, parent_defs, inherited)) = stack.pop() {
-        let node = &tree.nodes[n];
-        match &node.kind {
-            XKind::Element { qname, attrs, .. } => {
-                let name = local(&d[qname.clone()]);
-                // usvg's `convert_element` walks only graphic elements, `g`,
-                // `switch` and `svg`; these are drawn only through a
-                // reference wherever they appear.
-                let reference_only = matches!(
-                    name.as_slice(),
-                    b"symbol"
-                        | b"linearGradient"
-                        | b"radialGradient"
-                        | b"pattern"
-                        | b"clipPath"
-                        | b"mask"
-                        | b"filter"
-                        | b"marker"
-                );
-                let root = inherited.or_else(|| (parent_defs || reference_only).then_some(n));
-                if let Some(r) = root {
-                    roots.insert(r);
-                }
-                root_of[n] = root;
-                for a in attrs {
-                    let an = local(&d[a.qname.clone()]);
-                    let v = &d[a.value.clone()];
-                    if an == b"id" {
-                        if let Some(r) = root {
-                            owner.entry(v.to_vec()).or_insert(r);
-                        }
-                    } else if an == b"href" && v.starts_with(b"#") {
-                        refs.push((root, v[1..].to_vec()));
-                    }
-                    scan_urls(v, root, &mut refs);
-                }
-                let is_defs = name == b"defs";
-                for &c in node.children.iter().rev() {
-                    stack.push((c, is_defs, root));
-                }
-            }
-            XKind::Text | XKind::CData => {
-                root_of[n] = inherited;
-                scan_urls(&d[node.range.clone()], inherited, &mut refs);
-            }
-            _ => root_of[n] = inherited,
-        }
-    }
-    let mut used: HashSet<usize> = HashSet::new();
-    for (from, id) in refs {
-        if let Some(&r) = owner.get(&id)
-            && from != Some(r)
-        {
-            used.insert(r);
-        }
-    }
-    let unused = roots.difference(&used).copied().collect();
-    (root_of, unused)
+    /// Internal entities: name → (part, literal range).
+    entity_parts: Vec<(Vec<u8>, PartId, Option<Range<usize>>)>,
+    /// Entities referenced from consumed content.
+    used_entities: HashSet<Vec<u8>>,
+    /// Entities whose literal roxmltree expanded into drawn elements.
+    markup_entities: HashSet<Vec<u8>>,
 }
 
 fn split_qname(q: &[u8]) -> (&[u8], &[u8]) {
@@ -647,38 +1113,112 @@ fn split_qname(q: &[u8]) -> (&[u8], &[u8]) {
     }
 }
 
-/// `data:[<mime>][;base64],<payload>` → (media type, decoded byte count).
-fn data_uri(v: &[u8]) -> (String, u64) {
-    let body = &v[5..];
-    let comma = body.iter().position(|&b| b == b',').unwrap_or(body.len());
-    let meta = &body[..comma];
-    let payload = body.get(comma + 1..).unwrap_or(&[]);
-    let base64 = meta.ends_with(b";base64");
-    let mime = meta.split(|&b| b == b';').next().unwrap_or(&[]);
-    let mime = if mime.is_empty() {
-        "text/plain".to_string()
-    } else {
-        text(mime, 64)
-    };
-    let n = if base64 {
-        let chars = payload
-            .iter()
-            .filter(|b| b.is_ascii_alphanumeric() || **b == b'+' || **b == b'/')
-            .count() as u64;
-        chars * 3 / 4
-    } else {
-        let mut n = 0u64;
-        let mut i = 0;
-        while i < payload.len() {
-            i += if payload[i] == b'%' { 3 } else { 1 };
-            n += 1;
+/// Names of general entity references (`&name;`) in `v`.
+fn entity_refs(v: &[u8]) -> impl Iterator<Item = &[u8]> {
+    let mut i = 0;
+    std::iter::from_fn(move || {
+        while i < v.len() {
+            if v[i] == b'&'
+                && let Some(semi) = v[i + 1..].iter().take(256).position(|&b| b == b';')
+            {
+                let name = &v[i + 1..i + 1 + semi];
+                i += semi + 2;
+                if !name.is_empty() && name[0] != b'#' {
+                    return Some(name);
+                }
+                continue;
+            }
+            i += 1;
         }
-        n
-    };
-    (mime, n)
+        None
+    })
 }
 
-impl Walker<'_, '_> {
+impl<'a, 'i, 'r> Walker<'a, 'i, 'r> {
+    #[allow(clippy::too_many_arguments)]
+    fn new(
+        d: &'a [u8],
+        tree: &'a XTree,
+        inv: &'i mut Inventory,
+        accepted: Result<(), String>,
+        doc: Option<&'a rx::Document<'r>>,
+        model: Option<&'a model::Model>,
+        job: &'a Job<'a>,
+        nest: u32,
+        uris: &'a UriCache,
+    ) -> Self {
+        let mut elems = HashMap::new();
+        let mut texts = BTreeMap::new();
+        let mut drawn_below = Vec::new();
+        let mut markup_entities = HashSet::new();
+        if let (Some(doc), Some(m)) = (doc, model) {
+            let n = doc.descendants().count() + 1;
+            drawn_below = vec![false; n];
+            // Literal ranges of internal entities.
+            let mut literals: Vec<(Vec<u8>, Range<usize>)> = Vec::new();
+            for &r in &tree.roots {
+                if let XKind::Doctype { items, .. } = &tree.nodes[r].kind {
+                    for (_, item) in items {
+                        if let DtdItem::Entity {
+                            name,
+                            value: Some(v),
+                            ..
+                        } = item
+                        {
+                            literals.push((d[name.clone()].to_vec(), v.clone()));
+                        }
+                    }
+                }
+            }
+            for node in doc.descendants() {
+                let at = node.range().start;
+                if node.is_element() {
+                    elems.entry(at).or_insert(node.id());
+                } else if node.is_text() {
+                    texts.entry(at).or_insert(node.id());
+                }
+                if m.verdict(node.id()).is_some_and(|v| v.drawn) {
+                    for a in node.ancestors() {
+                        let i = a.id().get_usize();
+                        if i < drawn_below.len() {
+                            if drawn_below[i] {
+                                break;
+                            }
+                            drawn_below[i] = true;
+                        }
+                    }
+                    if node.is_element()
+                        && let Some((name, _)) =
+                            literals.iter().find(|(_, r)| r.start <= at && at < r.end)
+                    {
+                        markup_entities.insert(name.clone());
+                    }
+                }
+            }
+        }
+        Self {
+            d,
+            tree,
+            inv,
+            accepted,
+            doc,
+            model,
+            elems,
+            texts,
+            drawn_below,
+            ns: HashMap::new(),
+            job,
+            nest,
+            uris,
+            steps: 0,
+            after_root: false,
+            elements: 0,
+            entity_parts: Vec::new(),
+            used_entities: HashSet::new(),
+            markup_entities,
+        }
+    }
+
     fn r(&self, r: &Range<usize>) -> Range<u64> {
         r.start as u64..r.end as u64
     }
@@ -686,119 +1226,9 @@ impl Walker<'_, '_> {
     fn check_stop(&mut self) -> Result<(), InvError> {
         self.steps += 1;
         if self.steps % 1024 == 0 {
-            self.stop.check().map_err(InvError::Stopped)?;
+            self.job.stop.check().map_err(InvError::Stopped)?;
         }
         Ok(())
-    }
-
-    /// An attribute value with entity and character references replaced, as
-    /// roxmltree reports it (predefined entities, `&#…;`, and internal
-    /// entities from the DOCTYPE, nested at most four deep).
-    fn expand<'v>(&self, v: &'v [u8]) -> Cow<'v, [u8]> {
-        if !v.contains(&b'&') {
-            return Cow::Borrowed(v);
-        }
-        Cow::Owned(self.expand_into(v, 0))
-    }
-
-    fn expand_into(&self, v: &[u8], depth: u32) -> Vec<u8> {
-        let mut out = Vec::with_capacity(v.len());
-        let mut i = 0;
-        while i < v.len() {
-            if v[i] == b'&'
-                && let Some(semi) = v[i..].iter().take(64).position(|&b| b == b';')
-            {
-                let name = &v[i + 1..i + semi];
-                let rep: Option<Vec<u8>> = match name {
-                    b"lt" => Some(b"<".to_vec()),
-                    b"gt" => Some(b">".to_vec()),
-                    b"amp" => Some(b"&".to_vec()),
-                    b"apos" => Some(b"'".to_vec()),
-                    b"quot" => Some(b"\"".to_vec()),
-                    [b'#', b'x', hex @ ..] => std::str::from_utf8(hex)
-                        .ok()
-                        .and_then(|h| u32::from_str_radix(h, 16).ok())
-                        .and_then(char::from_u32)
-                        .map(|c| c.to_string().into_bytes()),
-                    [b'#', dec @ ..] => std::str::from_utf8(dec)
-                        .ok()
-                        .and_then(|h| h.parse::<u32>().ok())
-                        .and_then(char::from_u32)
-                        .map(|c| c.to_string().into_bytes()),
-                    _ if depth < 4 => self
-                        .entities
-                        .get(name)
-                        .map(|lit| self.expand_into(lit, depth + 1)),
-                    _ => None,
-                };
-                if let Some(r) = rep {
-                    out.extend_from_slice(&r);
-                    i += semi + 1;
-                    continue;
-                }
-            }
-            out.push(v[i]);
-            i += 1;
-        }
-        out
-    }
-
-    /// Why `is_condition_passed` fails for an element with these
-    /// attributes, under zensvg's default options (languages `["en"]`).
-    fn condition_reason(&self, attrs: &[XAttr]) -> Option<&'static str> {
-        let d = self.d;
-        let get = |name: &[u8]| {
-            attrs
-                .iter()
-                .find(|a| &d[a.qname.clone()] == name)
-                .map(|a| self.expand(&d[a.value.clone()]).into_owned())
-        };
-        if get(b"requiredExtensions").is_some() {
-            return Some("requiredExtensions is set; usvg supports no extensions");
-        }
-        if let Some(f) = get(b"requiredFeatures")
-            && f.split(|&b| b == b' ').any(|t| !FEATURES.contains(&t))
-        {
-            return Some("requiredFeatures names a feature usvg does not support");
-        }
-        if let Some(l) = get(b"systemLanguage") {
-            let ok = l.split(|&b| b == b',').any(|lang| {
-                let lang = lang.trim_ascii();
-                lang == b"en"
-                    || lang.split(|&b| b == b'-').next() == Some(&b"en"[..]) && lang.contains(&b'-')
-            });
-            if !ok {
-                return Some("systemLanguage does not include usvg's language (en)");
-            }
-        }
-        None
-    }
-
-    /// Why `is_visible_element` is false for an element: a failed condition,
-    /// or `display: none` from its attribute or `style` (only when no CSS in
-    /// the document mentions `display`, which could override it).
-    fn hidden_reason(&self, attrs: &[XAttr]) -> Option<&'static str> {
-        if let Some(r) = self.condition_reason(attrs) {
-            return Some(r);
-        }
-        if self.css_mentions_display {
-            return None;
-        }
-        let d = self.d;
-        let get = |name: &[u8]| {
-            attrs
-                .iter()
-                .find(|a| &d[a.qname.clone()] == name)
-                .map(|a| self.expand(&d[a.value.clone()]).into_owned())
-        };
-        let from_style = get(b"style").and_then(|st| {
-            st.split(|&b| b == b';').rev().find_map(|decl| {
-                let c = decl.iter().position(|&b| b == b':')?;
-                (decl[..c].trim_ascii() == b"display").then(|| decl[c + 1..].trim_ascii().to_vec())
-            })
-        });
-        let display = from_style.or_else(|| get(b"display").map(|v| v.trim_ascii().to_vec()));
-        (display.as_deref() == Some(b"none")).then_some("display: none")
     }
 
     fn lookup(&self, prefix: &[u8]) -> Option<&[u8]> {
@@ -812,20 +1242,48 @@ impl Walker<'_, '_> {
             .filter(|u| !u.is_empty())
     }
 
-    /// The disposition for content usvg would read, or `Dropped` when the
-    /// document is rejected.
-    fn read_or_dropped(&self, d: Disposition) -> Disposition {
-        if self.accepted.is_ok() {
-            d
-        } else {
-            Disposition::Dropped
-        }
-    }
-
     fn rejected_note(&self) -> String {
         match &self.accepted {
             Ok(()) => String::new(),
             Err(why) => format!("the decoder rejects the document ({why}); nothing is rendered"),
+        }
+    }
+
+    fn rx_node(&self, at: usize) -> Option<rx::Node<'a, 'r>> {
+        let doc = self.doc?;
+        doc.get_node(*self.elems.get(&at)?)
+    }
+
+    fn verdict(&self, n: rx::NodeId) -> Option<&model::Verdict> {
+        self.model?.verdict(n)
+    }
+
+    fn drawn_below(&self, n: rx::NodeId) -> bool {
+        self.drawn_below
+            .get(n.get_usize())
+            .copied()
+            .unwrap_or(false)
+    }
+
+    /// The roxmltree text node holding the character data at `at` whose
+    /// parent element starts at `parent_at`.
+    fn rx_text(&self, at: usize, parent_at: Option<usize>) -> Option<rx::Node<'a, 'r>> {
+        let doc = self.doc?;
+        let (_, &id) = self.texts.range(..=at).next_back()?;
+        let node = doc.get_node(id)?;
+        let p = node.parent()?;
+        let same_parent = match parent_at {
+            Some(pa) => p.is_element() && p.range().start == pa,
+            None => !p.is_element(),
+        };
+        // Merged runs end where the next node starts.
+        let ends_after = node.next_sibling().is_none_or(|s| s.range().start > at);
+        (same_parent && ends_after).then_some(node)
+    }
+
+    fn note_refs(&mut self, bytes: &[u8]) {
+        for name in entity_refs(bytes) {
+            self.used_entities.insert(name.to_vec());
         }
     }
 
@@ -852,11 +1310,8 @@ impl Walker<'_, '_> {
 
     fn run(&mut self) -> Result<(), InvError> {
         let top = Ctx {
-            converted: true,
-            text: false,
             css: false,
             top: true,
-            not_drawn: None,
         };
         let mut stack: Vec<Frame> = self
             .tree
@@ -905,6 +1360,13 @@ impl Walker<'_, '_> {
         Ok(())
     }
 
+    /// The lexer element enclosing node `n`, by start offset.
+    fn parent_elem_at(&self, parent: Option<PartId>) -> Option<usize> {
+        let p = parent?;
+        let part = self.inv.get(p)?;
+        Some(part.range.start as usize)
+    }
+
     fn node(
         &mut self,
         n: usize,
@@ -917,27 +1379,27 @@ impl Walker<'_, '_> {
         let range = node.range.clone();
         let d = self.d;
         let note = self.rejected_note();
+        let ok = self.accepted.is_ok();
+        let or_dropped = |disp: Disposition| if ok { disp } else { Disposition::Dropped };
         match &node.kind {
             XKind::Bom => {
-                let disp = self.read_or_dropped(Disposition::Structure);
                 self.push(
                     parent,
                     PartKind::Header,
                     PartTag::Name(Cow::Borrowed("BOM")),
                     &range,
-                    disp,
+                    or_dropped(Disposition::Structure),
                     None,
                     note,
                 )?;
             }
             XKind::Decl => {
-                let disp = self.read_or_dropped(Disposition::Structure);
                 self.push(
                     parent,
                     PartKind::Header,
                     PartTag::Name(Cow::Borrowed("?xml")),
                     &range,
-                    disp,
+                    or_dropped(Disposition::Structure),
                     None,
                     note,
                 )?;
@@ -947,13 +1409,12 @@ impl Walker<'_, '_> {
                 items,
                 subset,
             } => {
-                let disp = self.read_or_dropped(Disposition::Structure);
                 let id = self.push(
                     parent,
                     PartKind::Chunk,
                     PartTag::Name(Cow::Borrowed("!DOCTYPE")),
                     &range,
-                    disp,
+                    or_dropped(Disposition::Structure),
                     None,
                     if !note.is_empty() {
                         note
@@ -988,9 +1449,11 @@ impl Walker<'_, '_> {
                             ..
                         } => (
                             "!ENTITY",
-                            self.read_or_dropped(Disposition::Structure),
+                            or_dropped(Disposition::Structure),
                             text(&d[name.clone()], 64),
-                            "internal entity; roxmltree expands its references".to_string(),
+                            "internal entity; roxmltree expands its references into content \
+                             the decoder reads"
+                                .to_string(),
                         ),
                         DtdItem::Entity {
                             name,
@@ -1020,7 +1483,7 @@ impl Walker<'_, '_> {
                             "comment inside the DOCTYPE".to_string(),
                         ),
                     };
-                    self.push(
+                    let pid = self.push(
                         Some(id),
                         PartKind::Chunk,
                         PartTag::Name(Cow::Borrowed(tag)),
@@ -1029,6 +1492,25 @@ impl Walker<'_, '_> {
                         Some(label),
                         detail,
                     )?;
+                    if let DtdItem::Entity {
+                        name,
+                        external: false,
+                        value,
+                    } = item
+                    {
+                        // roxmltree keeps the first declaration of a name.
+                        let name = d[name.clone()].to_vec();
+                        if self.entity_parts.iter().any(|e| e.0 == name) {
+                            self.inv.set_disposition(pid, Disposition::Dropped);
+                            self.inv.set_detail(
+                                pid,
+                                "internal entity declared again; roxmltree keeps the first \
+                                 declaration",
+                            );
+                        } else {
+                            self.entity_parts.push((name, pid, value.clone()));
+                        }
+                    }
                 }
             }
             XKind::Pi { target } => {
@@ -1055,74 +1537,8 @@ impl Walker<'_, '_> {
                     "comment; usvg ignores it".into(),
                 )?;
             }
-            XKind::Ws => {
-                self.push(
-                    parent,
-                    PartKind::Gap,
-                    PartTag::None,
-                    &range,
-                    Disposition::Padding,
-                    None,
-                    String::new(),
-                )?;
-            }
-            XKind::Text | XKind::CData => {
-                let tag = if matches!(node.kind, XKind::CData) {
-                    "#cdata"
-                } else {
-                    "#text"
-                };
-                let excerpt = text(d[range.clone()].trim_ascii(), 64);
-                let (kind, disp, detail) = if ctx.top {
-                    if self.after_root {
-                        (
-                            PartKind::Trailer,
-                            Disposition::Trailing,
-                            "after the root element".to_string(),
-                        )
-                    } else {
-                        (
-                            PartKind::Chunk,
-                            Disposition::Malformed,
-                            "character data before the root element".to_string(),
-                        )
-                    }
-                } else if !note.is_empty() {
-                    (PartKind::Chunk, Disposition::Dropped, note)
-                } else if ctx.css {
-                    (
-                        PartKind::Chunk,
-                        Disposition::Structure,
-                        "CSS; usvg applies it (resolve_css)".to_string(),
-                    )
-                } else if let (true, true, Some(why)) = (ctx.text, ctx.converted, ctx.not_drawn) {
-                    (
-                        PartKind::Chunk,
-                        Disposition::Dropped,
-                        format!("text usvg does not draw: {why}"),
-                    )
-                } else if ctx.text && ctx.converted {
-                    (
-                        PartKind::Chunk,
-                        Disposition::ImageData,
-                        "text usvg lays out and renders".to_string(),
-                    )
-                } else {
-                    (
-                        PartKind::Chunk,
-                        Disposition::Skipped,
-                        "character data outside text content; usvg ignores it".to_string(),
-                    )
-                };
-                self.push(
-                    parent,
-                    kind,
-                    PartTag::Name(Cow::Borrowed(tag)),
-                    &range,
-                    disp,
-                    Some(excerpt),
-                    detail,
-                )?;
+            XKind::Ws | XKind::Text | XKind::CData => {
+                self.chars(n, parent, ctx)?;
             }
             XKind::Malformed(why) => {
                 let (kind, disp) = if ctx.top && self.after_root {
@@ -1165,6 +1581,259 @@ impl Walker<'_, '_> {
         Ok(())
     }
 
+    /// Character data: text, CDATA or white space.
+    fn chars(&mut self, n: usize, parent: Option<PartId>, ctx: Ctx) -> Result<(), InvError> {
+        let node = &self.tree.nodes[n];
+        let range = node.range.clone();
+        let d = self.d;
+        let ws = matches!(node.kind, XKind::Ws);
+        let tag = match node.kind {
+            XKind::CData => "#cdata",
+            XKind::Ws => "",
+            _ => "#text",
+        };
+        let excerpt = (!ws).then(|| text(d[range.clone()].trim_ascii(), 64));
+        let parent_at = self.parent_elem_at(parent);
+        let rx_text = self.rx_text(range.start, parent_at);
+        let text_verdict = rx_text.and_then(|t| self.verdict(t.id()));
+        let parent_rx = parent_at.and_then(|p| self.rx_node(p));
+        let in_text_content = parent_rx.is_some_and(|p| {
+            self.verdict(p.id()).is_some_and(|v| v.parsed || v.drawn)
+                && matches!(
+                    p.tag_name().name(),
+                    "text" | "tspan" | "textPath" | "tref" | "a"
+                )
+                && p.ancestors().any(|a| a.tag_name().name() == "text")
+        });
+        let (kind, disp, detail): (PartKind, Disposition, String) = if ctx.top {
+            if ws {
+                (PartKind::Gap, Disposition::Padding, String::new())
+            } else if self.after_root {
+                (
+                    PartKind::Trailer,
+                    Disposition::Trailing,
+                    "after the root element".to_string(),
+                )
+            } else {
+                (
+                    PartKind::Chunk,
+                    Disposition::Malformed,
+                    "character data before the root element".to_string(),
+                )
+            }
+        } else if let Err(why) = &self.accepted {
+            if ws {
+                (PartKind::Gap, Disposition::Padding, String::new())
+            } else {
+                (
+                    PartKind::Chunk,
+                    Disposition::Dropped,
+                    format!("the decoder rejects the document ({why}); nothing is rendered"),
+                )
+            }
+        } else if ctx.css {
+            return self.css_chars(n, parent, rx_text, tag);
+        } else if text_verdict.is_some_and(|v| v.drawn) {
+            let fonts = self.fonts_note(parent_rx);
+            let what = if ws {
+                "white space in drawn text; usvg turns tabs and newlines into spaces, collapses \
+                 runs to one space and trims the ends, so which white-space characters these \
+                 are is not distinguished"
+                    .to_string()
+            } else {
+                "text usvg lays out and draws".to_string()
+            };
+            (
+                PartKind::Chunk,
+                Disposition::ImageData,
+                format!("{what}{fonts}"),
+            )
+        } else if in_text_content {
+            let why = text_verdict
+                .and_then(|v| v.why.clone())
+                .or_else(|| {
+                    parent_rx
+                        .and_then(|p| self.verdict(p.id()))
+                        .and_then(|v| v.why.clone())
+                })
+                .unwrap_or_else(|| "its text element is not drawn".into());
+            if ws {
+                (PartKind::Gap, Disposition::Padding, String::new())
+            } else {
+                (
+                    PartKind::Chunk,
+                    Disposition::Dropped,
+                    format!("text usvg does not draw: {why}"),
+                )
+            }
+        } else if !ws && entity_refs(&d[range.clone()]).any(|e| self.markup_entities.contains(e)) {
+            (
+                PartKind::Chunk,
+                Disposition::Structure,
+                "entity reference; roxmltree expands it into elements usvg draws".to_string(),
+            )
+        } else if ws {
+            (PartKind::Gap, Disposition::Padding, String::new())
+        } else {
+            (
+                PartKind::Chunk,
+                Disposition::Skipped,
+                "character data outside drawn text; usvg ignores it".to_string(),
+            )
+        };
+        if disp.is_consumed() {
+            self.note_refs(&d[range.clone()]);
+        }
+        let tag = if tag.is_empty() {
+            if kind == PartKind::Gap {
+                PartTag::None
+            } else {
+                PartTag::Name(Cow::Borrowed("#text"))
+            }
+        } else {
+            PartTag::Name(Cow::Borrowed(tag))
+        };
+        self.push(parent, kind, tag, &range, disp, excerpt, detail)?;
+        Ok(())
+    }
+
+    /// "; drawn with …" for text, from the model's font check.
+    fn fonts_note(&self, parent: Option<rx::Node>) -> String {
+        let (Some(m), Some(p)) = (self.model, parent) else {
+            return String::new();
+        };
+        let text_el = p
+            .ancestors()
+            .find(|a| a.tag_name().name() == "text" && m.fonts.contains_key(&a.id().get_usize()));
+        match text_el.and_then(|t| m.fonts.get(&t.id().get_usize())) {
+            Some((families, true)) => format!(
+                "; drawn only because an installed font matches its font-family ({families}): \
+                 on a host without one usvg draws nothing"
+            ),
+            _ => String::new(),
+        }
+    }
+
+    /// A `<style>` text run read as CSS: the rule sets usvg applies are
+    /// consumed, comments, at-rules and rule sets that match no element are
+    /// not.
+    fn css_chars(
+        &mut self,
+        n: usize,
+        parent: Option<PartId>,
+        rx_text: Option<rx::Node>,
+        tag: &'static str,
+    ) -> Result<(), InvError> {
+        let range = self.tree.nodes[n].range.clone();
+        let d = self.d;
+        let excerpt = text(d[range.clone()].trim_ascii(), 64);
+        let used =
+            rx_text.and_then(|t| self.model.and_then(|m| m.css_used.get(&t.id().get_usize())));
+        let tag = PartTag::Name(Cow::Borrowed(if tag.is_empty() { "#text" } else { tag }));
+        match used {
+            Some(Some(sets)) => {
+                let sets: Vec<Range<usize>> = sets
+                    .iter()
+                    .map(|s| s.start.max(range.start)..s.end.min(range.end))
+                    .filter(|s| s.start < s.end)
+                    .collect();
+                if sets.is_empty() {
+                    self.push(
+                        parent,
+                        PartKind::Chunk,
+                        tag,
+                        &range,
+                        Disposition::Skipped,
+                        Some(excerpt),
+                        "CSS usvg reads, but none of its rules matches an element usvg parses"
+                            .into(),
+                    )?;
+                    return Ok(());
+                }
+                for s in &sets {
+                    self.note_refs(&d[s.clone()]);
+                }
+                let id = self.push(
+                    parent,
+                    PartKind::Chunk,
+                    tag,
+                    &range,
+                    Disposition::Structure,
+                    Some(excerpt),
+                    "CSS; usvg applies the rule sets that match its elements (declarations a \
+                     later one overrides are not distinguished)"
+                        .into(),
+                )?;
+                let mut at = range.start;
+                let mut gaps = Vec::new();
+                for s in &sets {
+                    if s.start > at {
+                        gaps.push(at..s.start);
+                    }
+                    at = at.max(s.end);
+                }
+                if at < range.end {
+                    gaps.push(at..range.end);
+                }
+                for g in gaps {
+                    let bytes = &d[g.clone()];
+                    let markup = bytes.starts_with(b"<![CDATA[") || bytes.ends_with(b"]]>");
+                    if bytes.iter().all(|b| b.is_ascii_whitespace()) {
+                        self.push(
+                            Some(id),
+                            PartKind::Gap,
+                            PartTag::None,
+                            &g,
+                            Disposition::Padding,
+                            None,
+                            String::new(),
+                        )?;
+                    } else if markup && bytes.trim_ascii() == b"<![CDATA["
+                        || bytes.trim_ascii() == b"]]>"
+                    {
+                        self.push(
+                            Some(id),
+                            PartKind::Segment,
+                            PartTag::Name(Cow::Borrowed("CDATA")),
+                            &g,
+                            Disposition::Structure,
+                            None,
+                            "CDATA markup".into(),
+                        )?;
+                    } else {
+                        self.push(
+                            Some(id),
+                            PartKind::Segment,
+                            PartTag::Name(Cow::Borrowed("css")),
+                            &g,
+                            Disposition::Skipped,
+                            Some(text(bytes.trim_ascii(), 64)),
+                            "CSS usvg does not apply: a comment, an at-rule, or a rule set no \
+                             element matches"
+                                .into(),
+                        )?;
+                    }
+                }
+            }
+            _ => {
+                self.note_refs(&d[range.clone()]);
+                self.push(
+                    parent,
+                    PartKind::Chunk,
+                    tag,
+                    &range,
+                    Disposition::Structure,
+                    Some(excerpt),
+                    "CSS; usvg applies it (resolve_css). Comments, at-rules and rule sets no \
+                     element matches are not distinguished: the CSS text is not one slice of \
+                     the file (entities, CR, or several text runs)"
+                        .into(),
+                )?;
+            }
+        }
+        Ok(())
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn element(
         &mut self,
@@ -1180,7 +1849,10 @@ impl Walker<'_, '_> {
         let d = self.d;
         let tree = self.tree;
         self.elements += 1;
-        // Namespace declarations on this element.
+        let range = tree.nodes[n].range.clone();
+        let rxn = self.rx_node(range.start);
+        // Namespace declarations on this element (used for documents
+        // roxmltree rejects; otherwise roxmltree's namespaces are used).
         let mut pops = Vec::new();
         for a in attrs {
             let q = &d[a.qname.clone()];
@@ -1190,44 +1862,53 @@ impl Walker<'_, '_> {
                 q.strip_prefix(b"xmlns:")
             };
             if let Some(p) = prefix {
-                let uri = self.expand(&d[a.value.clone()]).into_owned();
-                self.ns.entry(p.to_vec()).or_default().push(uri);
+                self.ns
+                    .entry(p.to_vec())
+                    .or_default()
+                    .push(d[a.value.clone()].to_vec());
                 pops.push(p.to_vec());
             }
         }
         let q = &d[qname.clone()];
         let (prefix, local) = split_qname(q);
-        let uri = self.lookup(prefix).map(<[u8]>::to_vec);
+        let uri: Option<Vec<u8>> = match rxn {
+            Some(x) => x.tag_name().namespace().map(|s| s.as_bytes().to_vec()),
+            None => self.lookup(prefix).map(<[u8]>::to_vec),
+        };
         let svg_ns = uri.as_deref().is_none_or(|u| u == SVG_NS);
         let known = svg_ns && ELEMENTS.binary_search(&local).is_ok();
-        let attr = |name: &[u8]| {
-            attrs
-                .iter()
-                .find(|a| &d[a.qname.clone()] == name)
-                .map(|a| &d[a.value.clone()])
-        };
-        let css =
-            local == b"style" && attr(b"type").is_none_or(|t| &*self.expand(t) == b"text/css");
-        let text_content = matches!(local, b"tspan" | b"tref" | b"textPath" | b"a");
-        let converted = known && local != b"style" && ctx.converted && (!ctx.text || text_content);
+        let css = local == b"style"
+            && match rxn {
+                Some(x) => matches!(x.attribute("type"), None | Some("text/css")),
+                None => attrs
+                    .iter()
+                    .find(|a| &d[a.qname.clone()] == b"type")
+                    .is_none_or(|a| &d[a.value.clone()] == b"text/css"),
+            };
         let has_elements = tree.nodes[n]
             .children
             .iter()
             .any(|&c| matches!(tree.nodes[c].kind, XKind::Element { .. }));
-        let not_drawn = ctx
-            .not_drawn
-            .or_else(|| {
-                self.def_root[n]
-                    .is_some_and(|r| self.unused_defs.contains(&r))
-                    .then_some(UNREFERENCED)
-            })
-            .or_else(|| {
-                if converted && !ctx.top {
-                    self.hidden_reason(attrs)
-                } else {
-                    None
-                }
-            });
+        let verdict = rxn
+            .and_then(|x| self.verdict(x.id()).cloned())
+            .unwrap_or_default();
+        let below = rxn.is_some_and(|x| self.drawn_below(x.id()));
+        let parent_parsed = rxn
+            .and_then(|x| x.parent_element())
+            .is_none_or(|p| self.verdict(p.id()).is_some_and(|v| v.parsed));
+        let leaf_shape = matches!(
+            local,
+            b"rect"
+                | b"circle"
+                | b"ellipse"
+                | b"line"
+                | b"polyline"
+                | b"polygon"
+                | b"path"
+                | b"image"
+                | b"text"
+                | b"use"
+        );
         let (disposition, detail) = if let Err(why) = &self.accepted {
             (
                 Disposition::Dropped,
@@ -1238,17 +1919,39 @@ impl Walker<'_, '_> {
                 Disposition::Structure,
                 "style sheet; usvg reads every <style> as CSS".to_string(),
             )
-        } else if let (true, Some(why)) = (converted, not_drawn) {
+        } else if verdict.drawn || below {
+            let note = if self.model.and_then(|m| m.nothing_drawn.as_ref()).is_some() && ctx.top {
+                format!(
+                    "sets the output size; usvg draws nothing from the document: {}",
+                    self.model
+                        .and_then(|m| m.nothing_drawn.clone())
+                        .unwrap_or_default()
+                )
+            } else if leaf_shape && verdict.drawn {
+                model::GEOMETRY_NOTE.to_string()
+            } else if !verdict.parsed && verdict.drawn {
+                "usvg skips it where it stands, but a use, tref or reference draws it".to_string()
+            } else {
+                String::new()
+            };
+            if has_elements {
+                (Disposition::Structure, note)
+            } else {
+                (Disposition::ImageData, note)
+            }
+        } else if verdict.parsed {
             (
                 Disposition::Dropped,
-                format!("usvg converts it but never draws it: {why}"),
+                format!(
+                    "usvg converts it but never draws it: {}",
+                    verdict.why.clone().unwrap_or_else(|| {
+                        "drawn only through a reference (in <defs>, or a \
+                                             symbol, gradient, pattern, clipPath, mask, filter \
+                                             or marker) and nothing drawn references it"
+                            .into()
+                    })
+                ),
             )
-        } else if converted {
-            if has_elements {
-                (Disposition::Structure, String::new())
-            } else {
-                (Disposition::ImageData, String::new())
-            }
         } else if !svg_ns {
             (
                 Disposition::Skipped,
@@ -1262,20 +1965,24 @@ impl Walker<'_, '_> {
                     text(local, 64)
                 ),
             )
-        } else if ctx.text {
-            (
-                Disposition::Skipped,
-                "not text content; usvg skips it inside text".to_string(),
-            )
-        } else {
+        } else if !parent_parsed {
             (
                 Disposition::Skipped,
                 "inside an element usvg skips".to_string(),
             )
+        } else {
+            (
+                Disposition::Skipped,
+                "usvg's parser skips it here (not text content inside text, or a textPath \
+                 that is not a direct child of text)"
+                    .to_string(),
+            )
         };
-        let label = attr(b"id").map(|v| text(v, 64));
+        let label = attrs
+            .iter()
+            .find(|a| &d[a.qname.clone()] == b"id")
+            .map(|a| text(&d[a.value.clone()], 64));
         let name = text(q, 64);
-        let range = tree.nodes[n].range.clone();
         let mut part = Part::new(
             PartKind::Chunk,
             PartTag::Name(Cow::Owned(name.clone())),
@@ -1305,7 +2012,8 @@ impl Walker<'_, '_> {
                 "start tag".into(),
             )?
         };
-        self.attributes(attr_parent, local, converted, not_drawn, attrs)?;
+        let drawn_element = disposition.is_consumed();
+        self.attributes(attr_parent, local, drawn_element, &verdict, rxn, attrs)?;
         if self_closing {
             for p in pops {
                 if let Some(s) = self.ns.get_mut(&p) {
@@ -1315,11 +2023,8 @@ impl Walker<'_, '_> {
             return Ok(());
         }
         let child_ctx = Ctx {
-            converted,
-            text: converted && (local == b"text" || (ctx.text && text_content)),
             css: css && self.accepted.is_ok(),
             top: false,
-            not_drawn,
         };
         stack.push(Frame::Close {
             node: n,
@@ -1343,25 +2048,8 @@ impl Walker<'_, '_> {
                 .position(|&c| !is_chars(c))
                 .unwrap_or(kids.len() - f)
         });
-        // `switch::convert` draws the first element child whose conditions
-        // pass and none of the others.
-        let selected = (converted && local == b"switch")
-            .then(|| {
-                kids.iter().copied().find(|&c| match &tree.nodes[c].kind {
-                    XKind::Element { attrs, .. } => self.condition_reason(attrs).is_none(),
-                    _ => false,
-                })
-            })
-            .map(|s| s.unwrap_or(usize::MAX));
         for (k, &c) in kids.iter().enumerate().rev() {
             let mut ctx = child_ctx;
-            if let Some(sel) = selected
-                && c != sel
-                && matches!(tree.nodes[c].kind, XKind::Element { .. })
-                && ctx.not_drawn.is_none()
-            {
-                ctx.not_drawn = Some(NOT_SELECTED);
-            }
             if ctx.css && !(first.is_some_and(|f| k >= f) && run_end.is_some_and(|e| k < e)) {
                 ctx.css = false;
             }
@@ -1370,78 +2058,125 @@ impl Walker<'_, '_> {
         Ok(())
     }
 
-    /// Attribute parts: every attribute usvg does not read, and every `href`
-    /// that leaves the document.
+    /// Attribute parts: every attribute usvg does not read, every `href`
+    /// that leaves the document, and the contents of `data:` URIs.
     fn attributes(
         &mut self,
         parent: PartId,
         element: &[u8],
-        converted: bool,
-        not_drawn: Option<&'static str>,
+        consumed: bool,
+        verdict: &model::Verdict,
+        rxn: Option<rx::Node<'a, 'r>>,
         attrs: &[XAttr],
     ) -> Result<(), InvError> {
         let d = self.d;
         let rejected = self.accepted.is_err();
         let has_plain_href = attrs.iter().any(|a| &d[a.qname.clone()] == b"href");
+        let rx_attr = |at: usize| rxn.and_then(|x| x.attributes().find(|a| a.range().start == at));
         for a in attrs {
             let q = &d[a.qname.clone()];
             if q == b"xmlns" || q.starts_with(b"xmlns:") {
                 continue;
             }
+            let ra = rx_attr(a.range.start);
             let (prefix, local) = split_qname(q);
-            let uri: Option<&[u8]> = if prefix.is_empty() {
-                None
-            } else {
-                self.lookup(prefix)
+            let uri: Option<Vec<u8>> = match (&ra, rxn) {
+                (Some(ra), _) => ra.namespace().map(|s| s.as_bytes().to_vec()),
+                (None, _) if prefix.is_empty() => None,
+                (None, _) => self.lookup(prefix).map(<[u8]>::to_vec),
             };
+            let uri = uri.as_deref();
             let known_ns = uri.is_none_or(|u| u == SVG_NS || u == XLINK_NS || u == XML_NS);
-            let value = &d[a.value.clone()];
-            let excerpt = text(value, 128);
+            let raw = &d[a.value.clone()];
+            let value: Cow<str> = match &ra {
+                Some(ra) => Cow::Owned(ra.value().to_string()),
+                None => String::from_utf8_lossy(raw),
+            };
+            let excerpt = text(raw, 128);
             let is_href = local == b"href" && (uri.is_none() || uri == Some(XLINK_NS));
-            let (disposition, detail) = if is_href {
-                if value.starts_with(b"#") {
-                    continue;
-                }
-                let target = if value.starts_with(b"data:") {
-                    let (mime, n) = data_uri(value);
-                    format!("data URI: {mime}, {n} bytes decoded")
+            let overridden = self
+                .model
+                .is_some_and(|m| m.overridden.contains(&a.range.start));
+            let mut children = Vec::new();
+            let (disposition, detail) = if local == b"href" && !is_href && uri == Some(SVG_NS) {
+                (
+                    Disposition::Skipped,
+                    format!("usvg reads href only unprefixed or in the XLink namespace: {excerpt}"),
+                )
+            } else if is_href {
+                let trimmed = value.trim_start();
+                if trimmed.starts_with('#') && !datauri::is_data_url(&value) {
+                    // A fragment reference: covered by the start tag.
+                    if overridden && !rejected {
+                        (
+                            Disposition::Dropped,
+                            format!("{excerpt}; overridden by the unprefixed href (SVG 2)"),
+                        )
+                    } else {
+                        continue;
+                    }
                 } else {
-                    format!("external reference: {excerpt}")
-                };
-                let image = matches!(element, b"image" | b"feImage");
-                if !converted || rejected {
-                    (
-                        Disposition::Skipped,
-                        format!("{target}; on an element usvg skips"),
-                    )
-                } else if uri == Some(XLINK_NS) && has_plain_href {
-                    (
-                        Disposition::Dropped,
-                        format!("{target}; overridden by the unprefixed href (SVG 2)"),
-                    )
-                } else if image && value.starts_with(b"data:") {
-                    (
-                        Disposition::ImageData,
-                        format!("{target}; usvg decodes it into the image"),
-                    )
-                } else if image {
-                    (
-                        Disposition::Structure,
-                        format!(
-                            "{target}; usvg's default image resolver opens this path on the \
-                             local file system"
-                        ),
-                    )
-                } else if element == b"use" {
-                    (
-                        Disposition::Skipped,
-                        format!("{target}; usvg follows only #fragment references"),
-                    )
-                } else {
-                    (
-                        Disposition::Dropped,
-                        format!("{target}; usvg keeps it but draws nothing from it"),
-                    )
+                    let image = matches!(element, b"image" | b"feImage");
+                    let uri_info = if image && !rejected {
+                        self.uris
+                            .get(a.range.start, raw, &value, self.job, self.nest)
+                    } else {
+                        None
+                    };
+                    let target = match &uri_info {
+                        Some(u) => u.detail.clone(),
+                        None if datauri::is_data_url(&value) => "data URI".to_string(),
+                        None => format!("external reference: {excerpt}"),
+                    };
+                    if rejected {
+                        (Disposition::Dropped, target)
+                    } else if !consumed && verdict.parsed {
+                        (
+                            Disposition::Dropped,
+                            format!("{target}; on an element usvg parses but never draws"),
+                        )
+                    } else if !consumed {
+                        (
+                            Disposition::Skipped,
+                            format!("{target}; on an element usvg skips"),
+                        )
+                    } else if uri == Some(XLINK_NS) && has_plain_href {
+                        (
+                            Disposition::Dropped,
+                            format!("{target}; overridden by the unprefixed href (SVG 2)"),
+                        )
+                    } else if let Some(u) = uri_info {
+                        children = u.children.clone();
+                        if u.drawn && verdict.drawn {
+                            (
+                                Disposition::ImageData,
+                                format!("{target}; usvg decodes it into the image"),
+                            )
+                        } else {
+                            (
+                                Disposition::Dropped,
+                                format!("{target}; usvg draws nothing from it"),
+                            )
+                        }
+                    } else if image {
+                        (
+                            Disposition::Structure,
+                            format!(
+                                "{target}; usvg's default image resolver opens this path on the \
+                                 local file system (drawn if it names a readable image)"
+                            ),
+                        )
+                    } else if element == b"use" {
+                        (
+                            Disposition::Skipped,
+                            format!("{target}; usvg follows only #fragment references"),
+                        )
+                    } else {
+                        (
+                            Disposition::Dropped,
+                            format!("{target}; usvg keeps it but draws nothing from it"),
+                        )
+                    }
                 }
             } else {
                 let known = known_ns && ATTRIBUTES.binary_search(&local).is_ok();
@@ -1450,36 +2185,55 @@ impl Walker<'_, '_> {
                     matches!(local, b"mix-blend-mode" | b"isolation" | b"font-kerning")
                         || (local == b"image-rendering"
                             && matches!(
-                                value,
-                                b"smooth" | b"high-quality" | b"crisp-edges" | b"pixelated"
+                                value.as_ref(),
+                                "smooth" | "high-quality" | "crisp-edges" | "pixelated"
                             ));
+                let scope = attr_scope(local);
                 if known && !style_only {
-                    // Read by usvg on converted elements; covered by the
-                    // element's own disposition on skipped ones.
-                    continue;
-                }
-                let why = if !known_ns {
-                    "outside the SVG, XLink and XML namespaces; usvg ignores it"
-                } else if style_only {
-                    "usvg honours this only inside a style attribute or CSS"
-                } else if known {
-                    "on an element usvg skips"
+                    if consumed && let Some(scope) = scope.filter(|sc| !in_scope(sc, element)) {
+                        (
+                            Disposition::Dropped,
+                            if scope.is_empty() {
+                                format!(
+                                    "usvg 0.48.1 parses this name but never uses its value: \
+                                     {excerpt}"
+                                )
+                            } else {
+                                format!("usvg reads this only on {}: {excerpt}", scope.join(", "))
+                            },
+                        )
+                    } else if overridden && consumed {
+                        (
+                            Disposition::Dropped,
+                            format!(
+                                "a CSS or style declaration replaces this value, so usvg never \
+                                 uses it: {excerpt}"
+                            ),
+                        )
+                    } else {
+                        // Read by usvg on converted elements; covered by the
+                        // element's own disposition on skipped ones.
+                        continue;
+                    }
                 } else {
-                    "not an attribute usvg reads"
-                };
-                (Disposition::Skipped, format!("{why}: {excerpt}"))
+                    let why = if !known_ns {
+                        "outside the SVG, XLink and XML namespaces; usvg ignores it"
+                    } else if style_only {
+                        "usvg honours this only inside a style attribute or CSS"
+                    } else if known {
+                        "on an element usvg skips"
+                    } else {
+                        "not an attribute usvg reads"
+                    };
+                    (Disposition::Skipped, format!("{why}: {excerpt}"))
+                }
             };
-            let (disposition, detail) = if rejected {
-                (Disposition::Dropped, detail)
-            } else if let (Some(why), true) = (not_drawn, disposition.is_consumed()) {
-                (
-                    Disposition::Dropped,
-                    format!("{detail}; but usvg never draws the element: {why}"),
-                )
+            let disposition = if rejected {
+                Disposition::Dropped
             } else {
-                (disposition, detail)
+                disposition
             };
-            self.push(
+            let aid = self.push(
                 Some(parent),
                 PartKind::Attribute,
                 PartTag::Name(Cow::Owned(text(q, 64))),
@@ -1488,6 +2242,86 @@ impl Walker<'_, '_> {
                 Some(text(q, 64)),
                 detail,
             )?;
+            if disposition.is_consumed() {
+                self.note_refs(raw);
+            }
+            for (r, disp, label, detail) in children {
+                let r = a.value.start + r.start..a.value.start + r.end;
+                if r.start >= r.end || r.end > a.value.end {
+                    continue;
+                }
+                self.push(
+                    Some(aid),
+                    PartKind::Chunk,
+                    if label.is_empty() {
+                        PartTag::None
+                    } else {
+                        PartTag::Name(Cow::Owned(text(label.as_bytes(), 64)))
+                    },
+                    &r,
+                    disp,
+                    None,
+                    detail,
+                )?;
+            }
+        }
+        // Entity references in the values of consumed elements' attributes
+        // that are not split out as unconsumed parts.
+        if consumed && !rejected {
+            for a in attrs {
+                let raw = &d[a.value.clone()];
+                if raw.contains(&b'&') {
+                    let split = self
+                        .inv
+                        .children(Some(parent))
+                        .into_iter()
+                        .filter_map(|c| self.inv.get(c))
+                        .any(|p| {
+                            p.range.start == a.range.start as u64 && !p.disposition.is_consumed()
+                        });
+                    if !split {
+                        self.note_refs(raw);
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Internal entities nothing consumed references draw nothing.
+    fn finish_entities(&mut self) -> Result<(), InvError> {
+        if self.accepted.is_err() {
+            return Ok(());
+        }
+        let mut used: HashSet<Vec<u8>> = self.used_entities.clone();
+        used.extend(self.markup_entities.iter().cloned());
+        // An entity referenced from a used one's literal is used too.
+        loop {
+            let mut grew = false;
+            for (name, _, lit) in &self.entity_parts {
+                if used.contains(name)
+                    && let Some(l) = lit
+                {
+                    for r in entity_refs(&self.d[l.clone()]) {
+                        if used.insert(r.to_vec()) {
+                            grew = true;
+                        }
+                    }
+                }
+            }
+            if !grew {
+                break;
+            }
+        }
+        for (name, pid, _) in &self.entity_parts {
+            if !used.contains(name) {
+                self.inv.set_disposition(*pid, Disposition::Dropped);
+                self.inv.set_detail(
+                    *pid,
+                    "internal entity; roxmltree expands its references, but none sits in content \
+                     the decoder reads",
+                );
+            }
         }
         Ok(())
     }
@@ -1505,10 +2339,10 @@ fn svgz(
     d: &[u8],
     inv: &mut Inventory,
     format: ImageFormat,
-    stop: &dyn Stop,
-    gate: Gate<'_>,
-) -> Result<(), InvError> {
-    let malformed = |inv: &mut Inventory, r: Range<usize>, why: &str| -> Result<(), InvError> {
+    job: &Job,
+    nest: u32,
+) -> Result<Walked, InvError> {
+    let malformed = |inv: &mut Inventory, r: Range<usize>, why: &str| -> Result<Walked, InvError> {
         if r.start < r.end {
             inv.push(
                 None,
@@ -1521,7 +2355,11 @@ fn svgz(
                 .with_detail(why.to_string()),
             )?;
         }
-        Ok(())
+        Ok(Walked {
+            accepted: false,
+            why: Some(why.to_string()),
+            elements: 0,
+        })
     };
     if d.len() < 10 || d[2] != 8 {
         return malformed(
@@ -1532,8 +2370,9 @@ fn svgz(
     }
     let flg = d[3];
     let mtime = u32::from_le_bytes([d[4], d[5], d[6], d[7]]);
-    // flate2's header parser rejects reserved FLG bits and a wrong header
-    // CRC-16; usvg then fails with MalformedGZip.
+    // flate2's header parser rejects reserved FLG bits, a wrong header
+    // CRC-16 and FNAME/FCOMMENT fields longer than 65,535 bytes; usvg then
+    // fails with MalformedGZip.
     let mut header_reject: Option<&'static str> = None;
     let mut fields: Vec<(Range<usize>, &str, Disposition, String)> = Vec::new();
     if flg & 0xE0 != 0 {
@@ -1594,6 +2433,24 @@ fn svgz(
     ] {
         if ok && flg & bit != 0 {
             match zstring(d, i) {
+                Some(end) if end - 1 - i > MAX_GZIP_FIELD => {
+                    header_reject.get_or_insert(
+                        "a gzip header field is longer than flate2's 65,535-byte limit; flate2 \
+                         rejects the header",
+                    );
+                    fields.push((
+                        i..end,
+                        name,
+                        Disposition::Malformed,
+                        format!(
+                            "{what} of {} bytes, longer than flate2's 65,535-byte limit, so \
+                             flate2 rejects the header: {}",
+                            end - 1 - i,
+                            text(&d[i..end - 1], 128)
+                        ),
+                    ));
+                    i = end;
+                }
                 Some(end) => {
                     fields.push((
                         i..end,
@@ -1677,7 +2534,7 @@ fn svgz(
     let mut buf = vec![0u8; 64 << 10];
     let stream_start = i;
     let outcome: Result<usize, &'static str> = loop {
-        stop.check().map_err(InvError::Stopped)?;
+        job.stop.check().map_err(InvError::Stopped)?;
         let (in_before, out_before) = (z.total_in(), z.total_out());
         let at = stream_start + in_before as usize;
         match z.decompress(&d[at..], &mut buf, flate2::FlushDecompress::None) {
@@ -1689,12 +2546,16 @@ fn svgz(
                     inner.extend_from_slice(&buf[..produced]);
                 } else {
                     kept_all = false;
+                    inner = Vec::new();
                 }
                 if status == flate2::Status::StreamEnd {
                     break Ok(stream_start + z.total_in() as usize);
                 }
                 if z.total_out() > MAX_INFLATE {
-                    break Err("inflates past 512 MiB; the stream's end is not located");
+                    break Err(
+                        "inflates past 512 MiB; the stream's end is not located. The decoder \
+                         inflates without a cap (zenextras#32) and may draw it",
+                    );
                 }
                 if z.total_in() == in_before && z.total_out() == out_before {
                     break Err("truncated deflate stream; usvg rejects the file");
@@ -1717,7 +2578,11 @@ fn svgz(
                     .with_detail(why),
                 )?;
             }
-            return Ok(());
+            return Ok(Walked {
+                accepted: false,
+                why: Some(why.into()),
+                elements: 0,
+            });
         }
     };
     // The gzip trailer: CRC-32 and size of the decompressed data.
@@ -1727,26 +2592,50 @@ fn svgz(
         c == crc.sum() && n == z.total_out() as u32
     });
     let gzip_ok = trailer_ok == Some(true);
-    let (inner_summary, inner_accepted) = if !kept_all {
+    let reason = match header_reject {
+        Some(why) => Some(why.to_string()),
+        None => (!gzip_ok).then(|| "the gzip trailer does not verify".to_string()),
+    };
+    let (inner_summary, walked) = if !kept_all {
         (
             format!(
-                "{} bytes decompressed; the document is not mapped past {} MiB",
+                "{} bytes decompressed; past {} MiB the document is neither mapped nor checked \
+                 (whether the decoder draws it, and what it holds, is not known)",
                 z.total_out(),
                 MAX_INNER >> 20
             ),
-            true,
+            Walked {
+                accepted: reason.is_none(),
+                why: reason.clone(),
+                elements: 0,
+            },
         )
     } else {
-        let mut inner_inv = Inventory::new(format, inner.len() as u64);
-        let reason = match header_reject {
-            Some(why) => Some(why.to_string()),
-            None => (!gzip_ok).then(|| "the gzip trailer does not verify".to_string()),
+        let mut inner_inv =
+            Inventory::new(format, inner.len() as u64).with_max_parts(MAX_INNER_PARTS);
+        let r = walk_xml(&inner, &mut inner_inv, reason.clone(), job, nest);
+        let capped = match &r {
+            Err(InvError::Stopped(s)) => return Err(InvError::Stopped(*s)),
+            Err(InvError::Parts(_)) => true,
+            Ok(_) => false,
         };
-        let (accepted, elements) = walk_xml(&inner, &mut inner_inv, reason, stop, gate)?;
-        inner_inv.fill_gaps(None, Disposition::Trailing)?;
-        (summary(&inner_inv, accepted, elements), accepted)
+        let mut w = r.clone_walked();
+        if capped {
+            // The part cap stopped the walk: decide acceptance without
+            // mapping.
+            w = accept_only(&inner, reason.clone(), job, nest);
+        }
+        let _ = inner_inv.fill_gaps(None, Disposition::Trailing);
+        let mut s = summary(&inner_inv, &w, "inner SVG");
+        if capped {
+            s.push_str(&format!(
+                "; the inner document has more than {MAX_INNER_PARTS} parts: the counts above \
+                 cover the first ones"
+            ));
+        }
+        (s, w)
     };
-    let deflate_disp = if gzip_ok && inner_accepted && header_reject.is_none() {
+    let deflate_disp = if gzip_ok && walked.accepted && header_reject.is_none() {
         Disposition::ImageData
     } else {
         Disposition::Dropped
@@ -1802,14 +2691,44 @@ fn svgz(
                 )?;
             }
         }
-        None => malformed(inv, stream_end..d.len(), "gzip trailer truncated")?,
+        None => {
+            malformed(inv, stream_end..d.len(), "gzip trailer truncated")?;
+        }
     }
-    Ok(())
+    Ok(Walked {
+        accepted: deflate_disp.is_consumed(),
+        ..walked
+    })
 }
 
-/// One line about an inner (decompressed) inventory: part counts and the
-/// unconsumed parts an auditor looks for.
-fn summary(inv: &Inventory, accepted: bool, elements: usize) -> String {
+/// Whether the decoder draws from a document, without mapping it.
+fn accept_only(d: &[u8], rejected: Option<String>, job: &Job, nest: u32) -> Walked {
+    let tree = xml::lex(d);
+    let bound = xml::nesting_bound(d, &tree);
+    let check = || -> Result<(), String> {
+        if let Some(r) = rejected.clone() {
+            return Err(r);
+        }
+        parse_doc(d, bound)?;
+        if nest == 0 {
+            crate::render::check_render(d, job.options)
+        } else {
+            crate::render::check_nested(d, job.options)
+        }
+        .map_err(|e| format!("the decoder rejects it before drawing: {e}"))
+    };
+    let deep = bound.is_none_or(|b| b > SHALLOW);
+    let r = deep_stack(deep, check).unwrap_or_else(|| Err("nested too deeply to check".into()));
+    Walked {
+        accepted: r.is_ok(),
+        why: r.err(),
+        elements: 0,
+    }
+}
+
+/// One line about an inner (decompressed or nested) inventory: part
+/// counts and the unconsumed parts an auditor looks for.
+fn summary(inv: &Inventory, w: &Walked, what: &str) -> String {
     let mut by: Vec<(&'static str, usize)> = Vec::new();
     let mut notable: Vec<String> = Vec::new();
     for p in inv.parts() {
@@ -1836,11 +2755,16 @@ fn summary(inv: &Inventory, accepted: bool, elements: usize) -> String {
     }
     let counts: Vec<String> = by.iter().map(|(n, c)| format!("{c} {n}")).collect();
     let mut s = format!(
-        "inner SVG {} bytes, elements: {elements}, {} parts ({}){}",
+        "{what} {} bytes, elements: {}, {} parts ({}){}",
         inv.input_len(),
+        w.elements,
         inv.parts().len(),
         counts.join(", "),
-        if accepted { "" } else { "; usvg rejected it" }
+        match (&w.accepted, &w.why) {
+            (true, _) => String::new(),
+            (false, Some(why)) => format!("; the decoder draws nothing from it ({why})"),
+            (false, None) => "; the decoder draws nothing from it".into(),
+        }
     );
     if !notable.is_empty() {
         s.push_str("; not consumed: ");
@@ -1857,14 +2781,5 @@ mod tests {
     fn name_tables_are_sorted() {
         assert!(ELEMENTS.windows(2).all(|w| w[0] < w[1]));
         assert!(ATTRIBUTES.windows(2).all(|w| w[0] < w[1]));
-    }
-
-    #[test]
-    fn data_uris() {
-        assert_eq!(
-            data_uri(b"data:image/png;base64,iVBORw0KGgo="),
-            ("image/png".to_string(), 8)
-        );
-        assert_eq!(data_uri(b"data:,a%20b"), ("text/plain".to_string(), 3));
     }
 }

@@ -110,6 +110,16 @@ fn inventory(data: &[u8]) -> Inventory {
     inv
 }
 
+fn render_bytes(data: &[u8]) -> Result<Vec<u8>, String> {
+    use zencodec::decode::Decode;
+    SvgDecoderConfig::new()
+        .job()
+        .decoder(std::borrow::Cow::Borrowed(data), &[])
+        .and_then(|d| d.decode())
+        .map(|o| o.pixels().contiguous_bytes().into_owned())
+        .map_err(|e| e.to_string())
+}
+
 fn find(hay: &[u8], needle: &[u8]) -> usize {
     hay.windows(needle.len())
         .position(|w| w == needle)
@@ -202,7 +212,9 @@ fn inkscape_leak_carriers_are_labelled_and_unconsumed() {
         "{inv}"
     );
     assert!(detail(hrefs[0]).contains("local file system"));
-    assert_eq!(hrefs[1].disposition, Disposition::Skipped);
+    // An external `use`: usvg parses the element, resolves nothing and
+    // draws nothing from it.
+    assert_eq!(hrefs[1].disposition, Disposition::Dropped);
     assert_eq!(hrefs[2].disposition, Disposition::Dropped);
     assert_eq!(xlinks[1].disposition, Disposition::Dropped);
     assert!(detail(xlinks[1]).contains("overridden"));
@@ -224,14 +236,22 @@ fn inkscape_leak_carriers_are_labelled_and_unconsumed() {
     assert_eq!(named(&inv, "#cdata")[0].disposition, Disposition::Structure);
     assert_eq!(named(&inv, "rect")[0].disposition, Disposition::ImageData);
     assert_eq!(named(&inv, "g")[0].disposition, Disposition::Structure);
-    assert_eq!(
-        leaf_at(&inv, find(&data, b"Hello") as u64).disposition,
-        Disposition::ImageData
-    );
-    assert_eq!(
-        leaf_at(&inv, find(&data, b"there") as u64).disposition,
-        Disposition::ImageData
-    );
+    // The text has no font-family: usvg asks for its default family (Times
+    // New Roman), then serif. Whether it is drawn depends on the host's
+    // fonts, so check both directions against the decoder.
+    for word in [&b"Hello"[..], b"there"] {
+        let p = leaf_at(&inv, find(&data, word) as u64);
+        let mut other = data.clone();
+        let at = find(&data, word);
+        other[at..at + word.len()].copy_from_slice(&b"XXXXX"[..word.len()]);
+        let changes = render_bytes(&data) != render_bytes(&other);
+        assert_eq!(
+            p.disposition.is_consumed(),
+            changes,
+            "{:?}: {p:?}",
+            String::from_utf8_lossy(word)
+        );
+    }
 
     let doctype = named(&inv, "!DOCTYPE")[0];
     assert_eq!(doctype.disposition, Disposition::Structure);

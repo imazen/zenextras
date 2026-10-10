@@ -476,6 +476,186 @@ impl Lexer<'_> {
     }
 }
 
+/// roxmltree's deepest chain of nested entity references
+/// (`LoopDetector::inc_depth`: a reference at depth 10 is an
+/// `EntityReferenceLoop`).
+const MAX_ENTITY_CHAIN: usize = 10;
+
+/// An upper bound on how deep roxmltree nests elements when it parses `d`:
+/// the lexer's element nesting, plus, at every entity reference in
+/// character data, the nesting the referenced internal entity expands into
+/// (its literal's own elements and the entities it references in turn).
+/// `None` when a referenced entity chains deeper than roxmltree allows or
+/// loops (roxmltree rejects the document).
+///
+/// roxmltree recurses once per nested element (`parse_element` ↔
+/// `parse_content`), so this is checked before roxmltree runs: a deep
+/// document would overflow the stack and abort the process.
+pub(crate) fn nesting_bound(d: &[u8], tree: &XTree) -> Option<usize> {
+    let mut entities: Vec<(&[u8], &[u8])> = Vec::new();
+    for &r in &tree.roots {
+        if let XKind::Doctype { items, .. } = &tree.nodes[r].kind {
+            for (_, item) in items {
+                if let DtdItem::Entity {
+                    name,
+                    value: Some(v),
+                    ..
+                } = item
+                {
+                    // roxmltree keeps the first declaration of a name.
+                    if !entities.iter().any(|(n, _)| *n == &d[name.clone()]) {
+                        entities.push((&d[name.clone()], &d[v.clone()]));
+                    }
+                }
+            }
+        }
+    }
+    let depths = entity_depths(&entities);
+    let lookup = |name: &[u8]| -> Option<Option<usize>> {
+        entities
+            .iter()
+            .position(|(n, _)| *n == name)
+            .map(|i| depths[i])
+    };
+    let mut best = 0usize;
+    let mut stack: Vec<(usize, usize)> = tree.roots.iter().map(|&r| (r, 0)).collect();
+    while let Some((n, depth)) = stack.pop() {
+        match &tree.nodes[n].kind {
+            XKind::Element { .. } => {
+                best = best.max(depth + 1);
+                stack.extend(tree.nodes[n].children.iter().map(|&c| (c, depth + 1)));
+            }
+            XKind::Text if depth > 0 => {
+                for name in references(&d[tree.nodes[n].range.clone()]) {
+                    match lookup(name) {
+                        Some(Some(e)) => best = best.max(depth + e),
+                        Some(None) => return None,
+                        None => {}
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    Some(best)
+}
+
+/// Names of the general entity references (`&name;`) in `v`, excluding
+/// character references.
+fn references(v: &[u8]) -> impl Iterator<Item = &[u8]> {
+    let mut i = 0;
+    std::iter::from_fn(move || {
+        while i < v.len() {
+            if v[i] == b'&'
+                && let Some(semi) = v[i + 1..].iter().position(|&b| b == b';')
+            {
+                let name = &v[i + 1..i + 1 + semi];
+                i += semi + 2;
+                if !name.is_empty() && name[0] != b'#' && name.iter().all(|&b| is_name(b)) {
+                    return Some(name);
+                }
+                continue;
+            }
+            i += 1;
+        }
+        None
+    })
+}
+
+/// For each entity, the element nesting its replacement text expands into,
+/// or `None` when it chains deeper than roxmltree allows or loops. Iterative
+/// (the chain length is not bounded by anything but the input).
+fn entity_depths(entities: &[(&[u8], &[u8])]) -> Vec<Option<usize>> {
+    // Per entity: (references with the element depth they sit at, own
+    // element nesting).
+    let index = |name: &[u8]| entities.iter().position(|(n, _)| *n == name);
+    let shape: Vec<(Vec<(usize, usize)>, usize)> = entities
+        .iter()
+        .map(|(_, v)| {
+            let (mut depth, mut own, mut refs) = (0usize, 0usize, Vec::new());
+            let mut i = 0;
+            while i < v.len() {
+                match v[i] {
+                    b'<' if v.get(i + 1) == Some(&b'/') => depth = depth.saturating_sub(1),
+                    b'<' if v.get(i + 1).is_some_and(|&b| is_name_start(b)) => {
+                        own = own.max(depth + 1);
+                        // The tag's `>`, skipping quoted attribute values;
+                        // an unterminated tag counts as open (an upper bound).
+                        let mut c = i + 1;
+                        let mut quote = None;
+                        while c < v.len() {
+                            match (quote, v[c]) {
+                                (None, q @ (b'"' | b'\'')) => quote = Some(q),
+                                (Some(q), b) if b == q => quote = None,
+                                (None, b'>') => break,
+                                _ => {}
+                            }
+                            c += 1;
+                        }
+                        let self_closing = c < v.len() && v[c - 1] == b'/';
+                        if !self_closing {
+                            depth += 1;
+                        }
+                    }
+                    b'&' => {
+                        if let Some(name) = references(&v[i..]).next()
+                            && v[i + 1..].starts_with(name)
+                            && let Some(e) = index(name)
+                        {
+                            refs.push((e, depth));
+                        }
+                    }
+                    _ => {}
+                }
+                i += 1;
+            }
+            (refs, own)
+        })
+        .collect();
+    // (depth, chain height) once known; `None` = rejected.
+    let mut done: Vec<Option<Option<(usize, usize)>>> = vec![None; entities.len()];
+    let mut on_path = vec![false; entities.len()];
+    for start in 0..entities.len() {
+        if done[start].is_some() {
+            continue;
+        }
+        let mut stack = vec![(start, 0usize)];
+        on_path[start] = true;
+        while let Some(&mut (e, ref mut next)) = stack.last_mut() {
+            if let Some(&(child, _)) = shape[e].0.get(*next) {
+                *next += 1;
+                if on_path[child] {
+                    // A loop: roxmltree fails with EntityReferenceLoop.
+                    done[child] = Some(None);
+                } else if done[child].is_none() {
+                    on_path[child] = true;
+                    stack.push((child, 0));
+                }
+                continue;
+            }
+            // All references of `e` are resolved.
+            let mut result = Some((shape[e].1, 1usize));
+            for &(child, at) in &shape[e].0 {
+                result = match (result, done[child].flatten()) {
+                    (Some((d, h)), Some((cd, ch))) => Some((d.max(at + cd), h.max(ch + 1))),
+                    _ => None,
+                };
+            }
+            if result.is_some_and(|(_, h)| h > MAX_ENTITY_CHAIN) {
+                result = None;
+            }
+            if done[e] != Some(None) {
+                done[e] = Some(result);
+            }
+            on_path[e] = false;
+            stack.pop();
+        }
+    }
+    done.into_iter()
+        .map(|r| r.flatten().map(|(d, _)| d))
+        .collect()
+}
+
 pub(crate) fn lex(d: &[u8]) -> XTree {
     Lexer {
         d,
