@@ -461,6 +461,8 @@ mod tests {
     fn estimate_decode_resources_scales_with_output() {
         use zencodec::estimate::{ComputeEnvironment, ImageCharacteristics, ThreadingInformation};
         let img = ImageCharacteristics::new(800, 600, PixelDescriptor::RGBA8_SRGB);
+        // `new` is deprecated from zencodec 0.1.27 on; 0.1.26 has no `conservative()`.
+        #[allow(deprecated)]
         let env = ComputeEnvironment::new().with_cores(8);
         let est = SvgDecoderConfig::new().estimate_decode_resources(&img, &env);
         let output = 800u64 * 600 * 4;
