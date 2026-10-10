@@ -183,6 +183,25 @@ member entries here reference those files.
   Capability `inventory` declared. Fuzz target `inventory`, regression seed,
   xmllint oracle (`just inventory-oracle`) (4a55611, c3d2cdd, 13adb11,
   b37e153).
+- **Inventory review round 1** (findings S1-S17 of the #33 review). The
+  walker now replays usvg 0.48.1's parse and converter on the roxmltree
+  document the decoder parses (`inventory/model.rs`): CSS and `style` with
+  simplecss, `!important`, `inherit`, references parsed with svgtypes,
+  `use`/`tref` into skipped subtrees, `switch`, `visibility`, invalid
+  transforms, opacity 0, fill and stroke, paint servers, clip paths, masks,
+  filters, markers, and text that draws only when one of the job's fonts
+  matches. `<style>` text splits into applied rule sets and the rest;
+  attributes CSS overrides, `svg:href` and attributes usvg never reads on
+  that element are attribute parts; internal entities nothing consumed
+  references are `Dropped`; `data:` image payloads are decoded like usvg and
+  their PNG chunks, JPEG segments or nested-SVG inventory become child parts.
+  Nesting is bounded before roxmltree runs (deep documents no longer abort
+  the process; the decoder's own overflow is zenextras#39), the walker's
+  entity expansion is gone (a 3,457-byte file no longer exhausts 8 GiB),
+  SVGZ inner documents are capped at 200,000 parts and header fields over
+  flate2's 65,535 bytes are rejected. Review probes kept as
+  `tests/review_adversarial.rs`; Inkscape and all-fields SVGZ inventories
+  pinned (7971e34, 26b8259, d7d9ba7, f783012).
 
 #### Fixed (2026-08-27, zenextras#15, #16)
 
