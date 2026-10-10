@@ -366,6 +366,11 @@ struct Builder<'a, 'i> {
     active: HashSet<usize>,
     /// `style` declarations (file start) some parse of their element keeps.
     used_decls: HashSet<usize>,
+    /// (node, is fill) paints `fix_recursive_patterns` rewrote to none.
+    none_paint: HashSet<(usize, bool)>,
+    /// Per pattern: whether its content paints (one scan per pattern, not
+    /// per shape painted with it).
+    pattern_paints: std::cell::RefCell<HashMap<usize, bool>>,
     steps: usize,
 }
 
@@ -386,6 +391,8 @@ pub(crate) fn build(doc: &rx::Document, env: &Env) -> Option<Model> {
         },
         active: HashSet::new(),
         used_decls: HashSet::new(),
+        none_paint: HashSet::new(),
+        pattern_paints: std::cell::RefCell::new(HashMap::new()),
         steps: 0,
     };
     b.prepare();
@@ -485,7 +492,54 @@ impl<'a, 'i: 'a> Builder<'a, 'i> {
                 self.links.insert(id, i);
             }
         }
+        self.fix_recursive_patterns();
         Some(())
+    }
+
+    /// `fix_recursive_patterns`: a fill or stroke inside a pattern that
+    /// links back to that pattern, directly or through the linked element's
+    /// content, becomes none.
+    fn fix_recursive_patterns(&mut self) {
+        let descendants = |b: &Self, n: usize| {
+            let mut out = Vec::new();
+            let mut stack = vec![n];
+            while let Some(i) = stack.pop() {
+                out.push(i);
+                stack.extend(b.nodes[i].children.iter().copied());
+            }
+            out
+        };
+        let link_of = |b: &Self, n: usize, fill: bool| -> Option<String> {
+            let v = b.attr(n, if fill { "fill" } else { "stroke" })?;
+            match svgtypes::Paint::from_str(v) {
+                Ok(svgtypes::Paint::FuncIRI(id, _)) => Some(id.to_string()),
+                _ => None,
+            }
+        };
+        let patterns: Vec<usize> = (0..self.nodes.len())
+            .filter(|&i| self.tag(i) == Some("pattern"))
+            .collect();
+        for p in patterns {
+            let Some(pid) = self.attr(p, "id").map(str::to_string) else {
+                continue;
+            };
+            for fill in [true, false] {
+                for n in descendants(self, p) {
+                    let Some(link) = link_of(self, n, fill) else {
+                        continue;
+                    };
+                    if link == pid {
+                        self.none_paint.insert((n, fill));
+                    } else if let Some(&l) = self.links.get(link.as_str()) {
+                        for n2 in descendants(self, l) {
+                            if link_of(self, n2, fill).as_deref() == Some(pid.as_str()) {
+                                self.none_paint.insert((n2, fill));
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     fn parse_children(
@@ -1322,12 +1376,12 @@ impl<'a, 'i: 'a> Builder<'a, 'i> {
         let (fill, fill_server) = if st.in_clip {
             (true, None)
         } else {
-            self.paint(n, "fill")
+            self.paint(n, "fill", st.context)
         };
         let (stroke, stroke_server) = if st.in_clip {
             (false, None)
         } else {
-            self.paint(n, "stroke")
+            self.paint(n, "stroke", st.context)
         };
         let stroke = stroke && self.stroke_width_valid(n);
         let visible = !matches!(self.find_attr(n, "visibility"), Some("hidden" | "collapse"));
@@ -1375,7 +1429,11 @@ impl<'a, 'i: 'a> Builder<'a, 'i> {
     }
 
     /// Whether a paint attribute paints, and the paint server it uses.
-    fn paint(&self, n: usize, name: &str) -> (bool, Option<usize>) {
+    fn paint(&self, n: usize, name: &str, context: bool) -> (bool, Option<usize>) {
+        self.paint_at(n, name, context, 0)
+    }
+
+    fn paint_at(&self, n: usize, name: &str, context: bool, depth: u32) -> (bool, Option<usize>) {
         let holder = self
             .ancestors(n)
             .find(|&a| self.own_attr(a, name).is_some());
@@ -1383,6 +1441,11 @@ impl<'a, 'i: 'a> Builder<'a, 'i> {
             // `fill` defaults to black, `stroke` to none.
             return (name == "fill", None);
         };
+        // `fix_recursive_patterns` rewrote a paint that reaches back into
+        // its own pattern to none.
+        if self.none_paint.contains(&(holder, name == "fill")) {
+            return (false, None);
+        }
         let Some(value) = self.attr(holder, name) else {
             return (false, None);
         };
@@ -1396,7 +1459,7 @@ impl<'a, 'i: 'a> Builder<'a, 'i> {
                         Some("linearGradient" | "radialGradient" | "pattern")
                     ) =>
                 {
-                    if self.server_paints(l) {
+                    if self.server_paints(l, depth) {
                         (true, Some(l))
                     } else {
                         (fallback_paints(fallback), None)
@@ -1405,6 +1468,7 @@ impl<'a, 'i: 'a> Builder<'a, 'i> {
                 Some(_) => (false, None),
                 None => (fallback_paints(fallback), None),
             },
+            Ok(svgtypes::Paint::ContextFill | svgtypes::Paint::ContextStroke) => (context, None),
             Ok(_) => (true, None),
         }
     }
@@ -1436,11 +1500,25 @@ impl<'a, 'i: 'a> Builder<'a, 'i> {
 
     /// Whether a paint server yields a paint (gradients need stops,
     /// patterns children).
-    fn server_paints(&self, s: usize) -> bool {
+    fn server_paints(&self, s: usize, depth: u32) -> bool {
         match self.tag(s) {
-            Some("pattern") => self
-                .href_chain(s, &["pattern"])
-                .is_some_and(|c| c.iter().any(|&p| self.element_children(p).next().is_some())),
+            // A pattern paints only when something in its content does
+            // (a pattern whose only shape's recursive paint usvg rewrote to
+            // none paints nothing).
+            Some("pattern") => self.href_chain(s, &["pattern"]).is_some_and(|c| {
+                c.iter()
+                    .find(|&&p| self.element_children(p).next().is_some())
+                    .is_some_and(|&p| {
+                        if let Some(&v) = self.pattern_paints.borrow().get(&p) {
+                            return v;
+                        }
+                        // Patterns painting each other past this depth are
+                        // taken to paint.
+                        let v = depth > 8 || self.content_paints(p, depth + 1);
+                        self.pattern_paints.borrow_mut().insert(p, v);
+                        v
+                    })
+            }),
             _ => self
                 .href_chain(s, &["linearGradient", "radialGradient"])
                 .is_some_and(|c| {
@@ -1450,6 +1528,31 @@ impl<'a, 'i: 'a> Builder<'a, 'i> {
                     })
                 }),
         }
+    }
+
+    /// Whether anything under `p` paints: an image or `use`, or a shape or
+    /// text with a fill or stroke. Visibility and geometry are left to the
+    /// conversion; this only finds content that cannot paint at all.
+    fn content_paints(&self, p: usize, depth: u32) -> bool {
+        let mut stack: Vec<usize> = self.element_children(p).collect();
+        while let Some(k) = stack.pop() {
+            match self.tag(k) {
+                Some("image" | "use") => return true,
+                Some(
+                    "rect" | "circle" | "ellipse" | "line" | "polyline" | "polygon" | "path"
+                    | "text",
+                ) => {
+                    if self.paint_at(k, "fill", false, depth).0
+                        || self.paint_at(k, "stroke", false, depth).0
+                    {
+                        return true;
+                    }
+                }
+                Some(_) => stack.extend(self.element_children(k)),
+                None => {}
+            }
+        }
+        false
     }
 
     fn convert_server(&mut self, s: usize) {
@@ -1516,7 +1619,13 @@ impl<'a, 'i: 'a> Builder<'a, 'i> {
             return;
         }
         self.mark(m);
-        self.convert_children(m, St::default());
+        self.convert_children(
+            m,
+            St {
+                context: true,
+                ..St::default()
+            },
+        );
         self.active.remove(&m);
     }
 
@@ -1585,7 +1694,10 @@ impl<'a, 'i: 'a> Builder<'a, 'i> {
         if let Some(l) = self.link(c, "clip-path") {
             self.convert_clip(l);
         }
-        let st = St { in_clip: true };
+        let st = St {
+            in_clip: true,
+            ..St::default()
+        };
         let kids: Vec<usize> = self.element_children(c).collect();
         for k in kids {
             let Some(tag) = self.tag(k) else { continue };
@@ -1665,13 +1777,17 @@ impl<'a, 'i: 'a> Builder<'a, 'i> {
             self.why(n, "a use of a symbol inside a clipPath; usvg ignores it");
             return;
         }
+        let inner = St {
+            context: true,
+            ..st
+        };
         if self.tag(child) == Some("symbol") {
             self.convert_group(n, st, &mut |b| {
                 b.mark(child);
-                b.convert_children(child, st);
+                b.convert_children(child, inner);
             });
         } else {
-            self.convert_group(n, st, &mut |b| b.convert_element(child, st));
+            self.convert_group(n, st, &mut |b| b.convert_element(child, inner));
         }
     }
 
@@ -1774,8 +1890,8 @@ impl<'a, 'i: 'a> Builder<'a, 'i> {
                 self.why(t, "visibility: hidden");
                 continue;
             }
-            let fill = st.in_clip || self.paint(parent, "fill").0;
-            let stroke = !st.in_clip && self.paint(parent, "stroke").0;
+            let fill = st.in_clip || self.paint(parent, "fill", st.context).0;
+            let stroke = !st.in_clip && self.paint(parent, "stroke", st.context).0;
             if !fill && !stroke {
                 self.why(t, "its text has neither a fill nor a stroke");
                 continue;
@@ -1960,6 +2076,10 @@ fn rule_set_range(
 struct St {
     /// Inside a `clipPath` (`state.parent_clip_path`).
     in_clip: bool,
+    /// Inside `use` or marker content, where `context-fill` and
+    /// `context-stroke` resolve (`state.context_element`); elsewhere they
+    /// are none.
+    context: bool,
 }
 
 /// `XmlNode`: simplecss matching on roxmltree, as `svgtree/parse.rs` does.
