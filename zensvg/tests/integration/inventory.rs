@@ -381,6 +381,46 @@ fn a_bom_is_structure() {
 }
 
 #[test]
+fn unreferenced_defs_draw_nothing() {
+    let data = format!(
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8">
+<style>.c {{ fill: url(#css) }}</style>
+<defs>
+<linearGradient id="used"><stop offset="0" stop-color="#f00"/></linearGradient>
+<linearGradient id="css"><stop offset="0" stop-color="#0f0"/></linearGradient>
+<linearGradient id="unused"><stop offset="0" stop-color="#00f"/></linearGradient>
+<image id="old-photo" width="1" height="1" href="data:image/png;base64,{PNG_1X1}"/>
+</defs>
+<symbol id="s1"><rect width="1" height="1"/></symbol>
+<symbol id="s2"><text>HIDDEN-SYMBOL-TEXT</text></symbol>
+<radialGradient id="outside-defs"><stop offset="1" stop-color="#000"/></radialGradient>
+<rect width="4" height="4" fill="url(#used)"/>
+<rect class="c" x="4" width="4" height="4"/>
+<use href="#s1"/>
+</svg>"##
+    )
+    .into_bytes();
+    let inv = inventory(&data);
+    let by_id = |id: &str| -> &Part {
+        inv.parts()
+            .iter()
+            .find(|p| p.label.as_deref() == Some(id) && p.kind == PartKind::Chunk)
+            .unwrap_or_else(|| panic!("{id}\n{inv}"))
+    };
+    assert_eq!(by_id("used").disposition, Disposition::Structure, "{inv}");
+    assert_eq!(by_id("css").disposition, Disposition::Structure, "{inv}");
+    assert_eq!(by_id("s1").disposition, Disposition::Structure, "{inv}");
+    for id in ["unused", "old-photo", "s2", "outside-defs"] {
+        assert_eq!(by_id(id).disposition, Disposition::Dropped, "{id}\n{inv}");
+    }
+    // The embedded photo and the symbol's text are not consumed.
+    let photo = leaf_at(&inv, find(&data, b"data:image/png") as u64);
+    assert_eq!(photo.disposition, Disposition::Dropped, "{inv}");
+    let text = leaf_at(&inv, find(&data, b"HIDDEN-SYMBOL-TEXT") as u64);
+    assert!(!text.disposition.is_consumed(), "{inv}");
+}
+
+#[test]
 fn rejected_documents_consume_nothing() {
     // Trailing junk after the root element: roxmltree rejects the document.
     let mut data = SMALL.to_vec();

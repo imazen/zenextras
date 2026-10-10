@@ -28,7 +28,7 @@
 mod xml;
 
 use std::borrow::Cow;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 
 use enough::{Stop, StopReason};
@@ -412,6 +412,8 @@ struct Ctx {
     css: bool,
     /// Document level.
     top: bool,
+    /// Inside a `<defs>` child or `<symbol>` nothing references.
+    unused_def: bool,
 }
 
 enum Frame {
@@ -441,6 +443,10 @@ struct Walker<'a, 'i> {
     elements: usize,
     /// Internal general entities from the DOCTYPE: name → literal.
     entities: HashMap<Vec<u8>, Vec<u8>>,
+    /// Per node: the `<defs>` child or `<symbol>` subtree it belongs to.
+    def_root: Vec<Option<usize>>,
+    /// Those subtrees nothing outside them references.
+    unused_defs: HashSet<usize>,
 }
 
 /// Map an SVG document at `d` into `inv` (whose input is `d`). Returns
@@ -474,6 +480,7 @@ fn walk_xml(
             }
         }
     }
+    let (def_root, unused_defs) = unreferenced_defs(d, &tree);
     let mut w = Walker {
         d,
         tree: &tree,
@@ -485,9 +492,100 @@ fn walk_xml(
         after_root: false,
         elements: 0,
         entities,
+        def_root,
+        unused_defs,
     };
     w.run()?;
     Ok((ok, w.elements))
+}
+
+/// usvg draws an element inside `<defs>`, and a `symbol`, gradient,
+/// `pattern`, `clipPath`, `mask`, `filter` or `marker` anywhere, only
+/// through a reference (`url(#id)`, `href="#id"`); its converter walks only
+/// graphic elements, `g`, `switch` and `svg`. For every such subtree, find
+/// whether anything outside it refers to one of its ids. Deliberately one-sided: a reference from
+/// anywhere counts (skipped content, other unused subtrees, every `<style>`
+/// text, any attribute value), so a subtree is reported unused only when no
+/// reference to it exists at all.
+fn unreferenced_defs(d: &[u8], tree: &XTree) -> (Vec<Option<usize>>, HashSet<usize>) {
+    let local = |q: &[u8]| -> Vec<u8> { split_qname(q).1.to_vec() };
+    let mut root_of: Vec<Option<usize>> = vec![None; tree.nodes.len()];
+    let mut owner: HashMap<Vec<u8>, usize> = HashMap::new();
+    let mut refs: Vec<(Option<usize>, Vec<u8>)> = Vec::new();
+    let mut roots: HashSet<usize> = HashSet::new();
+    let scan_urls = |text: &[u8], from: Option<usize>, refs: &mut Vec<(Option<usize>, Vec<u8>)>| {
+        let mut rest = text;
+        while let Some(p) = rest.windows(5).position(|w| w == b"url(#") {
+            let tail = &rest[p + 5..];
+            let end = tail
+                .iter()
+                .position(|&b| matches!(b, b')' | b'"' | b'\'' | b' '))
+                .unwrap_or(tail.len());
+            refs.push((from, tail[..end].to_vec()));
+            rest = &tail[end..];
+        }
+    };
+    // (node, parent is a defs element, the subtree it inherits)
+    let mut stack: Vec<(usize, bool, Option<usize>)> =
+        tree.roots.iter().rev().map(|&r| (r, false, None)).collect();
+    while let Some((n, parent_defs, inherited)) = stack.pop() {
+        let node = &tree.nodes[n];
+        match &node.kind {
+            XKind::Element { qname, attrs, .. } => {
+                let name = local(&d[qname.clone()]);
+                // usvg's `convert_element` walks only graphic elements, `g`,
+                // `switch` and `svg`; these are drawn only through a
+                // reference wherever they appear.
+                let reference_only = matches!(
+                    name.as_slice(),
+                    b"symbol"
+                        | b"linearGradient"
+                        | b"radialGradient"
+                        | b"pattern"
+                        | b"clipPath"
+                        | b"mask"
+                        | b"filter"
+                        | b"marker"
+                );
+                let root = inherited.or_else(|| (parent_defs || reference_only).then_some(n));
+                if let Some(r) = root {
+                    roots.insert(r);
+                }
+                root_of[n] = root;
+                for a in attrs {
+                    let an = local(&d[a.qname.clone()]);
+                    let v = &d[a.value.clone()];
+                    if an == b"id" {
+                        if let Some(r) = root {
+                            owner.entry(v.to_vec()).or_insert(r);
+                        }
+                    } else if an == b"href" && v.starts_with(b"#") {
+                        refs.push((root, v[1..].to_vec()));
+                    }
+                    scan_urls(v, root, &mut refs);
+                }
+                let is_defs = name == b"defs";
+                for &c in node.children.iter().rev() {
+                    stack.push((c, is_defs, root));
+                }
+            }
+            XKind::Text | XKind::CData => {
+                root_of[n] = inherited;
+                scan_urls(&d[node.range.clone()], inherited, &mut refs);
+            }
+            _ => root_of[n] = inherited,
+        }
+    }
+    let mut used: HashSet<usize> = HashSet::new();
+    for (from, id) in refs {
+        if let Some(&r) = owner.get(&id)
+            && from != Some(r)
+        {
+            used.insert(r);
+        }
+    }
+    let unused = roots.difference(&used).copied().collect();
+    (root_of, unused)
 }
 
 fn split_qname(q: &[u8]) -> (&[u8], &[u8]) {
@@ -648,6 +746,7 @@ impl Walker<'_, '_> {
             text: false,
             css: false,
             top: true,
+            unused_def: false,
         };
         let mut stack: Vec<Frame> = self
             .tree
@@ -886,6 +985,12 @@ impl Walker<'_, '_> {
                         Disposition::Structure,
                         "CSS; usvg applies it (resolve_css)".to_string(),
                     )
+                } else if ctx.text && ctx.converted && ctx.unused_def {
+                    (
+                        PartKind::Chunk,
+                        Disposition::Dropped,
+                        "text in a <defs> child or <symbol> nothing references".to_string(),
+                    )
                 } else if ctx.text && ctx.converted {
                     (
                         PartKind::Chunk,
@@ -999,6 +1104,8 @@ impl Walker<'_, '_> {
             .children
             .iter()
             .any(|&c| matches!(tree.nodes[c].kind, XKind::Element { .. }));
+        let unused_def =
+            ctx.unused_def || self.def_root[n].is_some_and(|r| self.unused_defs.contains(&r));
         let (disposition, detail) = if let Err(why) = &self.accepted {
             (
                 Disposition::Dropped,
@@ -1008,6 +1115,13 @@ impl Walker<'_, '_> {
             (
                 Disposition::Structure,
                 "style sheet; usvg reads every <style> as CSS".to_string(),
+            )
+        } else if converted && unused_def {
+            (
+                Disposition::Dropped,
+                "drawn only through a reference (in <defs>, or a symbol, gradient, \
+                 pattern, clipPath, mask, filter or marker) and nothing references it"
+                    .to_string(),
             )
         } else if converted {
             if has_elements {
@@ -1071,7 +1185,7 @@ impl Walker<'_, '_> {
                 "start tag".into(),
             )?
         };
-        self.attributes(attr_parent, local, converted, attrs)?;
+        self.attributes(attr_parent, local, converted, unused_def, attrs)?;
         if self_closing {
             for p in pops {
                 if let Some(s) = self.ns.get_mut(&p) {
@@ -1085,6 +1199,7 @@ impl Walker<'_, '_> {
             text: converted && (local == b"text" || (ctx.text && text_content)),
             css: css && self.accepted.is_ok(),
             top: false,
+            unused_def,
         };
         stack.push(Frame::Close {
             node: n,
@@ -1125,6 +1240,7 @@ impl Walker<'_, '_> {
         parent: PartId,
         element: &[u8],
         converted: bool,
+        unused_def: bool,
         attrs: &[XAttr],
     ) -> Result<(), InvError> {
         let d = self.d;
@@ -1216,10 +1332,17 @@ impl Walker<'_, '_> {
                 };
                 (Disposition::Skipped, format!("{why}: {excerpt}"))
             };
-            let disposition = if rejected {
-                Disposition::Dropped
+            let (disposition, detail) = if rejected {
+                (Disposition::Dropped, detail)
+            } else if unused_def && disposition.is_consumed() {
+                (
+                    Disposition::Dropped,
+                    format!(
+                        "{detail}; but the element is in a <defs> child or <symbol> nothing references"
+                    ),
+                )
             } else {
-                disposition
+                (disposition, detail)
             };
             self.push(
                 Some(parent),
