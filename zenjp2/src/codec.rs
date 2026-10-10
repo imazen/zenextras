@@ -561,7 +561,7 @@ mod tests {
     fn estimate_decode_resources_scales_with_output() {
         use zencodec::estimate::{ComputeEnvironment, ImageCharacteristics, ThreadingInformation};
         let img = ImageCharacteristics::new(1000, 1000, PixelDescriptor::RGBA8_SRGB);
-        let env = ComputeEnvironment::new().with_cores(8);
+        let env = ComputeEnvironment::conservative().with_cores(8);
         let est = Jp2DecoderConfig::new().estimate_decode_resources(&img, &env);
         // Peak holds output (1000*1000*4 = 4 MB) at least twice plus scratch.
         let output = 1000u64 * 1000 * 4;
