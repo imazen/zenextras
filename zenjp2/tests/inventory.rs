@@ -207,13 +207,22 @@ fn rich_jp2_exact_parts() {
     // (kind, tag, range, disposition, label)
     let expected: Vec<Row> = vec![
         (Header, cc(b"jP  "), 0..12, Structure, Some("jP  ")),
-        (Box, cc(b"ftyp"), 12..32, Structure, Some("jp2 ")),
+        (Field, PartTag::Name("payload".into()), 8..12, Skipped, None),
+        (Box, cc(b"ftyp"), 12..32, Structure, None),
+        (
+            Field,
+            PartTag::Name("payload".into()),
+            20..32,
+            Skipped,
+            Some("jp2 "),
+        ),
         (Box, cc(b"jp2h"), 32..162, Structure, None),
         (Box, cc(b"ihdr"), 40..62, Skipped, None),
+        (Box, cc(b"colr"), 62..77, Structure, None),
         (
-            Box,
-            cc(b"colr"),
-            62..77,
+            Field,
+            PartTag::Name("fields".into()),
+            70..77,
             Metadata(MetadataKind::Colour),
             None,
         ),
@@ -264,8 +273,10 @@ fn rich_jp2_exact_parts() {
         (Segment, m(0x64), 596..614, Skipped, Some("tile comment")),
         (Segment, m(0x58), 614..621, Skipped, None),
         (Segment, m(0x93), 621..623, Structure, None),
-        (ScanData, PartTag::Code(0), 623..749, ImageData, None),
+        // Pushed after the headers: the packet walk runs once all tile-part
+        // headers are known.
         (Segment, m(0xD9), 749..751, Structure, None),
+        (ScanData, PartTag::Code(0), 623..749, ImageData, None),
         (Gap, PartTag::None, 751..766, Trailing, None),
         (Box, cc(b" AFT"), 766..789, Malformed, Some(" AFT")),
     ];
@@ -295,7 +306,16 @@ fn exotic_boxes() {
     assert_eq!(jp2h[1].1, Structure, "{inv}");
     let colr = by_ty(b"colr");
     assert_eq!(colr[0].1, Dropped, "child of a superseded jp2h\n{inv}");
-    assert_eq!(colr[1].1, Metadata(MetadataKind::Icc), "{inv}");
+    // The ICC profile reaches the caller: the field child carries it.
+    assert!(
+        inv.parts()
+            .iter()
+            .any(|p| p.disposition == Metadata(MetadataKind::Icc)
+                && p.parent.is_some()
+                && p.range.start >= colr[1].0.start
+                && p.range.end <= colr[1].0.end),
+        "{inv}"
+    );
     // pclr: the second replaces the first; cmap and cdef are read.
     let pclr = by_ty(b"pclr");
     assert_eq!((pclr[0].1, pclr[1].1), (Dropped, Structure), "{inv}");
@@ -398,10 +418,10 @@ fn truncations_and_flips_stay_valid() {
         }
         let mut m = data.clone();
         for i in 0..m.len() {
-            for bit in [0x01u8, 0x80] {
-                m[i] ^= bit;
+            for k in 0..8 {
+                m[i] ^= 1 << k;
                 inventory_of(&m);
-                m[i] ^= bit;
+                m[i] ^= 1 << k;
             }
         }
     }
