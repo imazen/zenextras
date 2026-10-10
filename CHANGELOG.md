@@ -202,6 +202,13 @@ member entries here reference those files.
   flate2's 65,535 bytes are rejected. Review probes kept as
   `tests/review_adversarial.rs`; Inkscape and all-fields SVGZ inventories
   pinned (7971e34, 26b8259, d7d9ba7, f783012).
+- **Inventory review round 2.** Declarations usvg drops in `style`
+  attributes (unknown or non-presentation names, overridden ones) and
+  unknown names inside applied `<style>` rule sets are `Dropped` children
+  instead of hiding in consumed parts; `context-fill`/`context-stroke`
+  outside `use` and marker content, recursive pattern paints, and patterns
+  whose content paints nothing no longer make a shape count as drawn
+  (ec58603, 2be2967).
 
 #### Fixed (2026-08-27, zenextras#15, #16)
 
