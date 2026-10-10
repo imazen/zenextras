@@ -25,8 +25,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Skipped` as "unused resource" (d811808); XObjects and shadings drawn only
   inside optional content that is off (a `BDC` naming a `/Properties`
   resource or carrying an inline `/OC` dictionary), or whose own `/OC` is
-  off, are `Dropped` as "optional content off" (b6bddba, a56dd11). Fuzz
-  target `inventory`,
+  off, are `Dropped` as "optional content off" (b6bddba, a56dd11). The
+  inventory follows the job's start frame: other pages' content streams,
+  annotations and resource-map entries are `Skipped` as "page not
+  decoded", the decoded page searches its own and its ancestor nodes'
+  resources, a page hayro finds by scanning objects is drawn, and a job the
+  decoder rejects before drawing (page geometry, output size, limits)
+  draws no page (eed7d2b). Fuzz target `inventory`,
   regression seeds, mutool/exiftool oracle (`just inventory-oracle DIR`).
 
 ### Fixed
