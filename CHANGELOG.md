@@ -326,7 +326,7 @@ member entries here reference those files.
   dispositions resolved through hayro-syntax, unused resources, content
   hidden by optional content, and stream bytes after each filter's end. See
   [zenpdf/CHANGELOG.md](zenpdf/CHANGELOG.md) (936735e, 081abf8, d811808,
-  ad5dfe9, 16a6a89, b6bddba).
+  ad5dfe9, 16a6a89, b6bddba, a56dd11).
 
 #### Fixed (2026-08-27, zenextras#2, #13, #14)
 

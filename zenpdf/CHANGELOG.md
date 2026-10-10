@@ -23,8 +23,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ASCIIHex, ASCII85, RunLength, DCT, unfiltered images) are child parts
   (081abf8, ad5dfe9, 16a6a89). Resources no content operator names are
   `Skipped` as "unused resource" (d811808); XObjects and shadings drawn only
-  inside optional content that is off, or whose own `/OC` is off, are
-  `Dropped` as "optional content off" (b6bddba). Fuzz target `inventory`,
+  inside optional content that is off (a `BDC` naming a `/Properties`
+  resource or carrying an inline `/OC` dictionary), or whose own `/OC` is
+  off, are `Dropped` as "optional content off" (b6bddba, a56dd11). Fuzz
+  target `inventory`,
   regression seeds, mutool/exiftool oracle (`just inventory-oracle DIR`).
 
 ### Fixed
