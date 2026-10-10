@@ -303,6 +303,8 @@ struct Walker<'a> {
     /// Past a point where hayro-jpeg2000 fails the decode: later bytes are
     /// never read.
     dead: bool,
+    /// Work left for packet walks in this file (`packets::WORK_BUDGET`).
+    budget: u64,
 }
 
 impl Walker<'_> {
@@ -1050,6 +1052,7 @@ pub(crate) fn inventory(data: &[u8]) -> Result<Inventory, InventoryError> {
         inv: Inventory::new(ImageFormat::Jp2, len),
         superseded: false,
         dead: false,
+        budget: packets::WORK_BUDGET,
     };
     if data.is_empty() {
         return Ok(w.inv);

@@ -33,6 +33,11 @@ const MAX_STATES: usize = 1 << 18;
 const MAX_ELEMS: u64 = 1 << 19;
 /// Work units (code-blocks visited, packets begun) per tile.
 const MAX_OPS: u64 = 1 << 26;
+/// Work units one inventory may spend on packet walks across all its tiles:
+/// packets begun, code-blocks visited, tag-tree nodes built and progression
+/// elements built and sorted. The per-tile caps bound memory; this bounds time
+/// when a file repeats a costly tile thousands of times.
+pub(super) const WORK_BUDGET: u64 = 1 << 26;
 /// hayro's `MAX_CODING_PASSES` (1 + 3 * (32 - 1)).
 const MAX_CODING_PASSES: u8 = 94;
 
@@ -114,6 +119,16 @@ pub(super) enum Fail {
 
 fn unsupported<T>(why: impl Into<String>) -> Result<T, Fail> {
     Err(Fail::Unsupported(why.into()))
+}
+
+/// Take `n` units from the file's work budget.
+fn spend(budget: &mut u64, n: u64) -> Result<(), Fail> {
+    if *budget < n {
+        *budget = 0;
+        return unsupported("work budget for the whole file is used up");
+    }
+    *budget -= n;
+    Ok(())
 }
 
 fn cdiv(a: u64, b: u64) -> u64 {
@@ -222,7 +237,8 @@ impl TagNode {
     }
 }
 
-fn push_node(nodes: &mut Vec<TagNode>, n: TagNode) -> Result<u32, Fail> {
+fn push_node(nodes: &mut Vec<TagNode>, n: TagNode, budget: &mut u64) -> Result<u32, Fail> {
+    spend(budget, 1)?;
     if nodes.len() >= MAX_NODES {
         return unsupported("tag-tree node cap reached");
     }
@@ -240,7 +256,13 @@ fn push_node(nodes: &mut Vec<TagNode>, n: TagNode) -> Result<u32, Fail> {
 /// zero-width or zero-height child pushes nothing at any depth, so it is
 /// skipped here without recursing (the pushed nodes and their order are
 /// unchanged). Without the skip a 1 x 8192 grid costs ~4^13 calls.
-fn build_node(w: u32, h: u32, level: u16, nodes: &mut Vec<TagNode>) -> Result<TagNode, Fail> {
+fn build_node(
+    w: u32,
+    h: u32,
+    level: u16,
+    nodes: &mut Vec<TagNode>,
+    budget: &mut u64,
+) -> Result<TagNode, Fail> {
     let mut tag = TagNode {
         w,
         h,
@@ -258,20 +280,20 @@ fn build_node(w: u32, h: u32, level: u16, nodes: &mut Vec<TagNode>) -> Result<Ta
         if cw == 0 || chh == 0 {
             continue;
         }
-        let child = build_node(cw, chh, level - 1, nodes)?;
-        tag.ch[i] = push_node(nodes, child)?;
+        let child = build_node(cw, chh, level - 1, nodes, budget)?;
+        tag.ch[i] = push_node(nodes, child, budget)?;
     }
     Ok(tag)
 }
 
 /// `TagTree::new`: the root index.
-fn new_tree(w: u32, h: u32, nodes: &mut Vec<TagNode>) -> Result<u32, Fail> {
+fn new_tree(w: u32, h: u32, nodes: &mut Vec<TagNode>, budget: &mut u64) -> Result<u32, Fail> {
     let level = w
         .next_power_of_two()
         .ilog2()
         .max(h.next_power_of_two().ilog2()) as u16;
-    let root = build_node(w, h, level, nodes)?;
-    push_node(nodes, root)
+    let root = build_node(w, h, level, nodes, budget)?;
+    push_node(nodes, root, budget)
 }
 
 /// `read_tag_node`, iteratively.
@@ -572,7 +594,7 @@ enum Prog {
 }
 
 impl Prog {
-    fn new(ctx: &Ctx<'_>) -> Result<Self, Fail> {
+    fn new(ctx: &Ctx<'_>, budget: &mut u64) -> Result<Self, Fail> {
         if ctx.max_layer == 0 {
             return unsupported("zero layers");
         }
@@ -600,6 +622,9 @@ impl Prog {
                         ctx.precinct_origins(c, r, &mut elems)?;
                     }
                 }
+                // Building and sorting the list (n log n comparisons).
+                let n = elems.len() as u64;
+                spend(budget, n.saturating_mul(u64::from(n.max(1).ilog2()) + 1))?;
                 match ctx.cfg.prog {
                     2 => elems.sort_by(|p, s| {
                         p.res
@@ -831,15 +856,16 @@ struct Pstate {
     zbp: u32,
 }
 
-struct State {
+struct State<'b> {
     nodes: Vec<TagNode>,
     precincts: BTreeMap<(u8, u8, u8, u64), Pstate>,
     blocks_total: u64,
     ops: u64,
     lens: Vec<u32>,
+    budget: &'b mut u64,
 }
 
-impl State {
+impl State<'_> {
     fn get(&mut self, ctx: &Ctx<'_>, c: usize, r: usize, b: u8, p: u64) -> Result<(), Fail> {
         let key = (c as u8, r as u8, b, p);
         if self.precincts.contains_key(&key) {
@@ -863,8 +889,8 @@ impl State {
                 nonempty: 0,
             });
         }
-        let incl = new_tree(w, h, &mut self.nodes)?;
-        let zbp = new_tree(w, h, &mut self.nodes)?;
+        let incl = new_tree(w, h, &mut self.nodes, self.budget)?;
+        let zbp = new_tree(w, h, &mut self.nodes, self.budget)?;
         self.precincts.insert(
             key,
             Pstate {
@@ -888,7 +914,7 @@ fn segment_for_bypass(pass: u8) -> u8 {
 
 /// One packet (`segment::parse_inner` loop body). `Err(Parse)` is a stop for
 /// this tile-part; the caller keeps the end of the last complete packet.
-fn packet(ctx: &Ctx<'_>, st: &mut State, rd: &mut Rd<'_>, pd: Pd) -> Result<(), Fail> {
+fn packet(ctx: &Ctx<'_>, st: &mut State<'_>, rd: &mut Rd<'_>, pd: Pd) -> Result<(), Fail> {
     let (c, r) = (usize::from(pd.comp), usize::from(pd.res));
     let comp = ctx
         .cfg
@@ -899,6 +925,7 @@ fn packet(ctx: &Ctx<'_>, st: &mut State, rd: &mut Rd<'_>, pd: Pd) -> Result<(), 
     if st.ops > MAX_OPS {
         return unsupported("work cap reached");
     }
+    spend(st.budget, 1)?;
 
     if comp.flags & 0x02 != 0 && rd.peek_marker() == Some(0x91) {
         rd.read_marker().ok_or(Fail::Parse("SOP"))?;
@@ -921,6 +948,7 @@ fn packet(ctx: &Ctx<'_>, st: &mut State, rd: &mut Rd<'_>, pd: Pd) -> Result<(), 
                 precincts,
                 ops,
                 lens,
+                budget,
                 ..
             } = st;
             let ps = precincts.get_mut(&key).ok_or(Fail::Parse("state"))?;
@@ -929,6 +957,7 @@ fn packet(ctx: &Ctx<'_>, st: &mut State, rd: &mut Rd<'_>, pd: Pd) -> Result<(), 
                 if *ops > MAX_OPS {
                     return unsupported("work cap reached");
                 }
+                spend(budget, 1)?;
                 let (bx, by) = (
                     (i as u64 % u64::from(ps.w)) as u32,
                     (i as u64 / u64::from(ps.w)) as u32,
@@ -1052,8 +1081,9 @@ pub(super) fn analyze(
     cfg: &TileCfg,
     tile_idx: u32,
     parts: &[Range<u64>],
+    budget: &mut u64,
 ) -> Result<Vec<PartOut>, String> {
-    run(data, geo, cfg, tile_idx, parts).map_err(|f| match f {
+    run(data, geo, cfg, tile_idx, parts, budget).map_err(|f| match f {
         Fail::Unsupported(s) => s,
         Fail::Parse(s) => format!("walk error: {s}"),
     })
@@ -1065,15 +1095,18 @@ fn run(
     cfg: &TileCfg,
     tile_idx: u32,
     parts: &[Range<u64>],
+    budget: &mut u64,
 ) -> Result<Vec<PartOut>, Fail> {
+    spend(budget, 1)?;
     let ctx = Ctx::new(geo, cfg, tile_idx)?;
-    let mut prog = Prog::new(&ctx)?;
+    let mut prog = Prog::new(&ctx, budget)?;
     let mut st = State {
         nodes: Vec::new(),
         precincts: BTreeMap::new(),
         blocks_total: 0,
         ops: 0,
         lens: Vec::new(),
+        budget,
     };
     let mut out = Vec::new();
     out.try_reserve(parts.len())

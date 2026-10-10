@@ -684,3 +684,69 @@ fn r2_3_skinny_tag_trees_are_built_without_recursing_into_empty_quadrants() {
     // return of the exponential recursion, not a tuned budget.
     assert!(el.as_secs() < 20, "inventory took {el:?}");
 }
+
+/// R2-4: 841 tiles that each cost 2^23 code-block visits share one work
+/// budget; once it is spent, later tiles say so instead of being walked.
+#[test]
+fn r2_4_one_work_budget_across_tiles() {
+    let n = 841u16;
+    let c = Cs {
+        xsiz: 2048 * 29,
+        ysiz: 2048 * 29,
+        xt: 2048,
+        yt: 2048,
+        csiz: 1,
+        nlev: 0,
+        prog: 0,
+        layers: 32,
+        scod: 0,
+        prec: vec![],
+    };
+    let tiles: Vec<_> = (0..n).map(|i| (i, vec![0x80; 32])).collect();
+    let f = build_cs(&c, &tiles);
+    assert_eq!(f.len(), 38753);
+    let i = inv(&f);
+    let spent = undetected(&i, "work budget");
+    assert!(spent > 0, "the budget runs out: {i}");
+    assert!(spent < usize::from(n), "the first tiles are walked");
+    // Once spent, every later tile reports it.
+    let first = i
+        .parts()
+        .iter()
+        .position(|p| {
+            p.detail
+                .as_deref()
+                .is_some_and(|d| d.contains("work budget"))
+        })
+        .unwrap();
+    assert!(
+        i.parts()[first..]
+            .iter()
+            .filter(|p| p.kind == PartKind::ScanData)
+            .all(|p| p.detail.as_deref().unwrap().contains("work budget"))
+    );
+}
+
+/// R2-4: position-based progressions charge the element list they build and
+/// sort for every tile.
+#[test]
+fn r2_4_position_progression_elements_count_against_the_budget() {
+    let n = 6786u16;
+    let c = Cs {
+        xsiz: 1024 * 58,
+        ysiz: 512 * 117,
+        xt: 1024,
+        yt: 512,
+        csiz: 1,
+        nlev: 0,
+        prog: 2,
+        layers: 1,
+        scod: 1,
+        prec: vec![0x00],
+    };
+    let tiles: Vec<_> = (0..n).map(|i| (i, vec![0x00])).collect();
+    let f = build_cs(&c, &tiles);
+    assert_eq!(f.len(), 101858);
+    let i = inv(&f);
+    assert!(undetected(&i, "work budget") > 0, "{}", i.parts().len());
+}

@@ -932,7 +932,9 @@ impl Walker<'_> {
                 Err("packed packet headers (PPM/PPT) are not walked".into())
             } else if let (Some(geo), Some(cod)) = (&geo, &cod) {
                 match tile_cfg(geo, cod, &coc, &acc.ovr) {
-                    Some(cfg) => packets::analyze(self.data, geo, &cfg, tile_idx, &ranges),
+                    Some(cfg) => {
+                        packets::analyze(self.data, geo, &cfg, tile_idx, &ranges, &mut self.budget)
+                    }
                     None => Err("tile configuration does not fit the component count".into()),
                 }
             } else {
