@@ -630,10 +630,10 @@ fn attributes_fixture(compression: Compression) -> Vec<u8> {
     layer.owner = Some(Text::from("OWNER-Jane Example"));
     layer.comments = Some(Text::from("COMMENT-shot on the roof"));
     layer.capture_date = Some(Text::from("2026:10:09 12:34:56"));
-    layer.utc_offset = Some(-21600.0);
-    layer.longitude = Some(-105.27);
-    layer.latitude = Some(40.01);
-    layer.altitude = Some(1655.0);
+    layer.utc_offset = Some(0.0);
+    layer.longitude = Some(0.0);
+    layer.latitude = Some(0.0);
+    layer.altitude = Some(0.0);
     layer.film_key_code = Some(KeyCode {
         film_manufacturer_code: 1,
         film_type: 2,
@@ -1438,4 +1438,256 @@ fn uncompressed_size_mismatch_rejects() {
     check(&bytes, false);
     assert!(decoded(&bytes).is_err());
     assert!(predicts_rejection(&inventory(&bytes)));
+}
+
+// ---------------------------------------------------------------------------
+// Review round 1 (adapted from the reviewer's reproducers)
+// ---------------------------------------------------------------------------
+
+fn tagged<'a>(inv: &'a Inventory, name: &str) -> Vec<&'a zencodec::inventory::Part> {
+    inv.parts()
+        .iter()
+        .filter(|p| p.tag == PartTag::Name(name.to_string().into()))
+        .collect()
+}
+
+/// The leaf part holding byte `offset`.
+fn leaf_at(inv: &Inventory, offset: u64) -> &zencodec::inventory::Part {
+    let kids = has_children(inv);
+    let i = (0..inv.parts().len())
+        .find(|&i| {
+            let p = &inv.parts()[i];
+            !kids[i] && p.range.start <= offset && offset < p.range.end
+        })
+        .unwrap();
+    &inv.parts()[i]
+}
+
+/// Replace the data of the chunk at `offsets[0]` (single-part scan lines),
+/// fixing its size field and the later offset-table entries.
+fn replace_first_chunk_data(bytes: &[u8], data: &[u8]) -> Vec<u8> {
+    let (table, offsets) = layout(bytes);
+    let first = offsets[0] as usize;
+    let size = i32::from_le_bytes(bytes[first + 4..first + 8].try_into().unwrap()) as usize;
+    let mut out = bytes[..first + 4].to_vec();
+    out.extend_from_slice(&(data.len() as i32).to_le_bytes());
+    out.extend_from_slice(data);
+    out.extend_from_slice(&bytes[first + 8 + size..]);
+    let delta = data.len() as i64 - size as i64;
+    for slot in table.step_by(8) {
+        let v = u64::from_le_bytes(out[slot..slot + 8].try_into().unwrap());
+        if v > first as u64 {
+            out[slot..slot + 8].copy_from_slice(&((v as i64 + delta) as u64).to_le_bytes());
+        }
+    }
+    out
+}
+
+/// A single-part tiled (Singular) 8x4 image in 4x4 tiles, half B,G,R,
+/// uncompressed. `chunks`: (tile x, tile y, level x, level y, pixels, fill);
+/// `table`: the chunk each offset-table entry points at.
+fn tiled_file(chunks: &[(i32, i32, i32, i32, usize, u8)], table: &[usize]) -> Vec<u8> {
+    let mut attrs = Vec::new();
+    attrs.extend(attr("channels", "chlist", &chlist_bgr_half()));
+    attrs.extend(attr("compression", "compression", &[0]));
+    attrs.extend(attr("dataWindow", "box2i", &i32s(&[0, 0, 7, 3])));
+    attrs.extend(attr("displayWindow", "box2i", &i32s(&[0, 0, 7, 3])));
+    attrs.extend(attr("lineOrder", "lineOrder", &[0]));
+    attrs.extend(attr("pixelAspectRatio", "float", &f32s(&[1.0])));
+    attrs.extend(attr("screenWindowCenter", "v2f", &f32s(&[0.0, 0.0])));
+    attrs.extend(attr("screenWindowWidth", "float", &f32s(&[1.0])));
+    let mut tiles = Vec::new();
+    tiles.extend_from_slice(&4u32.to_le_bytes());
+    tiles.extend_from_slice(&4u32.to_le_bytes());
+    tiles.push(0);
+    attrs.extend(attr("tiles", "tiledesc", &tiles));
+    let mut bytes = vec![0x76, 0x2f, 0x31, 0x01];
+    bytes.extend_from_slice(&(2u32 | 0x200).to_le_bytes());
+    bytes.extend_from_slice(&attrs);
+    bytes.push(0);
+    let table_at = bytes.len();
+    bytes.extend(std::iter::repeat_n(0u8, 8 * table.len()));
+    let mut at = Vec::new();
+    for &(tx, ty, lx, ly, px, fill) in chunks {
+        at.push(bytes.len() as u64);
+        bytes.extend_from_slice(&i32s(&[tx, ty, lx, ly]));
+        let data: Vec<u8> = (0..px * 6)
+            .map(|i| fill.wrapping_add(i as u8 % 7))
+            .collect();
+        bytes.extend_from_slice(&(data.len() as i32).to_le_bytes());
+        bytes.extend_from_slice(&data);
+    }
+    for (slot, &c) in table.iter().enumerate() {
+        let s = table_at + 8 * slot;
+        bytes[s..s + 8].copy_from_slice(&at[c].to_le_bytes());
+    }
+    bytes
+}
+
+/// F1: a level-(1,1) chunk read through a largest-level entry lands inside
+/// level-0 tile (0,0); the later level-0 tile (0,0) covers all its pixels.
+#[test]
+fn tile_fully_covered_by_a_later_tile_is_dropped() {
+    let bytes = tiled_file(&[(0, 0, 1, 1, 8, 0x30), (0, 0, 0, 0, 16, 0x10)], &[1, 0]);
+    assert!(decoded(&bytes).is_ok());
+    check(&bytes, true);
+    let inv = inventory(&bytes);
+    let first = tagged(&inv, "data")
+        .into_iter()
+        .min_by_key(|p| p.range.start)
+        .unwrap();
+    assert_eq!(first.disposition, Disposition::Dropped, "{inv}");
+    mutate_both_directions(&bytes);
+}
+
+/// F2: zune-inflate ignores the FDICT bit; slack after the Adler-32 of such a
+/// stream must still be split out.
+#[test]
+fn zlib_fdict_slack_is_unreferenced() {
+    for compression in [Compression::ZIP1, Compression::ZIP16, Compression::PXR24] {
+        let bytes = attributes_fixture(compression);
+        let base = decoded(&bytes);
+        let (table, offsets) = layout(&bytes);
+        let first = offsets[0] as usize;
+        let size = i32::from_le_bytes(bytes[first + 4..first + 8].try_into().unwrap()) as usize;
+        let data = first + 8;
+        let mut patched = bytes.clone();
+        let cmf = u16::from(patched[data]);
+        let mut flg = (patched[data + 1] | 0x20) & 0xE0;
+        while (cmf * 256 + u16::from(flg)) % 31 != 0 {
+            flg += 1;
+        }
+        patched[data + 1] = flg;
+        let junk = b"FDICT-SLACK-PII";
+        let patched = insert(&patched, table, data + size, junk, Some(first + 4));
+        assert_eq!(decoded(&patched), base, "{compression:?}");
+        check(&patched, true);
+        let inv = inventory(&patched);
+        let leaf = leaf_at(&inv, (data + size) as u64);
+        assert_eq!(
+            leaf.tag,
+            PartTag::Name("slack".into()),
+            "{compression:?}\n{inv}"
+        );
+        assert_eq!(
+            leaf.range,
+            (data + size) as u64..(data + size + junk.len()) as u64
+        );
+        assert_eq!(leaf.disposition, Disposition::Unreferenced);
+        mutate_both_directions(&patched);
+    }
+}
+
+/// F3: exr decodes every byte after the PIZ code table, so bytes planted after
+/// the Huffman bit count are consumed (and make decode() fail).
+#[test]
+fn piz_bytes_after_the_bit_count_are_read() {
+    for bytes in [PIZ.to_vec(), attributes_fixture(Compression::PIZ)] {
+        let inv = inventory(&bytes);
+        assert!(tagged(&inv, "slack").is_empty(), "{inv}");
+        let (table, _) = layout(&bytes);
+        let bits = tagged(&inv, "Huffman bits")[0].clone();
+        let length = tagged(&inv, "PIZ Huffman length")[0].clone();
+        let chunk = inv
+            .parts()
+            .iter()
+            .find(|p| p.kind == PartKind::Chunk && p.range.contains(&bits.range.start))
+            .unwrap()
+            .clone();
+        let size_at = tagged(&inv, "size")
+            .into_iter()
+            .find(|p| chunk.range.contains(&p.range.start))
+            .unwrap()
+            .range
+            .start as usize;
+        let at = bits.range.end as usize;
+        let planted = b"PIZ-SLACK-PII";
+        let mut patched = insert(&bytes, table, at, planted, Some(size_at));
+        let l = length.range.start as usize;
+        let v = i32::from_le_bytes(patched[l..l + 4].try_into().unwrap());
+        patched[l..l + 4].copy_from_slice(&(v + planted.len() as i32).to_le_bytes());
+        assert!(decoded(&patched).is_err());
+        check(&patched, false);
+        let inv = inventory(&patched);
+        let leaf = leaf_at(&inv, at as u64);
+        assert_eq!(leaf.tag, PartTag::Name("Huffman bits".into()), "{inv}");
+        assert!(leaf.disposition.is_consumed());
+        assert!(leaf.detail.as_deref().unwrap().contains("likely rejects"));
+    }
+}
+
+/// F4: zune-inflate refuses zlib data under 6 bytes, so decode() rejects at
+/// that chunk and the inventory says so.
+#[test]
+fn short_zlib_data_rejects() {
+    let bytes = replace_first_chunk_data(&attributes_fixture(Compression::ZIP1), &[0x78, 0x9c, 3]);
+    assert!(decoded(&bytes).is_err());
+    check(&bytes, false);
+    assert!(predicts_rejection(&inventory(&bytes)));
+}
+
+/// F5: a PXR24 chunk whose inflated stream has 3 extra bytes.
+#[test]
+fn pxr24_inflated_size_mismatch_rejects() {
+    let bytes = attributes_fixture(Compression::PXR24);
+    let (_, offsets) = layout(&bytes);
+    let first = offsets[0] as usize;
+    let size = i32::from_le_bytes(bytes[first + 4..first + 8].try_into().unwrap()) as usize;
+    let mut inflated =
+        miniz_oxide::inflate::decompress_to_vec_zlib(&bytes[first + 8..first + 8 + size]).unwrap();
+    inflated.extend_from_slice(b"XYZ");
+    let recompressed = miniz_oxide::deflate::compress_to_vec_zlib(&inflated, 6);
+    let out = replace_first_chunk_data(&bytes, &recompressed);
+    assert!(decoded(&out).is_err());
+    check(&out, false);
+    assert!(predicts_rejection(&inventory(&out)));
+}
+
+/// F6: exr maps y to its block by integer division; the remainder is noted.
+#[test]
+fn scanline_y_remainder_is_noted() {
+    for compression in [Compression::ZIP16, Compression::PIZ] {
+        let bytes = attributes_fixture(compression);
+        let (_, offsets) = layout(&bytes);
+        let first = offsets[0] as usize;
+        let y = i32::from_le_bytes(bytes[first..first + 4].try_into().unwrap());
+        let mut copy = bytes.clone();
+        copy[first..first + 4].copy_from_slice(&(y + 13).to_le_bytes());
+        assert_eq!(decoded(&copy), decoded(&bytes));
+        let inv = inventory(&copy);
+        let field = leaf_at(&inv, first as u64);
+        assert_eq!(field.tag, PartTag::Name("y".into()));
+        assert!(
+            field
+                .detail
+                .as_deref()
+                .unwrap_or("")
+                .contains("remainder 13 is ignored"),
+            "{compression:?}: {:?}",
+            field.detail
+        );
+    }
+}
+
+/// F7: exr validates every occurrence of `type` and `chunkCount`, superseded
+/// or not.
+#[test]
+fn superseded_values_say_they_are_still_validated() {
+    for (name, ty, value) in [
+        ("type", "string", b"scanlineimage".to_vec()),
+        ("chunkCount", "int", 2i32.to_le_bytes().to_vec()),
+    ] {
+        let mut attrs = base_attrs(2, 2);
+        attrs.extend(attr(name, ty, &value));
+        attrs.extend(attr(name, ty, &value));
+        let bytes = build(&attrs, 2, &[chunk(2, 0), chunk(2, 1)], false).bytes;
+        let inv = inventory(&bytes);
+        let first = find(&inv, name)[0];
+        assert!(
+            first.detail.as_deref().unwrap().contains("still validated"),
+            "{name}: {:?}",
+            first.detail
+        );
+        mutate_both_directions(&bytes);
+    }
 }

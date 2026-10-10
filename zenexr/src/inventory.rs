@@ -67,6 +67,13 @@ const STOP_EVERY: u32 = 1024;
 /// Bytes of a gap the walker searches for unreferenced chunks past the last
 /// one it found.
 const RESYNC_LIMIT: u64 = 1 << 20;
+/// The part cap the inventory is created with; collection loops stop before
+/// it rather than allocating per unit past it.
+const PART_CAP: usize = zencodec::inventory::DEFAULT_MAX_PARTS as usize;
+/// Lower bound on the parts a chunk with fields becomes (chunk, coordinates,
+/// size); one that overlaps earlier parts may become fewer, so the cap can
+/// fire a little early on such files.
+const CHUNK_PARTS: usize = 3;
 /// `exr` skips forward by reading when the seek distance is below this
 /// (`io.rs` `Tracking::seek_read_to`), and that path counts the bytes twice.
 const SHORT_SKIP: u64 = 16;
@@ -573,6 +580,11 @@ impl Walker<'_> {
             if self.data[pos as usize] == 0 {
                 break HeaderEnd::Terminated(pos);
             }
+            // Each attribute becomes at least 4 parts (itself, name, type,
+            // size): stop at the part cap before collecting more.
+            if self.inv.parts().len() + (attrs.len() + 1) * 4 > PART_CAP {
+                return Err(at!(ExrError::LimitExceeded("inventory parts")));
+            }
             match read_attr(self.data, pos, ctx.max_name) {
                 Ok(attr) => {
                     pos = attr.end;
@@ -893,7 +905,16 @@ fn role(a: &Attr, superseded_by: Option<u64>, tiled: bool, single_tiled: bool) -
             ty: if reserved { S } else { DROPPED },
             value: DROPPED,
             note: Cow::Owned(format!(
-                "superseded by the later attribute of the same role at offset {at}"
+                "superseded by the later attribute of the same role at offset {at}{}",
+                // `Header::read` parses these with `?` on every occurrence.
+                if [names::BLOCK_TYPE, names::MAX_SAMPLES, names::CHUNKS]
+                    .iter()
+                    .any(|n| v.slot == Slot::Std(n))
+                {
+                    "; its value is still validated (an invalid one rejects the file)"
+                } else {
+                    ""
+                }
             )),
         };
     }
@@ -1477,7 +1498,18 @@ fn piz_fields(bytes: &[u8]) -> std::result::Result<Vec<DataField>, String> {
     if n_bits > 8 * (len - pos) {
         return Err("PIZ Huffman bit count exceeds the data after the code table".into());
     }
+    // `decode_with_tables` decodes every byte after the code table, to the end
+    // of the chunk, whatever `nBits` says.
     let bits_end = pos + n_bits.div_ceil(8);
+    let bits_note = if bits_end < len {
+        "exr 1.74.2 decodes every byte after the code table (decode_with_tables loops to the end \
+         of the chunk); this data runs past the Huffman bit count, which decode() likely rejects \
+         ('decoded data are longer than expected'); bits after the last symbol are not \
+         distinguished"
+    } else {
+        "exr 1.74.2 decodes every byte after the code table (decode_with_tables loops to the end \
+         of the chunk); bits after the last decoded symbol are not distinguished"
+    };
     let ignored = Some("exr reads and ignores this field");
     Ok(vec![
         data_field("PIZ bitmap range", r(0, 4), S, None),
@@ -1495,15 +1527,9 @@ fn piz_fields(bytes: &[u8]) -> std::result::Result<Vec<DataField>, String> {
         ),
         data_field(
             "Huffman bits",
-            r(pos, bits_end),
+            r(pos, len),
             Disposition::ImageData,
-            Some("bits after the last decoded symbol are not distinguished"),
-        ),
-        data_field(
-            "slack",
-            r(bits_end, len),
-            UNREF,
-            Some("bytes after the Huffman bit count: exr never reads them"),
+            Some(bits_note),
         ),
     ])
 }
@@ -1546,12 +1572,17 @@ fn data_use(
             Ok(DataUse::Whole(None))
         }
         Compression::ZIP1 | Compression::ZIP16 | Compression::PXR24 => {
-            let zip = !matches!(header.compression, Compression::PXR24);
-            match zlib.end(bytes, expected) {
-                // ZIP's inflated bytes are the block; PXR24's are re-expanded
-                // per channel first, so only ZIP's size is checked here.
-                Ok((_, produced)) if zip && produced != expected => Err(format!(
-                    "zlib data inflates to {produced} bytes but the block needs {expected}"
+            // ZIP's inflated bytes are the block. PXR24's are re-expanded per
+            // line and channel, and `pxr24::decompress` needs exactly 2 bytes
+            // per HALF, 3 per FLOAT and 4 per UINT sample ("not enough data",
+            // pedantic "too much data").
+            let want = match header.compression {
+                Compression::PXR24 => pxr24_size(header, rect),
+                _ => expected,
+            };
+            match zlib.end(bytes, want) {
+                Ok((_, produced)) if produced != want => Err(format!(
+                    "zlib data inflates to {produced} bytes but the block needs {want}"
                 )),
                 Ok((end, _)) if (end as u64) < len => Ok(DataUse::Split {
                     used: end as u64,
@@ -1563,11 +1594,12 @@ fn data_use(
                 }),
                 Ok(_) => Ok(DataUse::Whole(None)),
                 Err(ZlibEnd::Overflow) => Err(format!(
-                    "zlib data inflates past {expected} bytes, zune-inflate's limit for this block"
+                    "zlib data inflates past the {want} bytes the block needs"
                 )),
+                Err(ZlibEnd::Rejects(why)) => Err(why.to_string()),
                 Err(ZlibEnd::Corrupt) => Ok(DataUse::Whole(Some(Cow::Borrowed(
-                    "the zlib stream does not end cleanly under miniz_oxide (zune-inflate likely \
-                     rejects it too); bytes after the end of the coded data are not distinguished",
+                    "miniz_oxide finds no clean end to the raw deflate data after the 2-byte zlib \
+                     header; bytes after the end of the coded data are not distinguished",
                 )))),
             }
         }
@@ -1582,6 +1614,23 @@ fn data_use(
             Err("exr 1.74.2 does not decompress HTJ2K".into())
         }
     }
+}
+
+/// The inflated size `pxr24::decompress` needs for `rect`: per line and
+/// channel, 2 bytes per HALF, 3 per FLOAT, 4 per UINT sample (all channels
+/// are unsampled here: `layout` rejects subsampling).
+fn pxr24_size(header: &Header, rect: &exr::meta::attribute::IntegerBounds) -> u64 {
+    let per_pixel: u64 = header
+        .channels
+        .list
+        .iter()
+        .map(|c| match c.sample_type {
+            exr::prelude::SampleType::F16 => 2,
+            exr::prelude::SampleType::F32 => 3,
+            exr::prelude::SampleType::U32 => 4,
+        })
+        .sum();
+    (rect.size.width() as u64 * rect.size.height() as u64).saturating_mul(per_pixel)
 }
 
 /// How many bytes `rle::unpack_rle_tokens` reads before it stops (at the
@@ -1614,7 +1663,9 @@ fn rle_consumed(bytes: &[u8], expected: u64) -> std::result::Result<(u64, u64), 
 enum ZlibEnd {
     /// The output passed the limit.
     Overflow,
-    /// The stream is invalid or truncated.
+    /// zune-inflate rejects the stream for this reason.
+    Rejects(&'static str),
+    /// The raw deflate data does not end cleanly under miniz_oxide.
     Corrupt,
 }
 
@@ -1635,35 +1686,95 @@ impl ZlibScan {
     }
 
     /// `(bytes consumed through the Adler-32, bytes produced)`, reading at
-    /// most `limit + 1` output bytes.
+    /// most `limit + 1` output bytes. Follows zune-inflate 0.2.54
+    /// `decode_zlib`: it checks CM, CINFO and FCHECK but not FDICT, inflates
+    /// raw deflate from byte 2 and reads the Adler-32 where the deflate data
+    /// ends. miniz_oxide's own zlib mode rejects FDICT, so the walker inflates
+    /// raw and checks the Adler-32 itself.
     fn end(&mut self, input: &[u8], limit: u64) -> std::result::Result<(usize, u64), ZlibEnd> {
         use miniz_oxide::inflate::TINFLStatus;
         use miniz_oxide::inflate::core::decompress;
-        use miniz_oxide::inflate::core::inflate_flags::TINFL_FLAG_PARSE_ZLIB_HEADER;
+        if input.len() < 6 {
+            return Err(ZlibEnd::Rejects(
+                "zlib data shorter than 6 bytes (zune-inflate: insufficient data)",
+            ));
+        }
+        let (cmf, flg) = (input[0], input[1]);
+        if cmf & 0x0f != 8 {
+            return Err(ZlibEnd::Rejects("zlib compression method is not deflate"));
+        }
+        if cmf >> 4 > 7 {
+            return Err(ZlibEnd::Rejects("zlib window size (CINFO) above 7"));
+        }
+        if (u16::from(cmf) * 256 + u16::from(flg)) % 31 != 0 {
+            return Err(ZlibEnd::Rejects("zlib FCHECK fails"));
+        }
         self.state.init();
         let mask = self.window.len() - 1;
-        let (mut in_pos, mut out_pos, mut produced) = (0usize, 0usize, 0u64);
+        let (mut in_pos, mut out_pos, mut produced) = (2usize, 0usize, 0u64);
+        let mut adler = Adler32::default();
         loop {
             let (status, n_in, n_out) = decompress(
                 &mut self.state,
                 &input[in_pos..],
                 &mut self.window,
                 out_pos,
-                TINFL_FLAG_PARSE_ZLIB_HEADER,
+                0,
             );
+            // The window wraps; the new output may straddle its end.
+            let first = n_out.min(self.window.len() - out_pos);
+            adler.update(&self.window[out_pos..out_pos + first]);
+            adler.update(&self.window[..n_out - first]);
             in_pos += n_in;
             produced += n_out as u64;
             out_pos = (out_pos + n_out) & mask;
+            if produced > limit {
+                return Err(ZlibEnd::Overflow);
+            }
             match status {
-                TINFLStatus::Done => return Ok((in_pos, produced)),
-                TINFLStatus::HasMoreOutput if n_in + n_out > 0 => {
-                    if produced > limit {
-                        return Err(ZlibEnd::Overflow);
-                    }
-                }
+                TINFLStatus::Done => break,
+                TINFLStatus::HasMoreOutput if n_in + n_out > 0 => {}
                 _ => return Err(ZlibEnd::Corrupt),
             }
         }
+        let Some(stored) = input.get(in_pos..in_pos + 4) else {
+            return Err(ZlibEnd::Rejects(
+                "the zlib stream ends without its Adler-32 (zune-inflate: insufficient data)",
+            ));
+        };
+        if u32::from_be_bytes([stored[0], stored[1], stored[2], stored[3]]) != adler.value() {
+            return Err(ZlibEnd::Rejects("zlib Adler-32 mismatch"));
+        }
+        Ok((in_pos + 4, produced))
+    }
+}
+
+/// RFC 1950 Adler-32, for the raw-inflate path of [`ZlibScan::end`].
+struct Adler32 {
+    a: u32,
+    b: u32,
+}
+
+impl Default for Adler32 {
+    fn default() -> Self {
+        Self { a: 1, b: 0 }
+    }
+}
+
+impl Adler32 {
+    fn update(&mut self, bytes: &[u8]) {
+        for chunk in bytes.chunks(5552) {
+            for &byte in chunk {
+                self.a += u32::from(byte);
+                self.b += self.a;
+            }
+            self.a %= 65521;
+            self.b %= 65521;
+        }
+    }
+
+    fn value(&self) -> u32 {
+        (self.b << 16) | self.a
     }
 }
 
@@ -1727,6 +1838,8 @@ struct Placed {
     /// Data disposition and its slack, for chunks `decode()` reads.
     data_use: Option<DataUse>,
     detail: Option<String>,
+    /// A note for the coordinate field.
+    coord_note: Option<String>,
 }
 
 /// Merged byte coverage of top-level parts, for placing chunks that may
@@ -1959,8 +2072,21 @@ impl<'a> Chunks<'a> {
             }
         }
         others.sort_unstable();
+        let mut pending: usize = placed
+            .iter()
+            .map(|p| {
+                if p.layout.coord_field.is_empty() {
+                    1
+                } else {
+                    CHUNK_PARTS
+                }
+            })
+            .sum();
         for (target, part, index) in others {
             w.tick()?;
+            if w.inv.parts().len() + pending + CHUNK_PARTS > PART_CAP {
+                return Err(at!(ExrError::LimitExceeded("inventory parts")));
+            }
             let Ok(layout) = read_chunk(self.data, target, self.multipart, headers, None) else {
                 continue;
             };
@@ -1986,11 +2112,13 @@ impl<'a> Chunks<'a> {
                         .clone()
                         .unwrap_or_else(|| "not read by decode()".to_string())
                 };
+            pending += CHUNK_PARTS;
             placed.push(Placed {
                 layout,
                 disposition: SKIPPED,
                 data_use: None,
                 detail: Some(detail),
+                coord_note: None,
             });
         }
 
@@ -2031,12 +2159,21 @@ impl<'a> Chunks<'a> {
         let mut zlib = ZlibScan::new();
         // `Tracking` position (what exr believes) and the real cursor.
         let (mut tracked, mut inner) = (tables_end, tables_end);
-        // Last chunk read per pixel rectangle (position, size), for overwrites:
-        // `decompress_chunk` places a block by its own coordinates, so two
-        // chunks that resolve to the same rectangle write the same pixels.
-        let mut last_for_block: HashMap<(i32, i32, usize, usize), usize> = HashMap::new();
+        // Chunks still showing pixels, per tile index (tiles) or block row
+        // (scan lines), with their rectangles. `decompress_chunk` places a
+        // block by its own coordinates and level (`get_block_data_indices`
+        // never checks the level), so a later chunk with the same index
+        // overwrites an earlier one whose rectangle it contains. Different
+        // indices never overlap: every block is at most one tile in size.
+        type Rect = (i64, i64, i64, i64);
+        let mut live: HashMap<(bool, u64, u64), Vec<(usize, Rect)>> = HashMap::new();
+        let lines = header.compression.scan_lines_per_block() as i64;
+        let y0 = i64::from(header.own_attributes.layer_position.y());
         for target in targets {
             w.tick()?;
+            if w.inv.parts().len() + (read.len() + 1) * CHUNK_PARTS > PART_CAP {
+                return Err(at!(ExrError::LimitExceeded("inventory parts")));
+            }
             let delta = i128::from(target) - i128::from(tracked);
             if delta > 0 && (delta as u64) < SHORT_SKIP {
                 let d = delta as u64;
@@ -2086,6 +2223,7 @@ impl<'a> Chunks<'a> {
                                 disposition: MALFORMED,
                                 data_use: None,
                                 detail: Some(fail(e.reason.clone())),
+                                coord_note: None,
                             });
                         }
                         return Ok((read, Some(fail(e.reason))));
@@ -2100,6 +2238,7 @@ impl<'a> Chunks<'a> {
                         disposition: MALFORMED,
                         data_use: None,
                         detail: Some(detail.clone()),
+                        coord_note: None,
                     });
                     return Ok((read, Some(detail)));
                 }
@@ -2115,6 +2254,7 @@ impl<'a> Chunks<'a> {
                         disposition: MALFORMED,
                         data_use: None,
                         detail: Some(detail.clone()),
+                        coord_note: None,
                     });
                     return Ok((read, Some(detail)));
                 }
@@ -2126,24 +2266,46 @@ impl<'a> Chunks<'a> {
                      seek twice"
                 ));
             }
-            let block = (
-                rect.position.x(),
-                rect.position.y(),
-                rect.size.width(),
-                rect.size.height(),
+            let new_rect: Rect = (
+                i64::from(rect.position.x()),
+                i64::from(rect.position.y()),
+                rect.size.width() as i64,
+                rect.size.height() as i64,
             );
-            if let Some(&earlier) = last_for_block.get(&block) {
-                // The later read overwrites the same pixels.
-                let prev: &mut Placed = &mut read[earlier];
-                prev.data_use = Some(DataUse::Whole(None));
-                prev.disposition = DROPPED;
-                prev.detail = Some(format!(
-                    "{}; overwritten by the chunk at {}, which covers the same pixels",
-                    prev.detail.take().unwrap_or_default(),
-                    layout.start
-                ));
+            let key = match layout.coord {
+                Coord::Tile(t) => (true, t.tile_index.x() as u64, t.tile_index.y() as u64),
+                Coord::Line(_) => (false, 0, new_rect.1 as u64),
+            };
+            let contains = |inner: &Rect| {
+                inner.0 >= new_rect.0
+                    && inner.1 >= new_rect.1
+                    && inner.0 + inner.2 <= new_rect.0 + new_rect.2
+                    && inner.1 + inner.3 <= new_rect.1 + new_rect.3
+            };
+            let slot = live.entry(key).or_default();
+            for &(earlier, ref r) in slot.iter() {
+                if contains(r) {
+                    // The later read overwrites all of these pixels.
+                    let prev: &mut Placed = &mut read[earlier];
+                    prev.data_use = Some(DataUse::Whole(None));
+                    prev.disposition = DROPPED;
+                    prev.detail = Some(format!(
+                        "{}; overwritten by the chunk at {}, which covers all its pixels",
+                        prev.detail.take().unwrap_or_default(),
+                        layout.start
+                    ));
+                }
             }
-            last_for_block.insert(block, read.len());
+            slot.retain(|(_, r)| !contains(r));
+            slot.push((read.len(), new_rect));
+            // `get_block_data_indices`: (y - dataWindow y) / lines per block.
+            let coord_note = match layout.coord {
+                Coord::Line(y) if lines > 1 && (i64::from(y) - y0) % lines != 0 => Some(format!(
+                    "exr divides (y - dataWindow y) by {lines}; the remainder {} is ignored",
+                    (i64::from(y) - y0) % lines
+                )),
+                _ => None,
+            };
             inner = layout.end;
             tracked = tracked.saturating_add(layout.end - layout.start);
             read.push(Placed {
@@ -2151,6 +2313,7 @@ impl<'a> Chunks<'a> {
                 disposition: Disposition::ImageData,
                 data_use: Some(use_),
                 detail: Some(detail),
+                coord_note,
             });
         }
         Ok((read, None))
@@ -2214,13 +2377,16 @@ impl<'a> Chunks<'a> {
             Coord::Line(_) => "y",
             Coord::Tile(_) => "tile coordinates",
         };
-        w.leaf(
-            Some(id),
+        let mut coord = Part::new(
             PartKind::Field,
             name_tag(coord_name),
             p.layout.coord_field.clone(),
             field,
-        )?;
+        );
+        if let Some(note) = &p.coord_note {
+            coord = coord.with_detail(note.clone());
+        }
+        w.push(Some(id), coord)?;
         for (name, f) in &p.layout.size_fields {
             w.leaf(Some(id), PartKind::Field, name_tag(name), f.clone(), field)?;
         }
