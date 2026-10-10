@@ -18,9 +18,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   streams, images, fonts and drawn appearances are `ImageData`; `/Info` is
   `Dropped`; XMP, attachments, JavaScript and actions, thumbnails, outlines
   and unknown keys are `Skipped` with a label. Unread dictionary entries,
-  overwritten duplicate keys, comments, and stream bytes after the first
-  filter's end are child parts. Fuzz target `inventory`, regression seed,
-  mutool/exiftool oracle (`just inventory-oracle DIR`).
+  overwritten duplicate keys (also inside nested direct dictionaries),
+  comments, and stream bytes after the first filter's end (Flate, LZW,
+  ASCIIHex, ASCII85, RunLength, DCT, unfiltered images) are child parts
+  (081abf8, ad5dfe9, 16a6a89). Resources no content operator names are
+  `Skipped` as "unused resource" (d811808). Fuzz target `inventory`,
+  regression seed, mutool/exiftool oracle (`just inventory-oracle DIR`).
 
 ### Fixed
 - `PageSelection::All` is bounded by `Limits::max_pages` before the page-index
