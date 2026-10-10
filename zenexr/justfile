@@ -1,0 +1,18 @@
+# zenexr tasks
+
+# Structural inventory tests: fixtures, both-direction decode mutations
+inventory-test:
+    cargo test -p zenexr --features zencodec --test inventory -- --nocapture
+
+# Inventory checks over EXR corpora (colon-separated directories, never committed),
+# e.g. the OpenEXR sample images cloned to ~/tmp/exr-corpus
+inventory-corpus corpus:
+    ZENEXR_INVENTORY_CORPUS="{{corpus}}" cargo test --release -p zenexr --features zencodec --test inventory corpus -- --nocapture
+
+# Cross-check every attribute's value offset and size against exiftool -v3
+inventory-oracle corpus:
+    INVENTORY_ORACLE_EXIFTOOL="$(command -v exiftool)" ZENEXR_INVENTORY_CORPUS="{{corpus}}" cargo test --release -p zenexr --features zencodec --test inventory exiftool_oracle -- --nocapture
+
+# Fuzz the inventory (nightly + cargo-fuzz)
+fuzz-inventory seconds="600":
+    cd fuzz && cargo +nightly fuzz run --target x86_64-unknown-linux-gnu inventory -- -max_total_time={{seconds}} -dict=exr.dict

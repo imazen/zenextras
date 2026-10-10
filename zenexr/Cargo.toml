@@ -15,3 +15,16 @@ zenpixels = { version = ">=0.2.14, <0.4.0", default-features = false }
 enough = { version = "0.4.4", default-features = false }
 whereat = { version = "0.1.5", default-features = false }
 thiserror = { version = "2.0.21", default-features = false }
+# `zencodec` feature: structural byte map (`ExrDecoderConfig::inventory`).
+zencodec = { version = ">=0.1.27, <0.3.0", optional = true, default-features = false }
+# Finds where a ZIP/PXR24 zlib stream ends inside a chunk. The same 0.8 line
+# `exr` already depends on, so no second copy enters the graph.
+miniz_oxide = { version = "0.8.9", optional = true, default-features = false }
+
+[features]
+# Structural inventory (`ExrDecoderConfig::inventory`) as a `zencodec::inventory::Inventory`.
+zencodec = ["dep:zencodec", "dep:miniz_oxide"]
+
+[[example]]
+name = "inventory_dump"
+required-features = ["zencodec"]

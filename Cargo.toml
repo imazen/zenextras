@@ -14,3 +14,8 @@ hayro-syntax = { git = "https://github.com/lilith/hayro", rev = "beec7225f7f8cec
 
 # Pinned TIFF scratch-buffer resource-limit fork used by zentiff.
 tiff = { git = "https://github.com/lilith/image-tiff", rev = "ad468f42bb5a9a6d8ad3eff062c227e83212e1bc" }
+
+# zencodec PR imazen/zencodec#133 (`feat/inventory`): structural inventory API.
+# Swap for the released zencodec / zencodec-testkit before merging.
+zencodec = { git = "https://github.com/imazen/zencodec", branch = "feat/inventory" }
+zencodec-testkit = { git = "https://github.com/imazen/zencodec", branch = "feat/inventory" }

@@ -51,6 +51,18 @@ Writes `pixels.f32le` (tightly packed, interleaved RGB/RGBA, little-endian IEEE
 source header. Refuses an existing output directory. This example exercises the
 same API intended for zensim's protected-reference content audit.
 
+## Structural inventory
+
+With the `zencodec` feature, `ExrDecoderConfig::inventory` maps every byte of
+a file to the unit that holds it (magic, version, each header attribute and its
+fields, offset tables, chunks, gaps, trailing bytes) and says what `decode`
+does with it, as a `zencodec::inventory::Inventory`. Use it to audit files for
+metadata a decode would not carry: custom attributes, `owner`, `comments`,
+`capDate` and the other standard attributes that reach only `header()` are
+`Dropped`; the preview and lower mip/rip levels are `Skipped`. No pixels are
+decoded. `cargo run -p zenexr --features zencodec --example inventory_dump --
+file.exr` prints one.
+
 ## Development
 
 `cargo test -p zenexr` checks an independent OpenEXR fixture, scanline/tile

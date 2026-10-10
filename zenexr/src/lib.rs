@@ -29,6 +29,9 @@ use zenpixels::{AlphaMode, ColorPrimaries, PixelBuffer, PixelDescriptor};
 
 whereat::define_at_crate_info!();
 
+#[cfg(feature = "zencodec")]
+mod inventory;
+
 /// Errors from the EXR wrapper or its upstream reader.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
@@ -183,6 +186,31 @@ impl ExrDecoderConfig {
         check_stop(stop)?;
         let pixels = image.layer_data.channel_data.pixels;
         Ok(ExrImage { pixels, header })
+    }
+
+    /// Map every byte of `data` to the structural part that holds it and say
+    /// what [`decode`](Self::decode) does with it, without decoding pixels.
+    ///
+    /// Lists the magic number and version field, every header attribute (with
+    /// its name, type, size and value as children, and any value bytes `exr`
+    /// ignores), header terminators, offset tables, chunks (their coordinates,
+    /// sizes and data, and the slack after a ZIP/PXR24 zlib stream), chunks no
+    /// offset table references, gaps and trailing bytes. Dispositions honour
+    /// this config's limits; attributes that reach only the native
+    /// [`ExrImage::header`] are `Dropped`, the preview image and mip/rip levels
+    /// below the largest are `Skipped`. When `decode` would reject the file,
+    /// the parts it never reads say so.
+    ///
+    /// Malformed input still yields an inventory. Errors are cancellation,
+    /// input larger than `max_input_bytes`, and an inventory past
+    /// [`zencodec::inventory::DEFAULT_MAX_PARTS`].
+    #[cfg(feature = "zencodec")]
+    pub fn inventory(
+        &self,
+        data: &[u8],
+        stop: &dyn Stop,
+    ) -> Result<zencodec::inventory::Inventory> {
+        inventory::inventory(self, data, stop)
     }
 
     fn open<'a>(
