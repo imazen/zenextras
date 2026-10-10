@@ -808,9 +808,9 @@ fn corpus_inventories_pass_check_inventory() {
 #[derive(Debug)]
 enum OracleUnit {
     /// A directory: name, declared entry count, (index, dumped offset) of
-    /// its first inline value, and whether it belongs to a TIFF embedded in
-    /// another TIFF's value.
-    Dir(String, u64, Option<(u64, u64)>, bool),
+    /// its first inline value, whether it belongs to a TIFF embedded in
+    /// another TIFF's value, and its entries' tags in order.
+    Dir(String, u64, Option<(u64, u64)>, bool, Vec<u16>),
     /// A tag value: directory, tag, byte count, dumped offset, embedded.
     Value(String, u16, u64, u64, bool),
 }
@@ -864,7 +864,7 @@ fn parse_exiftool_v3(text: &str) -> Vec<OracleUnit> {
             let embedded =
                 second_tiff || parent_embedded || (inside_tiff && name.starts_with("IFD"));
             if is_tiff_dir(&name) {
-                out.push(OracleUnit::Dir(name, n, None, embedded));
+                out.push(OracleUnit::Dir(name, n, None, embedded, Vec::new()));
                 stack.push((depth, out.len() - 1, embedded));
             } else {
                 stack.push((depth, usize::MAX, embedded));
@@ -898,13 +898,16 @@ fn parse_exiftool_v3(text: &str) -> Vec<OracleUnit> {
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(0);
             pending = Some((tag, size));
+            if let OracleUnit::Dir(_, _, _, _, tags) = &mut out[dir_idx] {
+                tags.push(tag);
+            }
             continue;
         }
         if let Some((tag, size)) = pending.take()
             && let Some((hex, _)) = body.split_once(':')
             && let Ok(off) = u64::from_str_radix(hex.trim(), 16)
         {
-            let OracleUnit::Dir(name, _, first, _) = &mut out[dir_idx] else {
+            let OracleUnit::Dir(name, _, first, _, _) = &mut out[dir_idx] else {
                 unreachable!()
             };
             let name = name.clone();
@@ -959,15 +962,32 @@ fn oracle_compare(inv: &Inventory, units: &[OracleUnit]) -> OracleTally {
     }
     headers.sort_unstable();
     headers.dedup();
-    let mut child_count = vec![0u64; parts.len()];
+    // Each IFD's entry tags, in file order.
+    let mut entry_tags: Vec<Vec<(u64, u16)>> = vec![Vec::new(); parts.len()];
     for p in parts {
-        if let Some(id) = p.parent {
-            child_count[id.index()] += 1;
+        if let Some(id) = p.parent
+            && parts[id.index()].kind == PartKind::Ifd
+            && p.kind == PartKind::Field
+            && let PartTag::Code(c) = p.tag
+        {
+            entry_tags[id.index()].push((p.range.start, c as u16));
         }
     }
-    let ifd_at = |at: Option<u64>, n: u64| {
+    for t in &mut entry_tags {
+        t.sort_unstable();
+    }
+    // A directory matches on its entry count and, where exiftool listed
+    // every entry, on its tag sequence.
+    let ifd_at = |at: Option<u64>, n: u64, tags: &[u16]| {
         parts.iter().enumerate().any(|(i, p)| {
-            p.kind == PartKind::Ifd && at.is_none_or(|a| a == p.range.start) && child_count[i] == n
+            p.kind == PartKind::Ifd
+                && at.is_none_or(|a| a == p.range.start)
+                && entry_tags[i].len() as u64 == n
+                && (tags.len() as u64 != n
+                    || entry_tags[i]
+                        .iter()
+                        .map(|&(_, t)| t)
+                        .eq(tags.iter().copied()))
         })
     };
     let mut t = OracleTally::default();
@@ -976,13 +996,13 @@ fn oracle_compare(inv: &Inventory, units: &[OracleUnit]) -> OracleTally {
             let (field_off, count_len, entry_len, inline_cap) =
                 if big { (12, 8, 20, 8) } else { (8, 2, 12, 4) };
             match u {
-                OracleUnit::Dir(_, n, Some((i, off)), _) => {
+                OracleUnit::Dir(_, n, Some((i, off)), _, tags) => {
                     match (base + off).checked_sub(field_off + count_len + i * entry_len) {
-                        Some(at) => ifd_at(Some(at), *n),
+                        Some(at) => ifd_at(Some(at), *n, tags),
                         None => false,
                     }
                 }
-                OracleUnit::Dir(_, n, None, _) => ifd_at(None, *n),
+                OracleUnit::Dir(_, n, None, _, tags) => ifd_at(None, *n, tags),
                 OracleUnit::Value(_, tag, size, off, _) => {
                     let code = PartTag::Code(u32::from(*tag));
                     let at = base + off;
@@ -1003,7 +1023,7 @@ fn oracle_compare(inv: &Inventory, units: &[OracleUnit]) -> OracleTally {
             continue;
         }
         let (what, embedded, off) = match u {
-            OracleUnit::Dir(name, n, first, e) => {
+            OracleUnit::Dir(name, n, first, e, _) => {
                 (format!("{name} ({n} entries)"), *e, first.map(|(_, o)| o))
             }
             OracleUnit::Value(dir, tag, size, off, e) => (
