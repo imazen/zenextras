@@ -8,11 +8,20 @@ fuzz SECONDS="60":
     cargo +nightly fuzz run fuzz_decode -- -max_total_time={{SECONDS}} -dict=fuzz/tiff.dict
     cargo +nightly fuzz run fuzz_probe -- -max_total_time={{SECONDS}} -dict=fuzz/tiff.dict
     cargo +nightly fuzz run fuzz_decode_limits -- -max_total_time={{SECONDS}} -dict=fuzz/tiff.dict
+    cargo +nightly fuzz run inventory -- -max_total_time={{SECONDS}} -dict=fuzz/tiff.dict
 
 # Run tests (default features, includes zencodec)
 test:
     cargo test
     cargo test --features all-codecs
+
+# Structural inventory tests: codec-corpus TIFFs, fixtures, decode-mutation check
+inventory-test:
+    cargo test -p zentiff --features zencodec --test inventory -- --nocapture
+
+# Cross-check the structural inventory against exiftool -v3 on the codec-corpus TIFFs
+inventory-oracle:
+    INVENTORY_ORACLE_EXIFTOOL="$(command -v exiftool)" cargo test -p zentiff --features zencodec --test inventory exiftool_oracle -- --nocapture
 
 # Check all feature permutations
 feature-check:

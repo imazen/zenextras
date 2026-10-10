@@ -74,8 +74,15 @@ fn fuzz_regression() {
         // Mirrors fuzz/fuzz_targets/fuzz_probe.rs.
         .target("probe", |data| {
             let _ = zentiff::probe(data);
-        })
-        .run();
+        });
+    #[cfg(feature = "zencodec")]
+    let report = report.target("inventory", |data| {
+        use zencodec::decode::{DecodeJob, DecoderConfig};
+        let job = zentiff::codec::TiffDecoderCodecConfig::new().job();
+        let inv = job.inventory(data).unwrap().unwrap();
+        inv.validate().unwrap();
+    });
+    let report = report.run();
 
     println!("{report}");
     assert_eq!(
