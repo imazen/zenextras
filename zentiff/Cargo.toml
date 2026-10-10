@@ -87,3 +87,7 @@ harness = false
 [[bench]]
 name = "arm_decode"
 harness = false
+
+[[example]]
+name = "inventory_dump"
+required-features = ["zencodec"]

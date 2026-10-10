@@ -88,7 +88,8 @@ static TIFF_DECODE_CAPS: DecodeCapabilities = DecodeCapabilities::new()
     // Multi-page TIFF: decode reports `ImageSequence::Multi` for >1 IFD.
     .with_multi_image(true)
     .with_enforces_max_pixels(true)
-    .with_enforces_max_memory(true);
+    .with_enforces_max_memory(true)
+    .with_inventory(true);
 
 /// Pixel formats the TIFF encoder accepts.
 ///
@@ -658,6 +659,27 @@ impl<'a> zencodec::decode::DecodeJob<'a> for TiffDecodeJob {
     fn with_orientation(mut self, hint: OrientationHint) -> Self {
         self.orientation = hint;
         self
+    }
+
+    /// Map every byte of `data` without decoding pixels; see
+    /// [`crate::inventory`] for the walk and the dispositions.
+    fn inventory(
+        &self,
+        data: &[u8],
+    ) -> Result<Option<zencodec::inventory::Inventory>, At<CodecError>> {
+        if let Some(stop) = &self.stop {
+            stop.check()
+                .map_err(|e| CodecError::of(at!(TiffError::from(e))))?;
+        }
+        let policy = self.policy.as_ref();
+        let surf = crate::inventory::Surfaced {
+            icc: policy.is_none_or(|p| p.resolve_icc(true)),
+            exif: policy.is_none_or(|p| p.resolve_exif(true)),
+            xmp: policy.is_none_or(|p| p.resolve_xmp(true)),
+        };
+        crate::inventory::inventory(data, surf)
+            .map(Some)
+            .map_err(|e| CodecError::of(at!(TiffError::LimitExceeded(e.to_string()))))
     }
 
     fn probe(&self, data: &[u8]) -> Result<ImageInfo, At<CodecError>> {

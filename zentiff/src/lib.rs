@@ -53,6 +53,8 @@ pub mod codec;
 mod decode;
 mod encode;
 mod error;
+#[cfg(feature = "zencodec")]
+mod inventory;
 
 /// Sweep-plan construction over the encoder knob space (variant-
 /// generation playbook; see `zenjpeg/docs/VARIANT_GENERATION.md`).
