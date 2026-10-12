@@ -61,6 +61,7 @@ static DECODE_DESCRIPTORS: &[PixelDescriptor] = &[
 static JP2_DECODE_CAPS: DecodeCapabilities = DecodeCapabilities::new()
     .with_icc(true)
     .with_cheap_probe(true)
+    .with_inventory(cfg!(feature = "inventory"))
     .with_native_gray(true)
     .with_native_alpha(true)
     .with_enforces_max_pixels(true)
@@ -210,6 +211,29 @@ impl<'a> DecodeJob<'a> for Jp2DecodeJob {
         let mut info = image_to_info(&image);
         apply_policy_to_info(&mut info, self.policy.as_ref());
         Ok(info)
+    }
+
+    #[cfg(feature = "inventory")]
+    fn inventory(
+        &self,
+        data: &[u8],
+    ) -> core::result::Result<zencodec::inventory::Inventory, At<CodecError>> {
+        use whereat::ErrorAtExt;
+        use zencodec::CategorizedError;
+        if let Some(limits) = &self.limits {
+            limits
+                .check_input_size(data.len() as u64)
+                .map_err(Jp2Error::Limit)?;
+        }
+        let stop: &dyn enough::Stop = self
+            .stop
+            .as_ref()
+            .map_or(&enough::Unstoppable as &dyn enough::Stop, |s| s);
+        let keep_icc = self.policy.as_ref().is_none_or(|p| p.resolve_icc(true));
+        crate::inventory::inventory(data, stop, keep_icc).map_err(|e| {
+            CodecError::from_parts(Some("zenjp2"), e.category(), alloc::boxed::Box::new(e))
+                .start_at()
+        })
     }
 
     fn output_info(&self, data: &[u8]) -> core::result::Result<OutputInfo, Self::Error> {
@@ -561,7 +585,7 @@ mod tests {
     fn estimate_decode_resources_scales_with_output() {
         use zencodec::estimate::{ComputeEnvironment, ImageCharacteristics, ThreadingInformation};
         let img = ImageCharacteristics::new(1000, 1000, PixelDescriptor::RGBA8_SRGB);
-        let env = ComputeEnvironment::new().with_cores(8);
+        let env = ComputeEnvironment::conservative().with_cores(8);
         let est = Jp2DecoderConfig::new().estimate_decode_resources(&img, &env);
         // Peak holds output (1000*1000*4 = 4 MB) at least twice plus scratch.
         let output = 1000u64 * 1000 * 4;

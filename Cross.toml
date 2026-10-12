@@ -1,0 +1,4 @@
+# Corpus caches must live in the mounted, writable checkout rather than the
+# cross image's home directory. Pass the caller's relative cache path through.
+[build.env]
+passthrough = ["CODEC_CORPUS_CACHE"]

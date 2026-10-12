@@ -22,6 +22,9 @@ mod alloc_util;
 
 pub mod error;
 
+#[cfg(feature = "inventory")]
+mod inventory;
+
 #[cfg(feature = "zencodec")]
 pub mod codec;
 

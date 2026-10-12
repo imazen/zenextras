@@ -1,5 +1,5 @@
 # zenexr public API — additions from non-default features
-# features: (none)
+# features: inventory,zencodec
 # (regenerated on every `cargo test` by zenutils-apidoc; ZEN_API_DOC=check verifies, =off skips).
 # Encodings: crate-name prefix stripped; auto traits collapse to a
 # count + exceptions; trait impls collapse to one roster line per
@@ -7,4 +7,21 @@
 # impls omitted; re-export duplicates annotated `[also: path]`.
 # DO NOT EDIT BY HAND — commit regenerated changes with the code.
 
-(no additional public surface)
+## summary
+#
+#   inherent methods                            1
+#   enum variants                               2
+#   trait roster entries (type × trait)         2
+#
+# per-module pub lines:
+#   (root)                            3
+
+## items (3 lines)
+
+pub ExrError::Inventory(zencodec::inventory::InventoryError)
+pub ExrError::UnsupportedOperation(zencodec::capabilities::UnsupportedOperation)
+pub fn ExrDecoderConfig::inventory(&self, &[u8], &dyn enough::Stop) -> Result<zencodec::inventory::Inventory>
+
+## trait impls (1 types)
+
+ExrError: From<zencodec::capabilities::UnsupportedOperation>, From<zencodec::inventory::InventoryError>

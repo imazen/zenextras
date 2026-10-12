@@ -6,7 +6,7 @@
 # impls omitted; re-export duplicates annotated `[also: path]`.
 # DO NOT EDIT BY HAND — commit regenerated changes with the code.
 #
-# files: zenpdf.txt 77 lines (supported surface) | zenpdf.features.txt 0 added (features: zencodec) | zenpdf.internal.txt 2 lines (2 hidden + 0 excluded-feature)
+# files: zenpdf.txt 77 lines (supported surface) | zenpdf.features.txt 0 added (features: inventory,zencodec) | zenpdf.internal.txt 2 lines (2 hidden + 0 excluded-feature)
 
 ## summary
 #

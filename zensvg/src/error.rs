@@ -198,6 +198,7 @@ impl fmt::Display for SvgError {
 impl std::error::Error for SvgError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
+            Self::Limit(e) => Some(e),
             #[cfg(feature = "optimize")]
             Self::Io(e) => Some(e),
             _ => None,

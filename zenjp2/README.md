@@ -85,6 +85,9 @@ space.
 |---------|---------|-------------|
 | `std` | Yes | Standard library support |
 | `zencodec` | Yes | zencodec decoder-trait integration |
+| `inventory` | No | Structural byte map through the configured decode job; enables `zencodec` |
+
+[Inventory scope, API audit and validation](docs/metadata-integration.md).
 
 Disable default features for the `no_std + alloc` core (`is_jpeg2000` plus the
 re-exported `hayro_jpeg2000` types).

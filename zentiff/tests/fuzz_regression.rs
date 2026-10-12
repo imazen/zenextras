@@ -55,7 +55,7 @@ fn regression_dir() -> PathBuf {
 /// replaying the full cross-product is free.
 #[test]
 fn fuzz_regression() {
-    let report = RegressionSuite::new(regression_dir())
+    let suite = RegressionSuite::new(regression_dir())
         .min_seeds(TRACKED_SEEDS)
         // Mirrors fuzz/fuzz_targets/fuzz_decode.rs.
         .target("decode", |data| {
@@ -74,8 +74,18 @@ fn fuzz_regression() {
         // Mirrors fuzz/fuzz_targets/fuzz_probe.rs.
         .target("probe", |data| {
             let _ = zentiff::probe(data);
-        })
-        .run();
+        });
+    #[cfg(feature = "inventory")]
+    let suite = suite.target("inventory", |data| {
+        use zencodec::decode::{DecodeJob, DecoderConfig};
+        let inventory = zentiff::codec::TiffDecoderCodecConfig::new()
+            .job()
+            .inventory(data)
+            .unwrap();
+        assert_eq!(inventory.input_len(), data.len() as u64);
+        inventory.validate().unwrap();
+    });
+    let report = suite.run();
 
     println!("{report}");
     assert_eq!(

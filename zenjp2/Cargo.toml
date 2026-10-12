@@ -24,6 +24,7 @@ thiserror = { version = "2.0.21", default-features = false }
 default = ["std", "zencodec"]
 std = []
 zencodec = ["dep:zencodec"]
+inventory = ["zencodec"]
 
 [dev-dependencies]
 zenbench = "0.1.10"
@@ -36,3 +37,23 @@ zencodec-testkit = ">=0.1.0, <0.3.0"
 [[bench]]
 name = "arm_decode"
 harness = false
+
+[[example]]
+name = "inventory"
+required-features = ["inventory"]
+
+[[test]]
+name = "inventory"
+required-features = ["inventory"]
+
+[[test]]
+name = "inventory_review"
+required-features = ["inventory"]
+
+[[test]]
+name = "inventory_oracle"
+required-features = ["inventory"]
+
+[[test]]
+name = "fuzz_regression"
+required-features = ["inventory"]

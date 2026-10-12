@@ -8,6 +8,9 @@ member entries here reference those files.
 
 ### [Unreleased]
 
+- PDF inventory oracle CI now supplies an absolute fixture directory; Cargo
+  runs the test with the package directory as its working directory.
+
 #### Changed
 
 - Dependencies: compatible floors and locks refreshed (root and fuzz locks); hayro 0.8 held (zenpdf's hayro-syntax patch is a pinned 0.7 fork), hayro-jpeg2000 0.4 held (needs Rust 1.92) (bfa914b).
@@ -48,6 +51,16 @@ member entries here reference those files.
   if either crate were split back out.
 
 #### Added
+
+- **`zenexr`**: optional structural inventory from PR 37 (`6a047c5`) and first-stop
+  preservation across parser I/O; see [crate history](zenexr/CHANGELOG.md).
+
+- **`zenpdf`**: default-off PDF inventory and reused PR 33 regression/oracle
+  coverage (`5621438`); see [crate history](zenpdf/CHANGELOG.md).
+
+- **`zensvg`**: default-off configured inventory, shared render checks,
+  typed error causes and reused PR33 validation. See
+  [crate history](zensvg/CHANGELOG.md).
 
 - **`zenexr`**: OpenEXR wrapper around the Rust `exr` crate, with zen pixel
   buffers, source metadata, limits and cancellation. See

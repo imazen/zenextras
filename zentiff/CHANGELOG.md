@@ -6,7 +6,19 @@ semantic versioning.
 
 ## [Unreleased]
 
+- Keep inventory part-count failures as a typed `InventoryError` with the
+  shared `Resource(Limits(InventoryParts))` category. Synchronize the shared
+  contract revision with the other metadata consumers.
+
 ### Added
+- Default-off `inventory` feature reusing the TIFF walker in zenmeta. The
+  configured decode job reports structural inventory and its capability only
+  when compiled in; disabled calls return `UnsupportedOperation::Inventory`.
+  This is new relative to crates.io zentiff 0.1.2. Reuses PR 30 (`601682d3`)
+  implementation, corpus/oracle tests and minimized regression bytes (`d042afee`).
+- Temporary pinned zencodec/zenmeta development dependency for the replacement
+  metadata PRs; no zenifd or pipeline dependency and no zenmeta types in codec
+  signatures. Existing queued changes below remain separate release concerns.
 - **`tests/fuzz_regression.rs` — the committed crash corpus is now actually
   replayed.** `fuzz/regression/` has carried four minimized seeds
   (`fuzz_decode/`: one crash and the two BigTIFF/GDAL OOM repros;
@@ -36,6 +48,13 @@ semantic versioning.
   count and target name, proving the replay is not vacuous.
 
 ### Fixed
+- Inventory retains the first cancellation reason observed during traversal,
+  including timeouts from a token that later reports no cancellation.
+- Inventory regression coverage now checks the decoder’s architecture-dependent
+  3 MB ICC retention under a 64 MiB limit, plus a 6 MB ICC value dropped on
+  both 32-bit and 64-bit targets. No decoder or inventory behavior changes.
+- Preserve typed limit and unsupported-operation causes in `TiffError::source`,
+  so shared error helpers can recover details through native and dynamic dispatch.
 - Sub-byte unpackers return `TiffError::Truncated` instead of index-panicking
   on a strip buffer shorter than the IFD dims imply; `probe()` runs under the
   default decode limits; EXIF scalar-list writer checks bytes before reserving

@@ -155,6 +155,7 @@ supported through the zencodec trait flow.
 | `deflate` | Yes | DEFLATE/zlib compression |
 | `lzw` | Yes | LZW compression |
 | `zencodec` | No | zencodec encode/decode trait integration |
+| `inventory` | No | Structural byte inventory through the configured decode job; enables `zencodec` |
 | `fax` | No | CCITT fax compression (Group 3/4) |
 | `jpeg` | No | JPEG-in-TIFF compression |
 | `webp` | No | WebP-in-TIFF compression |

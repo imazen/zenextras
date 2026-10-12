@@ -13,3 +13,7 @@
 
 #[path = "integration/truncation_series.rs"]
 mod truncation_series;
+
+#[cfg(feature = "inventory")]
+#[path = "integration/inventory.rs"]
+mod inventory;

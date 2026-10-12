@@ -12,6 +12,27 @@ build:
 test:
     cargo test --workspace
 
+# Both feature states must keep capability and operation results synchronized.
+tiff-metadata-check:
+    cargo test -p zentiff --features zencodec --test inventory_feature
+    cargo test -p zentiff --features inventory --test inventory_feature --test inventory --test fuzz_regression
+    cargo clippy -p zentiff --features inventory --all-targets -- -D warnings
+
+tiff-inventory-oracle:
+    INVENTORY_ORACLE_EXIFTOOL=exiftool cargo test -p zentiff --features inventory --test inventory exiftool_oracle_agrees -- --nocapture
+
+# Validate the inventory target without starting a fuzz campaign.
+tiff-inventory-fuzz-check:
+    cargo check --manifest-path zentiff/fuzz/Cargo.toml --features inventory --bin inventory
+
+tiff-metadata-target-check:
+    cargo check -p zentiff --no-default-features --features inventory --target wasm32-wasip1
+    cargo test -p zentiff --all-features --lib --test fuzz_regression
+
+# Compare the adapter as well as native APIs with the published release.
+tiff-metadata-semver:
+    cargo semver-checks check-release -p zentiff --baseline-version 0.1.2 --default-features --features zencodec --current-features inventory
+
 # Format check
 fmt-check:
     cargo fmt --all -- --check
@@ -22,7 +43,7 @@ fmt:
 
 # Clippy across workspace
 clippy:
-    cargo clippy --workspace --all-targets -- -D warnings
+    cargo clippy --workspace --all-targets --all-features -- -D warnings
 
 # Regenerate the public-API surface snapshots (docs/public-api/, one set per
 # member crate). Needs a nightly toolchain for rustdoc JSON; never run by CI.
@@ -86,3 +107,94 @@ arm-jp2-fixtures source destination:
         MAGICK_THREAD_LIMIT=4 nice -n 19 magick "{{destination}}/cid22-${side}.png" -alpha off -depth 8 "rgb:{{destination}}/cid22-${side}.rgb"
         nice -n 19 opj_compress -i "{{destination}}/cid22-${side}.png" -o "{{destination}}/cid22-${side}.jp2" -r 1 -threads 4
     done
+
+# Run the 32-bit corpus checks with an explicit caller-owned cache and runner.
+tiff-inventory-i686-corpus runner="env":
+    CODEC_CORPUS_CACHE=target/corpus-cache CARGO_TARGET_I686_UNKNOWN_LINUX_GNU_RUNNER="{{runner}}" cargo test -p zentiff --features inventory --test inventory --target i686-unknown-linux-gnu corpus_inventories_pass_check_inventory
+
+# Compare limited ICC retention and the complete inventory suite on both widths.
+tiff-inventory-portability runner="env":
+    CODEC_CORPUS_CACHE=target/corpus-cache cargo test -p zentiff --features inventory --test inventory
+    CODEC_CORPUS_CACHE=target/corpus-cache CARGO_TARGET_I686_UNKNOWN_LINUX_GNU_RUNNER="{{runner}}" cargo test -p zentiff --features inventory --test inventory --target i686-unknown-linux-gnu
+
+# Preserve the cancellation cause captured during inventory traversal.
+tiff-inventory-cancellation:
+    cargo test -p zentiff --features inventory --test inventory mid_walk_cancellation_preserves_the_first_reason
+
+# Reused JPEG 2000 structural, mutation and crash tests with both feature states.
+jp2-metadata-check:
+    cargo test -p zenjp2 --test inventory_feature
+    cargo test -p zenjp2 --features inventory --lib --test inventory --test inventory_review --test inventory_feature --test fuzz_regression
+    cargo clippy -p zenjp2 --features inventory --all-targets -- -D warnings
+    cargo check --manifest-path zenjp2/fuzz/Cargo.toml --bin inventory
+
+jp2-metadata-validation corpus:
+    cargo clippy -p zenjp2 --features inventory --all-targets -- -D warnings
+    cargo check --manifest-path zenjp2/fuzz/Cargo.toml --bin inventory
+    CARGO_TARGET_I686_UNKNOWN_LINUX_GNU_RUNNER=env cargo test -p zenjp2 --features inventory --target i686-unknown-linux-gnu --lib --test inventory --test inventory_review --test inventory_feature --test fuzz_regression
+    INVENTORY_ORACLE_DIR="{{corpus}}" INVENTORY_ORACLE_EXIFTOOL=exiftool cargo test -p zenjp2 --features inventory --test inventory_oracle -- --nocapture
+
+# No registry zenjp2 exists yet; snapshot the current public surface.
+jp2-metadata-api:
+    cargo test -p zenjp2 --doc --features inventory
+    cargo check -p zenjp2 --no-default-features
+    just api-doc
+
+svg-metadata-check:
+    cargo test -p zensvg --no-default-features --test inventory_feature
+    cargo test -p zensvg --features inventory --lib --test inventory_feature --test integration --test review_adversarial --test fuzz_regression
+    cargo clippy -p zensvg --features inventory --all-targets -- -D warnings
+    cargo check --manifest-path zensvg/fuzz/Cargo.toml --bin inventory
+
+# Reuse the structural assertions on 32-bit and an independent XML reader.
+svg-metadata-validation corpus:
+    cargo check --manifest-path zensvg/fuzz/Cargo.toml --bin inventory
+    CARGO_TARGET_I686_UNKNOWN_LINUX_GNU_RUNNER=env cargo test -p zensvg --features inventory --target i686-unknown-linux-gnu --lib --test inventory_feature --test integration --test review_adversarial --test fuzz_regression
+    INVENTORY_ORACLE_XMLLINT=xmllint INVENTORY_ORACLE_SVG_DIR="{{corpus}}" cargo test -p zensvg --features inventory --test integration inventory::oracle_xmllint -- --nocapture
+    cargo test -p zensvg --all-features --doc
+    just api-doc
+
+pdf-metadata-check:
+    cargo test -p zenpdf --lib --tests
+    cargo test -p zenpdf --features inventory --lib --test inventory --test inventory_feature --test fuzz_regression
+    cargo clippy -p zenpdf --all-targets --all-features -- -D warnings
+    cargo check --manifest-path zenpdf/fuzz/Cargo.toml --bin inventory
+
+pdf-metadata-validation corpus report:
+    CARGO_TARGET_I686_UNKNOWN_LINUX_GNU_RUNNER=env cargo test -p zenpdf --features inventory --target i686-unknown-linux-gnu --lib --test inventory --test inventory_feature --test fuzz_regression
+    INVENTORY_ORACLE_MUTOOL=mutool INVENTORY_ORACLE_EXIFTOOL=exiftool INVENTORY_ORACLE_PDF_DIR="{{corpus}}" INVENTORY_ORACLE_REPORT="{{report}}" cargo test -p zenpdf --features inventory --test inventory oracle_mutool_exiftool -- --nocapture
+    cargo test -p zenpdf --all-features --doc
+    just api-doc
+
+pdf-metadata-api:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    baseline=$(cargo read zenpdf==0.2.0 --path-only)
+    RUSTC_BOOTSTRAP=1 cargo rustdoc -p zenpdf --lib --all-features -- -Zunstable-options --output-format json
+    RUSTC_BOOTSTRAP=1 cargo rustdoc --manifest-path "$baseline/Cargo.toml" --target-dir "$PWD/target/published-api/zenpdf-0.2.0" --lib --all-features -- -Zunstable-options --output-format json
+    cargo semver-checks check-release -p zenpdf --current-rustdoc target/doc/zenpdf.json --baseline-rustdoc target/published-api/zenpdf-0.2.0/doc/zenpdf.json --release-type patch
+
+exr-metadata-check:
+    cargo test -p zenexr --features zencodec --test inventory_feature
+    cargo test -p zenexr --features inventory --lib --tests
+    cargo clippy -p zenexr --all-targets --all-features -- -D warnings
+    cargo check --manifest-path zenexr/fuzz/Cargo.toml --bin inventory
+
+exr-metadata-validation corpus:
+    CARGO_TARGET_I686_UNKNOWN_LINUX_GNU_RUNNER=env cargo test -p zenexr --features inventory --target i686-unknown-linux-gnu --lib --tests
+    INVENTORY_ORACLE_EXIFTOOL=exiftool ZENEXR_INVENTORY_CORPUS="{{corpus}}" cargo test -p zenexr --features inventory --test inventory exiftool_oracle_agrees -- --nocapture
+    ZENEXR_INVENTORY_CORPUS="{{corpus}}" cargo test -p zenexr --features inventory --test inventory corpus -- --nocapture
+    cargo test -p zenexr --features inventory --doc
+    just api-doc
+
+pdf-ci-oracle:
+    INVENTORY_ORACLE_MUTOOL=mutool INVENTORY_ORACLE_EXIFTOOL=exiftool INVENTORY_ORACLE_PDF_DIR="{{justfile_directory()}}/zenpdf/tests/fixtures" cargo test -p zenpdf --features inventory --test inventory oracle_mutool_exiftool -- --nocapture
+
+metadata-dependency-check:
+    just tiff-metadata-check
+    just tiff-inventory-fuzz-check
+    cargo check --workspace --all-features
+    cargo check --manifest-path zenexr/fuzz/Cargo.toml --bin inventory
+    cargo check --manifest-path zenjp2/fuzz/Cargo.toml --bin inventory
+    cargo check --manifest-path zensvg/fuzz/Cargo.toml --bin inventory
+    cargo check --manifest-path zenpdf/fuzz/Cargo.toml --bin inventory
