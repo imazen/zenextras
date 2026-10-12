@@ -49,6 +49,10 @@ member entries here reference those files.
 
 #### Added
 
+- **`zensvg`**: default-off configured inventory, shared render checks,
+  typed error causes and reused PR33 validation. See
+  [crate history](zensvg/CHANGELOG.md).
+
 - **`zenexr`**: OpenEXR wrapper around the Rust `exr` crate, with zen pixel
   buffers, source metadata, limits and cancellation. See
   [crate history](zenexr/CHANGELOG.md) and

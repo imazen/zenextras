@@ -10,6 +10,8 @@ mod alloc_util;
 
 pub mod error;
 pub mod format;
+#[cfg(feature = "inventory")]
+mod inventory;
 pub mod render;
 
 pub mod codec;

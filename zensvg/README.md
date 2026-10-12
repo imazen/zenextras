@@ -107,9 +107,12 @@ conservative `estimate_decode_resources`.
 | `std` | Yes | Standard library support |
 | `text` | Yes | Text rendering (loads system fonts) |
 | `optimize` | No | SVG lossless optimization and SVGZ compression |
+| `inventory` | No | Structural byte map under the configured decode job |
 
 The `zencodec` decoder integration is always available (zencodec is a
-non-optional dependency).
+non-optional dependency). With `inventory` disabled, `DecodeJob::inventory`
+returns typed `UnsupportedOperation::Inventory`. See the
+[integration and validation notes](docs/metadata-integration.md).
 
 ## License
 

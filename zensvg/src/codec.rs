@@ -41,7 +41,8 @@ static SVG_DECODE_CAPS: DecodeCapabilities = DecodeCapabilities::new()
     .with_stop(true) // checked before render
     .with_enforces_max_pixels(true)
     .with_enforces_max_memory(true)
-    .with_enforces_max_input_bytes(true);
+    .with_enforces_max_input_bytes(true)
+    .with_inventory(cfg!(feature = "inventory"));
 
 static SVG_DECODE_DESCRIPTORS: &[PixelDescriptor] = &[PixelDescriptor::RGBA8_SRGB];
 
@@ -281,6 +282,41 @@ impl<'a> zencodec::decode::DecodeJob<'a> for SvgDecodeJob {
             return Err(SvgError::ZeroOutputDimensions.into());
         }
         Ok(self.build_image_info(w, h))
+    }
+
+    /// Structural inventory: every element, attribute usvg ignores, comment,
+    /// processing instruction, DOCTYPE item and text run, or the gzip
+    /// framing of an SVGZ file, with what the render path does with it (see
+    /// `crate::inventory`). Honors `max_input_bytes` and the stop token; a
+    /// document the decoder refuses before drawing (usvg's parse, output
+    /// size, limits) draws nothing.
+    #[cfg(feature = "inventory")]
+    fn inventory(&self, data: &[u8]) -> Result<zencodec::inventory::Inventory, At<CodecError>> {
+        use whereat::ErrorAtExt;
+        self.check_input_size(data.len())?;
+        let stop: &dyn Stop = match &self.stop {
+            Some(s) => s,
+            None => &enough::Unstoppable,
+        };
+        // The decoder's own checks before drawing, its render options and
+        // the fonts it would load decide what is drawn.
+        let options = &self.config.render_options;
+        let fonts = crate::inventory::FontLookup::new(options);
+        let job = crate::inventory::Job {
+            stop,
+            options,
+            fonts: &fonts,
+        };
+        match crate::inventory::svg_inventory(data, svg_format(), &job) {
+            Ok(inv) => Ok(inv),
+            Err(crate::inventory::InvError::Stopped(r)) => Err(SvgError::Stopped(r).into()),
+            Err(crate::inventory::InvError::Parts(e)) => Err(CodecError::from_parts(
+                Some("zensvg"),
+                zencodec::CategorizedError::category(&e),
+                Box::new(e),
+            )
+            .start_at()),
+        }
     }
 
     fn output_info(&self, data: &[u8]) -> Result<OutputInfo, At<CodecError>> {

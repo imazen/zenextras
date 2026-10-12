@@ -1,5 +1,5 @@
 # zensvg public API — additions from non-default features
-# features: optimize,std,text
+# features: inventory,optimize,std,text
 # (regenerated on every `cargo test` by zenutils-apidoc; ZEN_API_DOC=check verifies, =off skips).
 # Encodings: crate-name prefix stripped; auto traits collapse to a
 # count + exceptions; trait impls collapse to one roster line per
@@ -12,7 +12,7 @@
 #   pub modules                                 1
 #   pub types (struct/enum/trait/alias)         2
 #   free functions                              2
-#   inherent methods                            6
+#   inherent methods                            8
 #   struct fields                              14
 #   enum variants                               4
 #   trait roster entries (type × trait)         4
@@ -21,11 +21,13 @@
 #
 # per-module pub lines:
 #   (root)                           12
+#   codec                             2
 #   error                             2
 #   optimize                         15
 
-## items (27 lines)
+## items (29 lines)
 
+pub fn codec::SvgDecodeJob::inventory(&self, &[u8]) -> core::result::Result<zencodec::inventory::Inventory, whereat::at::At<zencodec::error::CodecError>>
 pub error::SvgError::Io(std::io::error::Error)
 pub error::SvgError::XmlWrite(alloc::string::String)
 pub mod optimize
@@ -52,6 +54,7 @@ pub OptimizeOptions::svgz: bool
 pub fn optimize::OptimizeOptions::max_compression() -> Self
 pub fn optimize::OptimizeOptions::minify() -> Self
 pub fn optimize::OptimizeOptions::with_max_input_bytes(self, u64) -> Self
+pub fn codec::SvgDecodeJob::inventory(&self, &[u8]) -> core::result::Result<zencodec::inventory::Inventory, whereat::at::At<zencodec::error::CodecError>>
 pub fn optimize(&[u8], &optimize::OptimizeOptions) -> core::result::Result<alloc::vec::Vec<u8>, error::SvgError> [also: optimize]
 
 ## trait impls (2 types)

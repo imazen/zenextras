@@ -139,3 +139,17 @@ jp2-metadata-api:
     cargo test -p zenjp2 --doc --features inventory
     cargo check -p zenjp2 --no-default-features
     just api-doc
+
+svg-metadata-check:
+    cargo test -p zensvg --no-default-features --test inventory_feature
+    cargo test -p zensvg --features inventory --lib --test inventory_feature --test integration --test review_adversarial --test fuzz_regression
+    cargo clippy -p zensvg --features inventory --all-targets -- -D warnings
+    cargo check --manifest-path zensvg/fuzz/Cargo.toml --bin inventory
+
+# Reuse the structural assertions on 32-bit and an independent XML reader.
+svg-metadata-validation corpus:
+    cargo check --manifest-path zensvg/fuzz/Cargo.toml --bin inventory
+    CARGO_TARGET_I686_UNKNOWN_LINUX_GNU_RUNNER=env cargo test -p zensvg --features inventory --target i686-unknown-linux-gnu --lib --test inventory_feature --test integration --test review_adversarial --test fuzz_regression
+    INVENTORY_ORACLE_XMLLINT=xmllint INVENTORY_ORACLE_SVG_DIR="{{corpus}}" cargo test -p zensvg --features inventory --test integration inventory::oracle_xmllint -- --nocapture
+    cargo test -p zensvg --all-features --doc
+    just api-doc

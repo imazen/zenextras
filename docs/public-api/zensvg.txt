@@ -6,7 +6,7 @@
 # impls omitted; re-export duplicates annotated `[also: path]`.
 # DO NOT EDIT BY HAND — commit regenerated changes with the code.
 #
-# files: zensvg.txt 121 lines (supported surface) | zensvg.features.txt 31 added (features: optimize,std,text) | zensvg.internal.txt 1 lines (1 hidden + 0 excluded-feature)
+# files: zensvg.txt 121 lines (supported surface) | zensvg.features.txt 33 added (features: inventory,optimize,std,text) | zensvg.internal.txt 1 lines (1 hidden + 0 excluded-feature)
 
 ## summary
 #
