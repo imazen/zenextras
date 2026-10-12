@@ -43,7 +43,7 @@ fmt:
 
 # Clippy across workspace
 clippy:
-    cargo clippy --workspace --all-targets -- -D warnings
+    cargo clippy --workspace --all-targets --all-features -- -D warnings
 
 # Regenerate the public-API surface snapshots (docs/public-api/, one set per
 # member crate). Needs a nightly toolchain for rustdoc JSON; never run by CI.
@@ -107,3 +107,7 @@ arm-jp2-fixtures source destination:
         MAGICK_THREAD_LIMIT=4 nice -n 19 magick "{{destination}}/cid22-${side}.png" -alpha off -depth 8 "rgb:{{destination}}/cid22-${side}.rgb"
         nice -n 19 opj_compress -i "{{destination}}/cid22-${side}.png" -o "{{destination}}/cid22-${side}.jp2" -r 1 -threads 4
     done
+
+# Run the 32-bit corpus checks with an explicit caller-owned cache and runner.
+tiff-inventory-i686-corpus runner="env":
+    CODEC_CORPUS_CACHE=target/corpus-cache CARGO_TARGET_I686_UNKNOWN_LINUX_GNU_RUNNER="{{runner}}" cargo test -p zentiff --features inventory --test inventory --target i686-unknown-linux-gnu corpus_inventories_pass_check_inventory

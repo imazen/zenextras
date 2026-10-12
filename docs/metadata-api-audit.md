@@ -28,3 +28,10 @@ Validation recipes are in the root justfile. The independent ExifTool run
 compared 154 files and 3166 directory/value units, with no unexplained
 mismatch. This checks byte ranges, not every TIFF interpretation. Decoder
 mutation and policy tests exercise the codec-specific dispositions separately.
+
+Inventory dispositions follow the actual decoder's interpretation, including
+its platform-dependent per-value memory limit (`size_of::<tiff::decoder::ifd::Value>()`).
+A fixed byte-count fixture can be returned as metadata on i686 while exceeding
+the same configured memory limit on x86_64; inventory must reflect that result.
+Cross-container corpus checks require an explicit writable `CODEC_CORPUS_CACHE`;
+the CI job passes this through `Cross.toml` instead of relying on the image's home.
