@@ -413,7 +413,7 @@ checksum = "d107c80dd656e1a2c254dfb1d57ece73b7f515b8a8684c270c23cab68f4a440d"
 [[package]]
 name = "zencodec"
 version = "0.1.27"
-source = "git+https://github.com/imazen/zencodec?rev=73f93f20687f4f3c347954d0774f08163a45ef8c#73f93f20687f4f3c347954d0774f08163a45ef8c"
+source = "git+https://github.com/imazen/zencodec?rev=c1c3292ff10f386191780ad407526951165da47a#c1c3292ff10f386191780ad407526951165da47a"
 dependencies = [
  "almost-enough",
  "enough",
@@ -424,7 +424,7 @@ dependencies = [
 [[package]]
 name = "zenmeta"
 version = "0.1.0"
-source = "git+https://github.com/imazen/zencodec?rev=73f93f20687f4f3c347954d0774f08163a45ef8c#73f93f20687f4f3c347954d0774f08163a45ef8c"
+source = "git+https://github.com/imazen/zencodec?rev=c1c3292ff10f386191780ad407526951165da47a#c1c3292ff10f386191780ad407526951165da47a"
 dependencies = [
  "zencodec",
  "zenpixels",

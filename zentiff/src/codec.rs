@@ -696,9 +696,11 @@ impl<'a> zencodec::decode::DecodeJob<'a> for TiffDecodeJob {
             Err(crate::inventory::Failed::Stopped(r)) => {
                 Err(CodecError::of(at!(TiffError::from(r))))
             }
-            Err(crate::inventory::Failed::Parts(e)) => {
-                Err(CodecError::of(at!(TiffError::LimitExceeded(e.to_string()))))
-            }
+            Err(crate::inventory::Failed::Parts(e)) => Err(at!(CodecError::from_parts(
+                Some("zentiff"),
+                zencodec::CategorizedError::category(&e),
+                alloc::boxed::Box::new(e),
+            ))),
         }
     }
 

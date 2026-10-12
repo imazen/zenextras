@@ -6,6 +6,10 @@ semantic versioning.
 
 ## [Unreleased]
 
+- Keep inventory part-count failures as a typed `InventoryError` with the
+  shared `Resource(Limits(InventoryParts))` category. Synchronize the shared
+  contract revision with the other metadata consumers.
+
 ### Added
 - Default-off `inventory` feature reusing the TIFF walker in zenmeta. The
   configured decode job reports structural inventory and its capability only
