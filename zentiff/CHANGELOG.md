@@ -44,6 +44,9 @@ semantic versioning.
   count and target name, proving the replay is not vacuous.
 
 ### Fixed
+- Inventory regression coverage now checks the decoder’s architecture-dependent
+  3 MB ICC retention under a 64 MiB limit, plus a 6 MB ICC value dropped on
+  both 32-bit and 64-bit targets. No decoder or inventory behavior changes.
 - Preserve typed limit and unsupported-operation causes in `TiffError::source`,
   so shared error helpers can recover details through native and dynamic dispatch.
 - Sub-byte unpackers return `TiffError::Truncated` instead of index-panicking

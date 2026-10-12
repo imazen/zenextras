@@ -111,3 +111,8 @@ arm-jp2-fixtures source destination:
 # Run the 32-bit corpus checks with an explicit caller-owned cache and runner.
 tiff-inventory-i686-corpus runner="env":
     CODEC_CORPUS_CACHE=target/corpus-cache CARGO_TARGET_I686_UNKNOWN_LINUX_GNU_RUNNER="{{runner}}" cargo test -p zentiff --features inventory --test inventory --target i686-unknown-linux-gnu corpus_inventories_pass_check_inventory
+
+# Compare limited ICC retention and the complete inventory suite on both widths.
+tiff-inventory-portability runner="env":
+    CODEC_CORPUS_CACHE=target/corpus-cache cargo test -p zentiff --features inventory --test inventory
+    CODEC_CORPUS_CACHE=target/corpus-cache CARGO_TARGET_I686_UNKNOWN_LINUX_GNU_RUNNER="{{runner}}" cargo test -p zentiff --features inventory --test inventory --target i686-unknown-linux-gnu

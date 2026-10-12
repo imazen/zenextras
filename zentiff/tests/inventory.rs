@@ -1713,28 +1713,47 @@ fn values_over_the_value_limit_are_dropped() {
         }
     }
 
-    // ResourceLimits::with_max_memory lowers decoding_buffer_size.
-    let n = 3_000_000u32;
-    let mut w = W::new();
-    let strip = w.put(&[1, 2, 3, 4]);
-    let icc = w.put(&vec![0x41u8; n as usize]);
-    let mut e = page(strip);
-    e.push(at(34675, 7, n, icc));
-    let ifd0 = w.ifd(&e, 0);
-    w.set_ifd0(ifd0);
-    let data = w.b;
-    let job = || {
-        TiffDecoderCodecConfig::new()
-            .job()
-            .with_limits(zencodec::ResourceLimits::none().with_max_memory(64 << 20))
-    };
-    let inv = job().inventory(&data).unwrap();
-    let v = part(&inv, u64::from(icc)..u64::from(icc) + u64::from(n));
-    assert_eq!(v.disposition(), Disposition::Dropped, "{inv}");
-    assert!(decode_with(job(), &data).unwrap().2[2].is_none());
-    let inv = inventory(&data);
-    let v = part(&inv, u64::from(icc)..u64::from(icc) + u64::from(n));
-    assert_eq!(v.disposition(), Disposition::Metadata(MetadataKind::Icc));
+    // ResourceLimits::with_max_memory lowers decoding_buffer_size. The
+    // backend's Value representation is smaller on i686, so keep the 3 MB
+    // boundary case and a 6 MB value that exceeds the limit on both targets.
+    for (n, surfaced) in [
+        (3_000_000u32, cfg!(target_pointer_width = "32")),
+        (6_000_000u32, false),
+    ] {
+        let mut w = W::new();
+        let strip = w.put(&[1, 2, 3, 4]);
+        let icc = w.put(&vec![0x41u8; n as usize]);
+        let mut e = page(strip);
+        e.push(at(34675, 7, n, icc));
+        let ifd0 = w.ifd(&e, 0);
+        w.set_ifd0(ifd0);
+        let data = w.b;
+        let job = || {
+            TiffDecoderCodecConfig::new()
+                .job()
+                .with_limits(zencodec::ResourceLimits::none().with_max_memory(64 << 20))
+        };
+        let inv = job().inventory(&data).unwrap();
+        inv.validate().unwrap();
+        let v = part(&inv, u64::from(icc)..u64::from(icc) + u64::from(n));
+        let expected = if surfaced {
+            Disposition::Metadata(MetadataKind::Icc)
+        } else {
+            Disposition::Dropped
+        };
+        assert_eq!(v.disposition(), expected, "{n}: {inv}");
+        assert_eq!(
+            decode_with(job(), &data).unwrap().2[2].is_some(),
+            surfaced,
+            "{n}"
+        );
+        if !surfaced {
+            assert!(v.detail().unwrap().contains("per-value limit"));
+        }
+        let inv = inventory(&data);
+        let v = part(&inv, u64::from(icc)..u64::from(icc) + u64::from(n));
+        assert_eq!(v.disposition(), Disposition::Metadata(MetadataKind::Icc));
+    }
 }
 
 /// Under a policy that suppresses EXIF, the EXIF IFD and its pointer are
