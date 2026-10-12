@@ -6,7 +6,7 @@
 # impls omitted; re-export duplicates annotated `[also: path]`.
 # DO NOT EDIT BY HAND — commit regenerated changes with the code.
 #
-# files: zenexr.txt 24 lines (supported surface) | zenexr.features.txt 0 added (features: none) | zenexr.internal.txt 0 lines (0 hidden + 0 excluded-feature)
+# files: zenexr.txt 24 lines (supported surface) | zenexr.features.txt 4 added (features: inventory,zencodec) | zenexr.internal.txt 0 lines (0 hidden + 0 excluded-feature)
 
 ## summary
 #

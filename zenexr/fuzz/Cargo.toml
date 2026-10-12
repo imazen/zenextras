@@ -1,0 +1,31 @@
+[package]
+name = "zenexr-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4.13"
+enough = { version = "0.4.4", default-features = false }
+
+[dependencies.zenexr]
+path = ".."
+features = ["inventory"]
+
+# Prevent this from interfering with workspaces
+[workspace]
+members = ["."]
+
+[patch.crates-io]
+# zencodec PR imazen/zencodec#133 (`feat/inventory`); swap for the release before merge.
+zencodec = { git = "https://github.com/imazen/zencodec", rev = "c1c3292ff10f386191780ad407526951165da47a" }
+
+[[bin]]
+name = "inventory"
+path = "fuzz_targets/inventory.rs"
+test = false
+doc = false
+bench = false

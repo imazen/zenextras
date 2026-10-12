@@ -49,6 +49,9 @@ member entries here reference those files.
 
 #### Added
 
+- **`zenexr`**: optional structural inventory from PR 37 (`6a047c5`) and first-stop
+  preservation across parser I/O; see [crate history](zenexr/CHANGELOG.md).
+
 - **`zenpdf`**: default-off PDF inventory and reused PR 33 regression/oracle
   coverage (`5621438`); see [crate history](zenpdf/CHANGELOG.md).
 

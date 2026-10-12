@@ -56,6 +56,9 @@ jobs:
       - name: Test JPEG 2000 inventory disabled
         run: cargo test -p zenjp2 --test inventory_feature
 
+      - name: Test EXR inventory disabled
+        run: cargo test -p zenexr --features zencodec --test inventory_feature
+
       - name: Test PDF inventory disabled
         run: cargo test -p zenpdf --test inventory_feature
 
@@ -94,6 +97,9 @@ jobs:
 
       - name: Test JPEG 2000 inventory (i686/QEMU)
         run: cross test -p zenjp2 --features inventory --target i686-unknown-linux-gnu --lib --test inventory --test inventory_review --test inventory_feature --test fuzz_regression
+
+      - name: Test EXR inventory (i686/QEMU)
+        run: cross test -p zenexr --features inventory --target i686-unknown-linux-gnu --lib --tests
 
       - name: Test PDF inventory (i686/QEMU)
         run: cross test -p zenpdf --features inventory --target i686-unknown-linux-gnu --lib --test inventory --test inventory_feature --test fuzz_regression

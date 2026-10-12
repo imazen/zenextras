@@ -1881,8 +1881,10 @@ version = "0.1.0"
 dependencies = [
  "enough",
  "exr",
+ "miniz_oxide 0.8.9",
  "thiserror",
  "whereat",
+ "zencodec",
  "zenpixels",
 ]
 

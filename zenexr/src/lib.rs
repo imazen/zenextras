@@ -29,6 +29,9 @@ use zenpixels::{AlphaMode, ColorPrimaries, PixelBuffer, PixelDescriptor};
 
 whereat::define_at_crate_info!();
 
+#[cfg(feature = "inventory")]
+mod inventory;
+
 /// Errors from the EXR wrapper or its upstream reader.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
@@ -42,6 +45,14 @@ pub enum ExrError {
     /// An input, output or pixel-count bound was exceeded.
     #[error("EXR limit exceeded: {0}")]
     LimitExceeded(&'static str),
+    /// The requested operation is not compiled into this build.
+    #[cfg(feature = "zencodec")]
+    #[error("EXR unsupported operation: {0}")]
+    UnsupportedOperation(#[from] zencodec::UnsupportedOperation),
+    /// A structural inventory limit or invariant failed.
+    #[cfg(feature = "zencodec")]
+    #[error("EXR inventory: {0}")]
+    Inventory(#[from] zencodec::inventory::InventoryError),
     /// The fallible output allocation could not be satisfied.
     #[error("EXR output allocation failed")]
     Allocation,
@@ -121,6 +132,8 @@ impl ExrDecoderConfig {
     /// Read and validate this wrapper's layout/size contract without decoding
     /// pixel blocks. Compression support and pixel integrity are checked by decode.
     pub fn probe(&self, data: &[u8], stop: &dyn Stop) -> Result<Header> {
+        let latched = LatchedStop::new(stop);
+        let stop: &dyn Stop = &latched;
         let chunks = self.open(data, stop)?;
         self.layout(chunks.headers())?;
         check_stop(stop)?;
@@ -130,6 +143,8 @@ impl ExrDecoderConfig {
     /// Decode the largest resolution of a single flat RGB/RGBA part. All format
     /// parsing and compression handling are delegated to `exr`; errors propagate.
     pub fn decode(&self, data: &[u8], stop: &dyn Stop) -> Result<ExrImage> {
+        let latched = LatchedStop::new(stop);
+        let stop: &dyn Stop = &latched;
         let chunks = self.open(data, stop)?;
         let (width, height, channels, _bytes) = self.layout(chunks.headers())?;
         let header = chunks.headers()[0].clone();
@@ -183,6 +198,41 @@ impl ExrDecoderConfig {
         check_stop(stop)?;
         let pixels = image.layer_data.channel_data.pixels;
         Ok(ExrImage { pixels, header })
+    }
+
+    /// Map every byte of `data` to the structural part that holds it and say
+    /// what [`decode`](Self::decode) does with it, without decoding pixels.
+    ///
+    /// Lists the magic number and version field, every header attribute (with
+    /// its name, type, size and value as children, and any value bytes `exr`
+    /// ignores), header terminators, offset tables, chunks (their coordinates,
+    /// sizes and data, and the slack after a ZIP/PXR24 zlib stream), chunks no
+    /// offset table references, gaps and trailing bytes. Dispositions honour
+    /// this config's limits; attributes that reach only the native
+    /// [`ExrImage::header`] are `Dropped`, the preview image and mip/rip levels
+    /// below the largest are `Skipped`. When `decode` would reject the file,
+    /// the parts it never reads say so.
+    ///
+    /// Malformed input still yields an inventory. Errors are cancellation,
+    /// input larger than `max_input_bytes`, and an inventory past
+    /// [`zencodec::inventory::DEFAULT_MAX_PARTS`].
+    #[cfg(feature = "zencodec")]
+    pub fn inventory(
+        &self,
+        data: &[u8],
+        stop: &dyn Stop,
+    ) -> Result<zencodec::inventory::Inventory> {
+        #[cfg(feature = "inventory")]
+        {
+            inventory::inventory(self, data, stop)
+        }
+        #[cfg(not(feature = "inventory"))]
+        {
+            let _ = (data, stop);
+            Err(at!(ExrError::UnsupportedOperation(
+                zencodec::UnsupportedOperation::Inventory
+            )))
+        }
     }
 
     fn open<'a>(
@@ -255,6 +305,32 @@ impl ExrDecoderConfig {
             .and_then(|n| usize::try_from(n).ok())
             .ok_or_else(|| at!(ExrError::LimitExceeded("output bytes")))?;
         Ok((width, height, channels, bytes))
+    }
+}
+
+// Upstream I/O errors retain only text; latch the original reason across their
+// error conversion and inventory's rejected-header preflight.
+struct LatchedStop<'a> {
+    source: &'a dyn Stop,
+    reason: std::sync::OnceLock<StopReason>,
+}
+impl<'a> LatchedStop<'a> {
+    fn new(source: &'a dyn Stop) -> Self {
+        Self {
+            source,
+            reason: std::sync::OnceLock::new(),
+        }
+    }
+}
+impl Stop for LatchedStop<'_> {
+    fn check(&self) -> std::result::Result<(), StopReason> {
+        if let Some(reason) = self.reason.get() {
+            return Err(*reason);
+        }
+        match self.source.check() {
+            Ok(()) => Ok(()),
+            Err(reason) => Err(*self.reason.get_or_init(|| reason)),
+        }
     }
 }
 

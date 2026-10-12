@@ -173,3 +173,16 @@ pdf-metadata-api:
     RUSTC_BOOTSTRAP=1 cargo rustdoc -p zenpdf --lib --all-features -- -Zunstable-options --output-format json
     RUSTC_BOOTSTRAP=1 cargo rustdoc --manifest-path "$baseline/Cargo.toml" --target-dir "$PWD/target/published-api/zenpdf-0.2.0" --lib --all-features -- -Zunstable-options --output-format json
     cargo semver-checks check-release -p zenpdf --current-rustdoc target/doc/zenpdf.json --baseline-rustdoc target/published-api/zenpdf-0.2.0/doc/zenpdf.json --release-type patch
+
+exr-metadata-check:
+    cargo test -p zenexr --features zencodec --test inventory_feature
+    cargo test -p zenexr --features inventory --lib --tests
+    cargo clippy -p zenexr --all-targets --all-features -- -D warnings
+    cargo check --manifest-path zenexr/fuzz/Cargo.toml --bin inventory
+
+exr-metadata-validation corpus:
+    CARGO_TARGET_I686_UNKNOWN_LINUX_GNU_RUNNER=env cargo test -p zenexr --features inventory --target i686-unknown-linux-gnu --lib --tests
+    INVENTORY_ORACLE_EXIFTOOL=exiftool ZENEXR_INVENTORY_CORPUS="{{corpus}}" cargo test -p zenexr --features inventory --test inventory exiftool_oracle_agrees -- --nocapture
+    ZENEXR_INVENTORY_CORPUS="{{corpus}}" cargo test -p zenexr --features inventory --test inventory corpus -- --nocapture
+    cargo test -p zenexr --features inventory --doc
+    just api-doc
