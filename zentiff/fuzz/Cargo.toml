@@ -7,7 +7,11 @@ edition = "2024"
 [package.metadata]
 cargo-fuzz = true
 
+[features]
+inventory = ["zentiff/inventory", "dep:zencodec"]
+
 [dependencies]
+zencodec = { version = "0.1.26", optional = true }
 libfuzzer-sys = "0.4.13"
 enough = { version = "0.4.3", default-features = false }
 
@@ -20,6 +24,7 @@ features = ["all-codecs"]
 members = ["."]
 
 [patch.crates-io]
+zencodec = { git = "https://github.com/imazen/zencodec", rev = "73f93f20687f4f3c347954d0774f08163a45ef8c" }
 fax = { path = "../../../fax" }
 
 [[bin]]
@@ -39,6 +44,14 @@ bench = false
 [[bin]]
 name = "fuzz_decode_limits"
 path = "fuzz_targets/fuzz_decode_limits.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "inventory"
+path = "fuzz_targets/inventory.rs"
+required-features = ["inventory"]
 test = false
 doc = false
 bench = false

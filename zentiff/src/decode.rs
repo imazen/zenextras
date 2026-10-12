@@ -228,7 +228,7 @@ impl Default for TiffDecodeConfig {
 /// should never need to exceed the whole-image memory budget, so capping both
 /// at `max_memory_bytes` bounds the per-segment allocations without rejecting
 /// any image that already fits under the pixel/memory cap.
-fn derive_tiff_limits(config: &TiffDecodeConfig) -> tiff::decoder::Limits {
+pub(crate) fn derive_tiff_limits(config: &TiffDecodeConfig) -> tiff::decoder::Limits {
     let mut limits = tiff::decoder::Limits::default();
     if let Some(max_mem) = config.max_memory_bytes {
         // Saturate to usize so we never widen past the platform limit on 32-bit.

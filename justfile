@@ -12,6 +12,23 @@ build:
 test:
     cargo test --workspace
 
+# Both feature states must keep capability and operation results synchronized.
+tiff-metadata-check:
+    cargo test -p zentiff --features zencodec --test inventory_feature
+    cargo test -p zentiff --features inventory --test inventory_feature --test inventory --test fuzz_regression
+    cargo clippy -p zentiff --features inventory --all-targets -- -D warnings
+
+tiff-inventory-oracle:
+    INVENTORY_ORACLE_EXIFTOOL=exiftool cargo test -p zentiff --features inventory --test inventory exiftool_oracle_agrees -- --nocapture
+
+# Validate the inventory target without starting a fuzz campaign.
+tiff-inventory-fuzz-check:
+    cargo check --manifest-path zentiff/fuzz/Cargo.toml --features inventory --bin inventory
+
+tiff-metadata-target-check:
+    cargo check -p zentiff --no-default-features --features inventory --target wasm32-wasip1
+    cargo test -p zentiff --all-features --lib --test fuzz_regression
+
 # Format check
 fmt-check:
     cargo fmt --all -- --check

@@ -7,6 +7,14 @@ semantic versioning.
 ## [Unreleased]
 
 ### Added
+- Default-off `inventory` feature reusing the TIFF walker in zenmeta. The
+  configured decode job reports structural inventory and its capability only
+  when compiled in; disabled calls return `UnsupportedOperation::Inventory`.
+  This is new relative to crates.io zentiff 0.1.2. Reuses PR 30 (`601682d3`)
+  implementation, corpus/oracle tests and minimized regression bytes.
+- Temporary pinned zencodec/zenmeta development dependency for the replacement
+  metadata PRs; no zenifd or pipeline dependency and no zenmeta types in codec
+  signatures. Existing queued changes below remain separate release concerns.
 - **`tests/fuzz_regression.rs` — the committed crash corpus is now actually
   replayed.** `fuzz/regression/` has carried four minimized seeds
   (`fuzz_decode/`: one crash and the two BigTIFF/GDAL OOM repros;
