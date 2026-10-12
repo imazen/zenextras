@@ -56,6 +56,9 @@ jobs:
       - name: Test JPEG 2000 inventory disabled
         run: cargo test -p zenjp2 --test inventory_feature
 
+      - name: Test PDF inventory disabled
+        run: cargo test -p zenpdf --test inventory_feature
+
       - name: Test SVG inventory disabled
         run: cargo test -p zensvg --no-default-features --test inventory_feature
 
@@ -91,6 +94,9 @@ jobs:
 
       - name: Test JPEG 2000 inventory (i686/QEMU)
         run: cross test -p zenjp2 --features inventory --target i686-unknown-linux-gnu --lib --test inventory --test inventory_review --test inventory_feature --test fuzz_regression
+
+      - name: Test PDF inventory (i686/QEMU)
+        run: cross test -p zenpdf --features inventory --target i686-unknown-linux-gnu --lib --test inventory --test inventory_feature --test fuzz_regression
 
       - name: Test SVG inventory (i686/QEMU)
         run: cross test -p zensvg --features inventory --target i686-unknown-linux-gnu --lib --test inventory_feature --test integration --test review_adversarial --test fuzz_regression
@@ -192,3 +198,19 @@ jobs:
         env:
           INVENTORY_ORACLE_EXIFTOOL: exiftool
         run: cargo test -p zentiff --features inventory --test inventory exiftool_oracle_agrees -- --nocapture
+
+  pdf-inventory-oracle:
+    name: PDF inventory independent readers
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install MuPDF and ExifTool
+        run: sudo apt-get update && sudo apt-get install -y mupdf-tools libimage-exiftool-perl
+      - name: Compare PDF objects and metadata
+        env:
+          INVENTORY_ORACLE_MUTOOL: mutool
+          INVENTORY_ORACLE_EXIFTOOL: exiftool
+          INVENTORY_ORACLE_PDF_DIR: zenpdf/tests/fixtures
+        run: cargo test -p zenpdf --features inventory --test inventory oracle_mutool_exiftool -- --nocapture

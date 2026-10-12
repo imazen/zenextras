@@ -49,6 +49,9 @@ member entries here reference those files.
 
 #### Added
 
+- **`zenpdf`**: default-off PDF inventory and reused PR 33 regression/oracle
+  coverage (`5621438`); see [crate history](zenpdf/CHANGELOG.md).
+
 - **`zensvg`**: default-off configured inventory, shared render checks,
   typed error causes and reused PR33 validation. See
   [crate history](zensvg/CHANGELOG.md).

@@ -108,6 +108,7 @@ exposes a pre-render `estimate_decode_resources` and honors the 3-mode
 | Feature | Default | Description |
 |---------|---------|-------------|
 | `zencodec` | Yes | Implements `zencodec::decode::DecoderConfig` for codec-agnostic pipelines |
+| `inventory` | No | Configured object/revision inventory without rasterizing pages |
 
 ## Hardening untrusted PDFs
 

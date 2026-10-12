@@ -34,6 +34,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Default-off configured PDF inventory, reusing PR 33 (`5621438`), with shared
+  render checks and typed input/part-limit/cancellation errors. See
+  [integration and API audit](docs/metadata-integration.md).
+
 - `zencodec::CategorizedError` impl for `PdfError`, mapping every variant to
   the new two-level origin-first `ErrorCategory` (zencodec PR #116:
   `Image`/`Request`/`Resource`/`Policy`/`Lifecycle`/`Io`/`Internal`) so

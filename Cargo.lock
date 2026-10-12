@@ -1915,6 +1915,7 @@ name = "zenpdf"
 version = "0.2.0"
 dependencies = [
  "enough",
+ "flate2",
  "hayro",
  "hayro-syntax",
  "rgb",

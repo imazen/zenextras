@@ -72,6 +72,11 @@ fn pdf_image_format() -> ImageFormat {
     PDF_FORMATS[0]
 }
 
+#[cfg(all(test, feature = "inventory"))]
+pub(crate) fn pdf_format_for_tests() -> ImageFormat {
+    pdf_image_format()
+}
+
 // ---------------------------------------------------------------------------
 // Capabilities
 // ---------------------------------------------------------------------------
@@ -80,7 +85,8 @@ static PDF_DECODE_CAPS: DecodeCapabilities = DecodeCapabilities::new()
     .with_cheap_probe(true)
     .with_native_alpha(true)
     .with_enforces_max_pixels(true)
-    .with_enforces_max_input_bytes(true);
+    .with_enforces_max_input_bytes(true)
+    .with_inventory(cfg!(feature = "inventory"));
 
 // ---------------------------------------------------------------------------
 // DecoderConfig
@@ -231,6 +237,55 @@ impl PdfDecodeJob {
         self.limits.check_input_size(data.len() as u64)?;
         Ok(())
     }
+
+    /// The page this job decodes and its output size, after the checks
+    /// `output_info` and `decoder` run.
+    fn selected_page(&self, data: &[u8]) -> Result<SelectedPage, PdfError> {
+        let count = render::page_count(data)?;
+        let page = self.start_frame.min(count.saturating_sub(1));
+        let (page_w, page_h) = if count > 0 {
+            render::page_dimensions(data, page)?
+        } else {
+            (0.0, 0.0)
+        };
+        let (w, h) = compute_output_dims(&self.config.bounds, page_w, page_h)?;
+        let info = OutputInfo::full_decode(w, h, PixelDescriptor::RGBA8_SRGB);
+        self.check_limits_on_output(&info)?;
+        Ok(SelectedPage {
+            page,
+            count,
+            #[cfg(feature = "inventory")]
+            page_w,
+            #[cfg(feature = "inventory")]
+            page_h,
+            info,
+        })
+    }
+
+    /// Every check that rejects this job before it draws its page: those of
+    /// `decoder`, then those `Decode::decode` runs on the page.
+    #[cfg(feature = "inventory")]
+    fn draw_gate(&self, data: &[u8]) -> Result<(), PdfError> {
+        let s = self.selected_page(data)?;
+        render::check_page(
+            &self.config.bounds,
+            s.page_w,
+            s.page_h,
+            s.page,
+            &render::RenderLimits::default(),
+        )
+    }
+}
+
+/// See [`PdfDecodeJob::selected_page`].
+struct SelectedPage {
+    page: u32,
+    count: u32,
+    #[cfg(feature = "inventory")]
+    page_w: f32,
+    #[cfg(feature = "inventory")]
+    page_h: f32,
+    info: OutputInfo,
 }
 
 impl<'a> zencodec::decode::DecodeJob<'a> for PdfDecodeJob {
@@ -276,19 +331,48 @@ impl<'a> zencodec::decode::DecodeJob<'a> for PdfDecodeJob {
         Ok(info)
     }
 
+    /// Structural inventory: every indirect object, xref section, trailer,
+    /// comment and revision marker, with what the render path does with it
+    /// (see `crate::inventory`). Honors `max_input_bytes`, the stop token and
+    /// the start frame: only the page this job decodes has its content and
+    /// annotations read.
+    #[cfg(feature = "inventory")]
+    fn inventory(&self, data: &[u8]) -> Result<zencodec::inventory::Inventory, At<CodecError>> {
+        self.check_input_size(data)?;
+        use whereat::ErrorAtExt;
+        let stop: &dyn zencodec::enough::Stop = match &self.stop {
+            Some(s) => s,
+            None => &zencodec::enough::Unstoppable,
+        };
+        stop.check()
+            .map_err(|reason| CodecError::new(Some("zenpdf"), reason.into()).start_at())?;
+        // A job the decoder rejects before drawing draws no page.
+        let rejected = self.draw_gate(data).err().map(|e| e.to_string());
+        match crate::inventory::pdf_inventory(
+            data,
+            pdf_image_format(),
+            self.config.render_annotations,
+            self.start_frame,
+            rejected,
+            stop,
+        ) {
+            Ok(inv) => Ok(inv),
+            Err(crate::inventory::InvError::Parts(e)) => Err(CodecError::from_parts(
+                Some("zenpdf"),
+                zencodec::CategorizedError::category(&e),
+                Box::new(e),
+            )
+            .start_at()),
+            Err(crate::inventory::InvError::Stopped(r)) => {
+                use whereat::ErrorAtExt;
+                Err(zencodec::CodecError::new(Some("zenpdf"), r.into()).start_at())
+            }
+        }
+    }
+
     fn output_info(&self, data: &[u8]) -> Result<OutputInfo, At<CodecError>> {
         self.check_input_size(data)?;
-        let count = render::page_count(data)?;
-        let page = self.start_frame.min(count.saturating_sub(1));
-        let (pw, ph) = if count > 0 {
-            render::page_dimensions(data, page)?
-        } else {
-            (0.0, 0.0)
-        };
-        let (w, h) = compute_output_dims(&self.config.bounds, pw, ph)?;
-        let info = OutputInfo::full_decode(w, h, PixelDescriptor::RGBA8_SRGB);
-        self.check_limits_on_output(&info)?;
-        Ok(info)
+        Ok(self.selected_page(data)?.info)
     }
 
     fn decoder(
@@ -297,16 +381,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for PdfDecodeJob {
         _preferred: &[PixelDescriptor],
     ) -> Result<PdfDecoder, At<CodecError>> {
         self.check_input_size(&data)?;
-        let count = render::page_count(&data)?;
-        let page = self.start_frame.min(count.saturating_sub(1));
-        let (pw, ph) = if count > 0 {
-            render::page_dimensions(&data, page)?
-        } else {
-            (0.0, 0.0)
-        };
-        let (w, h) = compute_output_dims(&self.config.bounds, pw, ph)?;
-        let out_info = OutputInfo::full_decode(w, h, PixelDescriptor::RGBA8_SRGB);
-        self.check_limits_on_output(&out_info)?;
+        let SelectedPage { page, count, .. } = self.selected_page(&data)?;
         // Lower the zencodec 3-mode allocation preference onto the crate-internal
         // decoder. zenpdf's raster is produced inside hayro (a transitive
         // allocation this crate does not own), so the preference has no

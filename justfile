@@ -153,3 +153,23 @@ svg-metadata-validation corpus:
     INVENTORY_ORACLE_XMLLINT=xmllint INVENTORY_ORACLE_SVG_DIR="{{corpus}}" cargo test -p zensvg --features inventory --test integration inventory::oracle_xmllint -- --nocapture
     cargo test -p zensvg --all-features --doc
     just api-doc
+
+pdf-metadata-check:
+    cargo test -p zenpdf --lib --tests
+    cargo test -p zenpdf --features inventory --lib --test inventory --test inventory_feature --test fuzz_regression
+    cargo clippy -p zenpdf --all-targets --all-features -- -D warnings
+    cargo check --manifest-path zenpdf/fuzz/Cargo.toml --bin inventory
+
+pdf-metadata-validation corpus report:
+    CARGO_TARGET_I686_UNKNOWN_LINUX_GNU_RUNNER=env cargo test -p zenpdf --features inventory --target i686-unknown-linux-gnu --lib --test inventory --test inventory_feature --test fuzz_regression
+    INVENTORY_ORACLE_MUTOOL=mutool INVENTORY_ORACLE_EXIFTOOL=exiftool INVENTORY_ORACLE_PDF_DIR="{{corpus}}" INVENTORY_ORACLE_REPORT="{{report}}" cargo test -p zenpdf --features inventory --test inventory oracle_mutool_exiftool -- --nocapture
+    cargo test -p zenpdf --all-features --doc
+    just api-doc
+
+pdf-metadata-api:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    baseline=$(cargo read zenpdf==0.2.0 --path-only)
+    RUSTC_BOOTSTRAP=1 cargo rustdoc -p zenpdf --lib --all-features -- -Zunstable-options --output-format json
+    RUSTC_BOOTSTRAP=1 cargo rustdoc --manifest-path "$baseline/Cargo.toml" --target-dir "$PWD/target/published-api/zenpdf-0.2.0" --lib --all-features -- -Zunstable-options --output-format json
+    cargo semver-checks check-release -p zenpdf --current-rustdoc target/doc/zenpdf.json --baseline-rustdoc target/published-api/zenpdf-0.2.0/doc/zenpdf.json --release-type patch
