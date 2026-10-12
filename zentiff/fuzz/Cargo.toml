@@ -24,6 +24,7 @@ features = ["all-codecs"]
 members = ["."]
 
 [patch.crates-io]
+tiff = { git = "https://github.com/lilith/image-tiff", rev = "ad468f42bb5a9a6d8ad3eff062c227e83212e1bc" }
 zencodec = { git = "https://github.com/imazen/zencodec", rev = "73f93f20687f4f3c347954d0774f08163a45ef8c" }
 fax = { path = "../../../fax" }
 

@@ -77,7 +77,7 @@ pub enum TiffError {
     /// [`RequestError::Unsupported`]: zencodec::RequestError::Unsupported
     #[cfg(feature = "zencodec")]
     #[error("unsupported operation: {0}")]
-    Unsupported(zencodec::UnsupportedOperation),
+    Unsupported(#[source] zencodec::UnsupportedOperation),
 
     /// An integer conversion between a TIFF-declared value (a dimension,
     /// offset, or count read from the file) and a platform numeric type failed
@@ -122,7 +122,7 @@ pub enum TiffError {
     /// [`ResourceError::Limits`]: zencodec::ResourceError::Limits
     #[cfg(feature = "zencodec")]
     #[error("resource limit exceeded: {0}")]
-    Limit(zencodec::LimitExceeded),
+    Limit(#[source] zencodec::LimitExceeded),
 
     /// Operation stopped by cooperative cancellation. Delegates its category to
     /// the wrapped [`enough::StopReason`] — carried directly (not re-derived),

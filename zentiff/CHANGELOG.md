@@ -11,7 +11,7 @@ semantic versioning.
   configured decode job reports structural inventory and its capability only
   when compiled in; disabled calls return `UnsupportedOperation::Inventory`.
   This is new relative to crates.io zentiff 0.1.2. Reuses PR 30 (`601682d3`)
-  implementation, corpus/oracle tests and minimized regression bytes.
+  implementation, corpus/oracle tests and minimized regression bytes (`d042afee`).
 - Temporary pinned zencodec/zenmeta development dependency for the replacement
   metadata PRs; no zenifd or pipeline dependency and no zenmeta types in codec
   signatures. Existing queued changes below remain separate release concerns.
@@ -44,6 +44,8 @@ semantic versioning.
   count and target name, proving the replay is not vacuous.
 
 ### Fixed
+- Preserve typed limit and unsupported-operation causes in `TiffError::source`,
+  so shared error helpers can recover details through native and dynamic dispatch.
 - Sub-byte unpackers return `TiffError::Truncated` instead of index-panicking
   on a strip buffer shorter than the IFD dims imply; `probe()` runs under the
   default decode limits; EXIF scalar-list writer checks bytes before reserving

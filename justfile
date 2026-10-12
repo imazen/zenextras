@@ -29,6 +29,10 @@ tiff-metadata-target-check:
     cargo check -p zentiff --no-default-features --features inventory --target wasm32-wasip1
     cargo test -p zentiff --all-features --lib --test fuzz_regression
 
+# Compare the adapter as well as native APIs with the published release.
+tiff-metadata-semver:
+    cargo semver-checks check-release -p zentiff --baseline-version 0.1.2 --default-features --features zencodec --current-features inventory
+
 # Format check
 fmt-check:
     cargo fmt --all -- --check

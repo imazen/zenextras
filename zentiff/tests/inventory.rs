@@ -380,6 +380,7 @@ fn row(p: &Part, depth: u8) -> Row {
 fn every_unit_fixture_passes_check_inventory() {
     let data = every_unit_fixture();
     zencodec_testkit::check_inventory(TiffDecoderCodecConfig::new(), &data).unwrap();
+    zencodec_testkit::check_inventory_dispatch(TiffDecoderCodecConfig::new(), &data).unwrap();
     // The fixture decodes: its inventory describes a real decode.
     let out = zentiff::decode(
         &data,
@@ -2490,4 +2491,51 @@ fn wide_pointer_arrays_are_read_only_as_far_as_the_ifd_cap() {
         })
         .count();
     assert!(noted > 0, "{inv}");
+}
+
+#[test]
+fn configured_limits_and_cancellation_survive_dispatch() {
+    use zencodec::decode::DynDecoderConfig;
+    use zencodec::{CategorizedError, CodecErrorExt, ErrorCategory, LimitExceeded, ResourceLimits};
+    let data = every_unit_fixture();
+    let config = TiffDecoderCodecConfig::new();
+    let limits = ResourceLimits::none().with_max_input_bytes(1);
+    let native = config
+        .clone()
+        .job()
+        .with_limits(limits)
+        .inventory(&data)
+        .unwrap_err();
+    let dynamic: &dyn DynDecoderConfig = &config;
+    let mut erased_job = dynamic.dyn_job();
+    erased_job.set_limits(limits);
+    let erased = erased_job.inventory(&data).unwrap_err();
+    let expected = LimitExceeded::InputSize {
+        actual: data.len() as u64,
+        max: 1,
+    };
+    assert_eq!(native.limit_exceeded(), Some(&expected));
+    assert_eq!(erased.limit_exceeded(), Some(&expected));
+
+    struct Cancelled;
+    impl enough::Stop for Cancelled {
+        fn check(&self) -> Result<(), enough::StopReason> {
+            Err(enough::StopReason::Cancelled)
+        }
+    }
+    let stop = zencodec::StopToken::new(Cancelled);
+    let native = config
+        .clone()
+        .job()
+        .with_stop(stop.clone())
+        .inventory(&data)
+        .unwrap_err();
+    let mut erased_job = dynamic.dyn_job();
+    erased_job.set_stop(stop);
+    let erased = erased_job.inventory(&data).unwrap_err();
+    assert_eq!(
+        native.category(),
+        ErrorCategory::Stopped(enough::StopReason::Cancelled)
+    );
+    assert_eq!(erased.error_category(), Some(native.category()));
 }
