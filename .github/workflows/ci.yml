@@ -53,6 +53,9 @@ jobs:
       - name: Test inventory disabled with zencodec enabled
         run: cargo test -p zentiff --features zencodec --test inventory_feature
 
+      - name: Test JPEG 2000 inventory disabled
+        run: cargo test -p zenjp2 --test inventory_feature
+
       - name: Test (all features)
         run: cargo test --workspace --all-features
 
@@ -82,6 +85,9 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           key: cross-i686
+
+      - name: Test JPEG 2000 inventory (i686/QEMU)
+        run: cross test -p zenjp2 --features inventory --target i686-unknown-linux-gnu --lib --test inventory --test inventory_review --test inventory_feature --test fuzz_regression
 
       - name: Test TIFF inventory (i686/QEMU)
         run: cross test -p zentiff --features inventory --test inventory_feature --test inventory --test fuzz_regression --target i686-unknown-linux-gnu

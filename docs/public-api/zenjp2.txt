@@ -6,7 +6,7 @@
 # impls omitted; re-export duplicates annotated `[also: path]`.
 # DO NOT EDIT BY HAND — commit regenerated changes with the code.
 #
-# files: zenjp2.txt 34 lines (supported surface) | zenjp2.features.txt 0 added (features: std,zencodec) | zenjp2.internal.txt 0 lines (0 hidden + 0 excluded-feature)
+# files: zenjp2.txt 34 lines (supported surface) | zenjp2.features.txt 2 added (features: inventory,std,zencodec) | zenjp2.internal.txt 0 lines (0 hidden + 0 excluded-feature)
 
 ## summary
 #

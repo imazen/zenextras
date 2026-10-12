@@ -6,7 +6,7 @@
 # impls omitted; re-export duplicates annotated `[also: path]`.
 # DO NOT EDIT BY HAND — commit regenerated changes with the code.
 #
-# files: zentiff.txt 111 lines (supported surface) | zentiff.features.txt 31 added (features: all-codecs,deflate,fax,jpeg,lzw,std,webp,zencodec,zstd) | zentiff.internal.txt 19 lines (6 hidden + 38 excluded-feature)
+# files: zentiff.txt 111 lines (supported surface) | zentiff.features.txt 31 added (features: all-codecs,deflate,fax,inventory,jpeg,lzw,std,webp,zencodec,zstd) | zentiff.internal.txt 19 lines (6 hidden + 38 excluded-feature)
 
 ## summary
 #

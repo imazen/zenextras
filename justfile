@@ -120,3 +120,22 @@ tiff-inventory-portability runner="env":
 # Preserve the cancellation cause captured during inventory traversal.
 tiff-inventory-cancellation:
     cargo test -p zentiff --features inventory --test inventory mid_walk_cancellation_preserves_the_first_reason
+
+# Reused JPEG 2000 structural, mutation and crash tests with both feature states.
+jp2-metadata-check:
+    cargo test -p zenjp2 --test inventory_feature
+    cargo test -p zenjp2 --features inventory --lib --test inventory --test inventory_review --test inventory_feature --test fuzz_regression
+    cargo clippy -p zenjp2 --features inventory --all-targets -- -D warnings
+    cargo check --manifest-path zenjp2/fuzz/Cargo.toml --bin inventory
+
+jp2-metadata-validation corpus:
+    cargo clippy -p zenjp2 --features inventory --all-targets -- -D warnings
+    cargo check --manifest-path zenjp2/fuzz/Cargo.toml --bin inventory
+    CARGO_TARGET_I686_UNKNOWN_LINUX_GNU_RUNNER=env cargo test -p zenjp2 --features inventory --target i686-unknown-linux-gnu --lib --test inventory --test inventory_review --test inventory_feature --test fuzz_regression
+    INVENTORY_ORACLE_DIR="{{corpus}}" INVENTORY_ORACLE_EXIFTOOL=exiftool cargo test -p zenjp2 --features inventory --test inventory_oracle -- --nocapture
+
+# No registry zenjp2 exists yet; snapshot the current public surface.
+jp2-metadata-api:
+    cargo test -p zenjp2 --doc --features inventory
+    cargo check -p zenjp2 --no-default-features
+    just api-doc

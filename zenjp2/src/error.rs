@@ -47,7 +47,7 @@ pub enum Jp2Error {
     /// to the wrapped [`zencodec::LimitExceeded`] (preserves the
     /// [`LimitKind`](zencodec::LimitKind)).
     #[cfg(feature = "zencodec")]
-    #[error(transparent)]
+    #[error("{0}")]
     Limit(#[from] zencodec::LimitExceeded),
 
     /// A decode-row-sink error while pushing decoded output through
