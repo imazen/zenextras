@@ -116,3 +116,7 @@ tiff-inventory-i686-corpus runner="env":
 tiff-inventory-portability runner="env":
     CODEC_CORPUS_CACHE=target/corpus-cache cargo test -p zentiff --features inventory --test inventory
     CODEC_CORPUS_CACHE=target/corpus-cache CARGO_TARGET_I686_UNKNOWN_LINUX_GNU_RUNNER="{{runner}}" cargo test -p zentiff --features inventory --test inventory --target i686-unknown-linux-gnu
+
+# Preserve the cancellation cause captured during inventory traversal.
+tiff-inventory-cancellation:
+    cargo test -p zentiff --features inventory --test inventory mid_walk_cancellation_preserves_the_first_reason

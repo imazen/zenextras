@@ -35,3 +35,8 @@ A fixed byte-count fixture can be returned as metadata on i686 while exceeding
 the same configured memory limit on x86_64; inventory must reflect that result.
 Cross-container corpus checks require an explicit writable `CODEC_CORPUS_CACHE`;
 the CI job passes this through `Cross.toml` instead of relying on the image's home.
+
+Cancellation is sampled while traversing IFDs and placing their values. The
+TIFF policy latches the first stop reason instead of re-querying the token
+when constructing the error. The stop-once timeout regression guards this
+contract independently of tokens that remain permanently cancelled.

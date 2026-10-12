@@ -103,6 +103,7 @@ enum Layout {
 struct TiffPolicy<'s> {
     surf: Surfaced,
     stop: &'s dyn enough::Stop,
+    stopped: core::cell::Cell<Option<enough::StopReason>>,
 }
 
 impl Rules for TiffPolicy<'_> {
@@ -122,7 +123,15 @@ impl Rules for TiffPolicy<'_> {
     }
 
     fn cancelled(&self) -> bool {
-        self.stop.should_stop()
+        if self.stopped.get().is_some() {
+            return true;
+        }
+        if let Err(reason) = self.stop.check() {
+            self.stopped.set(Some(reason));
+            true
+        } else {
+            false
+        }
     }
 
     fn ifd(&self, w: &Walk<'_>, ifd: &Ifd) -> Fate {
@@ -806,14 +815,16 @@ pub(crate) fn inventory(
     surf: Surfaced,
     stop: &dyn enough::Stop,
 ) -> Result<Inventory, Failed> {
-    let rules = TiffPolicy { surf, stop };
+    let rules = TiffPolicy {
+        surf,
+        stop,
+        stopped: core::cell::Cell::new(None),
+    };
     let len = data.len() as u64;
     let mut w = walk(data, 0, len, &rules);
     let placement = place(&mut w, &rules, Vec::new());
-    if w.cancelled {
-        return Err(Failed::Stopped(
-            stop.check().err().unwrap_or(enough::StopReason::Cancelled),
-        ));
+    if let Some(reason) = rules.stopped.get() {
+        return Err(Failed::Stopped(reason));
     }
     let gap = if placement.ifd0_ok && placement.budget_hit {
         (
@@ -876,6 +887,7 @@ mod tests {
         let rules = TiffPolicy {
             surf,
             stop: &enough::Unstoppable,
+            stopped: core::cell::Cell::new(None),
         };
         let w = walk(&data, 0, data.len() as u64, &rules);
         let bound = u64::from(n) + 4096 + 1;
