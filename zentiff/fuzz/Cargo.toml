@@ -25,7 +25,7 @@ members = ["."]
 
 [patch.crates-io]
 tiff = { git = "https://github.com/lilith/image-tiff", rev = "ad468f42bb5a9a6d8ad3eff062c227e83212e1bc" }
-zencodec = { git = "https://github.com/imazen/zencodec", rev = "a31a9b680e54d5fea555c44b0d70c65802087df3" }
+zencodec = { git = "https://github.com/imazen/zencodec", rev = "a81daf7605dc63074d4a39757e7b4399057d4a8f" }
 fax = { path = "../../../fax" }
 
 [[bin]]
