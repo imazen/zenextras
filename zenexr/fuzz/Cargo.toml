@@ -21,7 +21,7 @@ members = ["."]
 
 [patch.crates-io]
 # zencodec PR imazen/zencodec#133 (`feat/inventory`); swap for the release before merge.
-zencodec = { git = "https://github.com/imazen/zencodec", rev = "c1c3292ff10f386191780ad407526951165da47a" }
+zencodec = { git = "https://github.com/imazen/zencodec", rev = "a31a9b680e54d5fea555c44b0d70c65802087df3" }
 
 [[bin]]
 name = "inventory"

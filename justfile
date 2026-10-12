@@ -189,3 +189,12 @@ exr-metadata-validation corpus:
 
 pdf-ci-oracle:
     INVENTORY_ORACLE_MUTOOL=mutool INVENTORY_ORACLE_EXIFTOOL=exiftool INVENTORY_ORACLE_PDF_DIR="{{justfile_directory()}}/zenpdf/tests/fixtures" cargo test -p zenpdf --features inventory --test inventory oracle_mutool_exiftool -- --nocapture
+
+metadata-dependency-check:
+    just tiff-metadata-check
+    just tiff-inventory-fuzz-check
+    cargo check --workspace --all-features
+    cargo check --manifest-path zenexr/fuzz/Cargo.toml --bin inventory
+    cargo check --manifest-path zenjp2/fuzz/Cargo.toml --bin inventory
+    cargo check --manifest-path zensvg/fuzz/Cargo.toml --bin inventory
+    cargo check --manifest-path zenpdf/fuzz/Cargo.toml --bin inventory
