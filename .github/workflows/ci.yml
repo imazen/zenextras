@@ -218,5 +218,5 @@ jobs:
         env:
           INVENTORY_ORACLE_MUTOOL: mutool
           INVENTORY_ORACLE_EXIFTOOL: exiftool
-          INVENTORY_ORACLE_PDF_DIR: zenpdf/tests/fixtures
+          INVENTORY_ORACLE_PDF_DIR: ${{ github.workspace }}/zenpdf/tests/fixtures
         run: cargo test -p zenpdf --features inventory --test inventory oracle_mutool_exiftool -- --nocapture

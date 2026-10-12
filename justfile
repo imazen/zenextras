@@ -186,3 +186,6 @@ exr-metadata-validation corpus:
     ZENEXR_INVENTORY_CORPUS="{{corpus}}" cargo test -p zenexr --features inventory --test inventory corpus -- --nocapture
     cargo test -p zenexr --features inventory --doc
     just api-doc
+
+pdf-ci-oracle:
+    INVENTORY_ORACLE_MUTOOL=mutool INVENTORY_ORACLE_EXIFTOOL=exiftool INVENTORY_ORACLE_PDF_DIR="{{justfile_directory()}}/zenpdf/tests/fixtures" cargo test -p zenpdf --features inventory --test inventory oracle_mutool_exiftool -- --nocapture

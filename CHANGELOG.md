@@ -8,6 +8,9 @@ member entries here reference those files.
 
 ### [Unreleased]
 
+- PDF inventory oracle CI now supplies an absolute fixture directory; Cargo
+  runs the test with the package directory as its working directory.
+
 #### Changed
 
 - Dependencies: compatible floors and locks refreshed (root and fuzz locks); hayro 0.8 held (zenpdf's hayro-syntax patch is a pinned 0.7 fork), hayro-jpeg2000 0.4 held (needs Rust 1.92) (bfa914b).
