@@ -468,6 +468,7 @@ fn metadata_web_policy_roundtrip_keeps_icc_orientation_strips_gps() {
     // The filtering happens in `Metadata::filtered` (invoked by
     // with_metadata_policy) — verify GPS is removed there, the rights tag and
     // orientation survive, before anything is encoded.
+    #[allow(deprecated)] // Exercise the published compatibility helper intentionally.
     let filtered = meta.filtered(&MetadataPolicy::Web);
     assert_eq!(filtered.orientation, Orientation::Rotate90);
     {

@@ -201,6 +201,7 @@ metadata-dependency-check:
 
 # Reusable policy/inventory checks for every implemented zencodec adapter.
 shared-contract-check:
+    cargo clippy --workspace --all-targets --all-features -- -D warnings
     cargo fmt -p zentiff -p zenjp2 -p zenpdf -p zensvg -p zenexr
     cargo test -p zentiff -p zenjp2 -p zenpdf -p zensvg --features zentiff/inventory,zenjp2/inventory,zenpdf/inventory,zensvg/inventory --test shared_contracts
     cargo test -p zentiff -p zenjp2 -p zenpdf -p zensvg --features zentiff/zencodec --test shared_contracts
