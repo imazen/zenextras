@@ -229,7 +229,7 @@ Review critical paths before production use.
 
 | | |
 |:--|:--|
-| **Codecs** ¹ | [zenjpeg] · [zenpng] · [zenwebp] · [zengif] · [zenavif] · [zenjxl] · [zenjxl-decoder] · [jxl-encoder] · [zenbitmaps] · [heic] · **zentiff** · [zenpdf] · [zensvg] · [zenjp2] · [zenraw] · [ultrahdr] |
+| **Codecs** ¹ | [zenjpeg] · [zenpng] · [zenwebp] · [zengif] · [zenavif] · [zenjxl] · [zenjxl-decoder] · [jxl-encoder] · [zenbitmaps] · **zentiff** · [zenpdf] · [zensvg] · [zenjp2] · [zenraw] · [ultrahdr] |
 | Codec internals | [zenrav1e] · [rav1d-safe] · [zenravif] · [zenavif-parse] · [zenavif-serialize] |
 | Compression | [zenflate] · [zenzop] · [zenzstd] |
 | Processing | [zenresize] · [zenquant] · [zenblend] · [zenfilters] · [zensally] · [zentone] |
@@ -257,7 +257,6 @@ Review critical paths before production use.
 [zenjxl-decoder]: https://github.com/imazen/zenjxl-decoder
 [jxl-encoder]: https://github.com/imazen/jxl-encoder
 [zenbitmaps]: https://github.com/imazen/zenbitmaps
-[heic]: https://github.com/imazen/heic
 [zenpdf]: https://github.com/imazen/zenextras
 [zensvg]: https://github.com/imazen/zenextras
 [zenjp2]: https://github.com/imazen/zenextras
