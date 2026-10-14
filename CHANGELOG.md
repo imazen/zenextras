@@ -8,6 +8,10 @@ member entries here reference those files.
 
 ### [Unreleased]
 
+### Added
+
+- TIFF, JPEG 2000, SVG and PDF exercise checked policy admission and inventory through the shared testkit with inventory enabled and disabled. TIFF includes strided pixel input. EXR retains native-only inventory tests because it has no zencodec decoder adapter.
+
 - PDF inventory oracle CI now supplies an absolute fixture directory; Cargo
   runs the test with the package directory as its working directory.
 

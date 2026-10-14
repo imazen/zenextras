@@ -198,3 +198,13 @@ metadata-dependency-check:
     cargo check --manifest-path zenjp2/fuzz/Cargo.toml --bin inventory
     cargo check --manifest-path zensvg/fuzz/Cargo.toml --bin inventory
     cargo check --manifest-path zenpdf/fuzz/Cargo.toml --bin inventory
+
+# Reusable policy/inventory checks for every implemented zencodec adapter.
+shared-contract-check:
+    cargo clippy --workspace --all-targets --all-features -- -D warnings
+    cargo fmt -p zentiff -p zenjp2 -p zenpdf -p zensvg -p zenexr
+    cargo test -p zentiff -p zenjp2 -p zenpdf -p zensvg --features zentiff/inventory,zenjp2/inventory,zenpdf/inventory,zensvg/inventory --test shared_contracts
+    cargo test -p zentiff -p zenjp2 -p zenpdf -p zensvg --features zentiff/zencodec --test shared_contracts
+    cargo clippy -p zentiff -p zenjp2 -p zenpdf -p zensvg --features zentiff/inventory,zenjp2/inventory,zenpdf/inventory,zensvg/inventory --test shared_contracts -- -D warnings
+    cargo test -p zenexr --features inventory --test inventory_feature
+    cargo test -p zenexr --features zencodec --test inventory_feature

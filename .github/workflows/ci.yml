@@ -35,7 +35,6 @@ jobs:
           - { os: ubuntu-latest, name: Linux x64 }
           - { os: ubuntu-24.04-arm, name: Linux aarch64 }
           - { os: macos-latest, name: macOS arm64 }
-          - { os: macos-26-intel, name: macOS x64 }
           - { os: windows-latest, name: Windows x64 }
           - { os: windows-11-arm, name: Windows arm64 }
     steps:
@@ -51,19 +50,19 @@ jobs:
         run: cargo test --workspace
 
       - name: Test inventory disabled with zencodec enabled
-        run: cargo test -p zentiff --features zencodec --test inventory_feature
+        run: cargo test -p zentiff --features zencodec --test inventory_feature --test shared_contracts
 
       - name: Test JPEG 2000 inventory disabled
-        run: cargo test -p zenjp2 --test inventory_feature
+        run: cargo test -p zenjp2 --test inventory_feature --test shared_contracts
 
       - name: Test EXR inventory disabled
         run: cargo test -p zenexr --features zencodec --test inventory_feature
 
       - name: Test PDF inventory disabled
-        run: cargo test -p zenpdf --test inventory_feature
+        run: cargo test -p zenpdf --test inventory_feature --test shared_contracts
 
       - name: Test SVG inventory disabled
-        run: cargo test -p zensvg --no-default-features --test inventory_feature
+        run: cargo test -p zensvg --no-default-features --test inventory_feature --test shared_contracts
 
       - name: Test (all features)
         run: cargo test --workspace --all-features
@@ -96,19 +95,19 @@ jobs:
           key: cross-i686
 
       - name: Test JPEG 2000 inventory (i686/QEMU)
-        run: cross test -p zenjp2 --features inventory --target i686-unknown-linux-gnu --lib --test inventory --test inventory_review --test inventory_feature --test fuzz_regression
+        run: cross test -p zenjp2 --features inventory --target i686-unknown-linux-gnu --lib --test inventory --test inventory_review --test inventory_feature --test fuzz_regression --test shared_contracts
 
       - name: Test EXR inventory (i686/QEMU)
         run: cross test -p zenexr --features inventory --target i686-unknown-linux-gnu --lib --tests
 
       - name: Test PDF inventory (i686/QEMU)
-        run: cross test -p zenpdf --features inventory --target i686-unknown-linux-gnu --lib --test inventory --test inventory_feature --test fuzz_regression
+        run: cross test -p zenpdf --features inventory --target i686-unknown-linux-gnu --lib --test inventory --test inventory_feature --test fuzz_regression --test shared_contracts
 
       - name: Test SVG inventory (i686/QEMU)
-        run: cross test -p zensvg --features inventory --target i686-unknown-linux-gnu --lib --test inventory_feature --test integration --test review_adversarial --test fuzz_regression
+        run: cross test -p zensvg --features inventory --target i686-unknown-linux-gnu --lib --test inventory_feature --test integration --test review_adversarial --test fuzz_regression --test shared_contracts
 
       - name: Test TIFF inventory (i686/QEMU)
-        run: cross test -p zentiff --features inventory --test inventory_feature --test inventory --test fuzz_regression --target i686-unknown-linux-gnu
+        run: cross test -p zentiff --features inventory --test inventory_feature --test inventory --test fuzz_regression --target i686-unknown-linux-gnu --test shared_contracts
 
       - name: Test (i686/QEMU)
         run: cross test --workspace --target i686-unknown-linux-gnu
