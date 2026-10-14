@@ -59,6 +59,7 @@ static DECODE_DESCRIPTORS: &[PixelDescriptor] = &[
 // ═══════════════════════════════════════════════════════════════════════════
 
 static JP2_DECODE_CAPS: DecodeCapabilities = DecodeCapabilities::new()
+    .with_incremental(true)
     .with_icc(true)
     .with_cheap_probe(true)
     .with_inventory(cfg!(feature = "inventory"))
@@ -310,6 +311,21 @@ impl<'a> DecodeJob<'a> for Jp2DecodeJob {
         _preferred: &[PixelDescriptor],
     ) -> core::result::Result<Self::AnimationFrameDec, Self::Error> {
         Err(Jp2Error::UnsupportedOperation(zencodec::UnsupportedOperation::AnimationDecode).into())
+    }
+
+    /// Incremental (sans-I/O) decode: the header is reported as soon as it
+    /// probes, and the image decodes through `push_decoder` once the whole
+    /// file is offered. The JPEG 2000 decoder reads its codestream from a complete buffer.
+    fn dyn_incremental_decoder(
+        self,
+        preferred: &[PixelDescriptor],
+    ) -> Result<
+        alloc::boxed::Box<zencodec::decode::DynIncrementalDecoder>,
+        zencodec::decode::BoxedError,
+    > {
+        Ok(zencodec::decode::erase_incremental(
+            zencodec::helpers::WholeFileIncremental::new(self, preferred),
+        ))
     }
 }
 
