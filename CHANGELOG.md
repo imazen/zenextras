@@ -8,6 +8,11 @@ member entries here reference those files.
 
 ### [Unreleased]
 
+### Dependency integration
+
+- Align temporary zencodec/zenmeta/testkit pins with the checked fidelity and operation-matrix contracts (`4fda4391`). Replace coordinated git pins with released versions before publication.
+
+
 ### Added
 
 - TIFF, JPEG 2000, SVG and PDF exercise checked policy admission and inventory through the shared testkit with inventory enabled and disabled. TIFF includes strided pixel input. EXR retains native-only inventory tests because it has no zencodec decoder adapter.
