@@ -6,6 +6,10 @@ semantic versioning.
 
 ## [Unreleased]
 
+### Fixed
+
+- A CICP-only source whose colour needs a profile outside the always-built set (PQ, HLG) was written with no ICC, so readers took it as sRGB. The `zencodec` feature now enables `zenpixels-convert/icc-db`, which serves a profile for every assigned H.273 pair without a CMS, and an encode that still can't get one fails instead of writing the pixels unlabelled. Test: `pq_cicp_only_source_synthesizes_a_pq_icc`.
+
 - Keep inventory part-count failures as a typed `InventoryError` with the
   shared `Resource(Limits(InventoryParts))` category. Synchronize the shared
   contract revision with the other metadata consumers.

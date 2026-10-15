@@ -57,7 +57,9 @@ zstd = ["tiff/zstd"]
 # lib.rs) and `TiffError::Io` always holds a real `std::io::Error` — this just
 # unlocks zencodec's `CodecIoKind::from(&std::io::Error)` so the `Io` category
 # preserves the real `ErrorKind` instead of falling back to `CodecIoKind::opaque()`.
-zencodec = ["dep:zencodec", "dep:zenpixels-convert", "zencodec/std"]
+# `icc-db`: the bundled profiles that let a CICP-only source (PQ, HLG, wide
+# gamut) be written as ICC, TIFF's only colour carrier, without a CMS.
+zencodec = ["dep:zencodec", "dep:zenpixels-convert", "zenpixels-convert/icc-db", "zencodec/std"]
 inventory = ["zencodec", "dep:zenmeta"]
 # Palette TIFF support requires tiff crate's color_map() API, which is
 # not available in tiff 0.11.x (only on git main). Enable this feature

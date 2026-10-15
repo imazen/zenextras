@@ -793,6 +793,42 @@ fn cicp_only_source_synthesizes_icc_on_encode() {
     );
 }
 
+/// A PQ source keeps its transfer: TIFF's only colour carrier is ICC, and
+/// without the bundled profile database PQ got no profile at all (read as sRGB).
+#[test]
+fn pq_cicp_only_source_synthesizes_a_pq_icc() {
+    use zencodec::Cicp;
+
+    let pq = Cicp::new(9, 16, 0, true);
+    let buf = make_rgb8(4, 4);
+    let encoded = TiffEncoderCodecConfig::new()
+        .job()
+        .with_metadata_policy(Metadata::none().with_cicp(pq), MetadataPolicy::PreserveExact)
+        .encoder()
+        .unwrap()
+        .encode(buf.as_slice())
+        .unwrap();
+    let decoded = TiffDecoderCodecConfig::new()
+        .job()
+        .decoder(Cow::Owned(encoded.into_vec()), &[])
+        .unwrap()
+        .decode()
+        .unwrap();
+    let icc = decoded
+        .info()
+        .source_color
+        .icc_profile
+        .clone()
+        .expect("a PQ source needs an ICC in TIFF");
+    let id = zenpixels::icc::identify_common(&icc).expect("a known profile");
+    let cicp = id.to_cicp().expect("CICP for the profile");
+    assert_eq!(
+        (cicp.color_primaries, cicp.transfer_characteristics),
+        (9, 16),
+        "the profile describes BT.2020 PQ"
+    );
+}
+
 #[test]
 fn srgb_cicp_only_source_embeds_no_icc() {
     use zencodec::Cicp;

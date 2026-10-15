@@ -363,7 +363,7 @@ impl TiffCodecEncoder {
         self.check_limits(&pixels)?;
 
         let channel_count = pixels.descriptor().channels() as u8;
-        let encode_meta = lower_metadata(self.metadata.as_ref(), &self.policy, channel_count);
+        let encode_meta = lower_metadata(self.metadata.as_ref(), &self.policy, channel_count)?;
 
         let encoded =
             crate::encode::encode_with_meta(&pixels, &self.config.inner, &encode_meta, stop)?;
@@ -399,9 +399,9 @@ fn lower_metadata(
     meta: Option<&Metadata>,
     policy: &EncodePolicy,
     channel_count: u8,
-) -> crate::encode::TiffEncodeMeta {
+) -> crate::Result<crate::encode::TiffEncodeMeta> {
     let Some(meta) = meta else {
-        return crate::encode::TiffEncodeMeta::default();
+        return Ok(crate::encode::TiffEncodeMeta::default());
     };
 
     // --- Color (ICC) via resolve_color_emit ------------------------------
@@ -422,7 +422,7 @@ fn lower_metadata(
     let icc: Option<Vec<u8>> = if policy.resolve_icc(true) {
         match plan.icc {
             IccDisposition::KeepSource => meta.icc_profile.as_deref().map(|b| b.to_vec()),
-            IccDisposition::SynthesizeFrom(cicp) => synth_icc_from_cicp(cicp),
+            IccDisposition::SynthesizeFrom(cicp) => synth_icc_from_cicp(cicp)?,
             IccDisposition::Drop => None,
             // `IccDisposition` is `#[non_exhaustive]`; a future disposition we
             // don't understand must not emit unknown ICC bytes — drop instead.
@@ -450,12 +450,12 @@ fn lower_metadata(
         o => Some(o.to_exif() as u16),
     };
 
-    crate::encode::TiffEncodeMeta {
+    Ok(crate::encode::TiffEncodeMeta {
         icc,
         xmp,
         exif,
         orientation,
-    }
+    })
 }
 
 /// Materialize an ICC profile for a full CICP (primaries **and** transfer) via
@@ -467,11 +467,19 @@ fn lower_metadata(
 /// returned).
 ///
 /// [`synthesize_icc_for_cicp`]: zenpixels_convert::icc_profiles::synthesize_icc_for_cicp
-fn synth_icc_from_cicp(cicp: Cicp) -> Option<Vec<u8>> {
+fn synth_icc_from_cicp(cicp: Cicp) -> crate::Result<Option<Vec<u8>>> {
     use zenpixels_convert::icc_profiles::SynthesizedIcc;
     match zenpixels_convert::icc_profiles::synthesize_icc_for_cicp(cicp) {
-        SynthesizedIcc::Profile(bytes) => Some(bytes.into_owned()),
-        _ => None,
+        SynthesizedIcc::Profile(bytes) => Ok(Some(bytes.into_owned())),
+        SynthesizedIcc::NotNeeded => Ok(None),
+        // TIFF carries colour only as ICC: writing the pixels without one
+        // would relabel them sRGB.
+        _ => Err(at!(TiffError::Encode(alloc::format!(
+            "no ICC profile for CICP {}/{}/{}; TIFF can carry colour only as ICC",
+            cicp.color_primaries,
+            cicp.transfer_characteristics,
+            cicp.matrix_coefficients
+        )))),
     }
 }
 
