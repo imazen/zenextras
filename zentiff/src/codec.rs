@@ -75,6 +75,7 @@ static TIFF_ENCODE_CAPS: EncodeCapabilities = EncodeCapabilities::new()
     .with_enforces_max_pixels(true);
 
 static TIFF_DECODE_CAPS: DecodeCapabilities = DecodeCapabilities::new()
+    .with_incremental(true)
     .with_cheap_probe(true)
     .with_icc(true)
     .with_exif(true)
@@ -794,6 +795,23 @@ impl<'a> zencodec::decode::DecodeJob<'a> for TiffDecodeJob {
         Err(CodecError::of(at!(TiffError::from(
             zencodec::UnsupportedOperation::AnimationDecode,
         ))))
+    }
+
+    /// Incremental (sans-I/O) decode: the header is reported as soon as it
+    /// probes, and the image decodes through `push_decoder` once the whole
+    /// file is offered. TIFF strips and tiles live at offsets the IFD names,
+    /// so a seekable binding that fetches only the chunks a decode needs is a
+    /// follow-up.
+    fn dyn_incremental_decoder(
+        self,
+        preferred: &[PixelDescriptor],
+    ) -> Result<
+        alloc::boxed::Box<zencodec::decode::DynIncrementalDecoder>,
+        zencodec::decode::BoxedError,
+    > {
+        Ok(zencodec::decode::erase_incremental(
+            zencodec::helpers::WholeFileIncremental::new(self, preferred),
+        ))
     }
 }
 

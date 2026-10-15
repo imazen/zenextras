@@ -36,6 +36,7 @@ fn alloc_pref_from_zencodec(pref: zencodec::AllocPreference) -> AllocPref {
 // ══════════════════════════════════════════════════════════════════════
 
 static SVG_DECODE_CAPS: DecodeCapabilities = DecodeCapabilities::new()
+    .with_incremental(true)
     .with_cheap_probe(true)
     .with_native_alpha(true)
     .with_stop(true) // checked before render
@@ -380,6 +381,18 @@ impl<'a> zencodec::decode::DecodeJob<'a> for SvgDecodeJob {
         _preferred: &[PixelDescriptor],
     ) -> Result<zencodec::Unsupported<At<CodecError>>, At<CodecError>> {
         Err(SvgError::Unsupported(zencodec::UnsupportedOperation::AnimationDecode).into())
+    }
+
+    /// Incremental (sans-I/O) decode: the header is reported as soon as it
+    /// probes, and the image decodes through `push_decoder` once the whole
+    /// file is offered. An SVG document parses as a whole before it renders.
+    fn dyn_incremental_decoder(
+        self,
+        preferred: &[PixelDescriptor],
+    ) -> Result<Box<zencodec::decode::DynIncrementalDecoder>, zencodec::decode::BoxedError> {
+        Ok(zencodec::decode::erase_incremental(
+            zencodec::helpers::WholeFileIncremental::new(self, preferred),
+        ))
     }
 }
 

@@ -11,6 +11,14 @@ semantic versioning.
   contract revision with the other metadata consumers.
 
 ### Added
+- Incremental decode: `dyn_incremental_decoder` returns zencodec's
+  `WholeFileIncremental` and the decode capabilities declare `incremental`, so
+  the zencodec-io drivers (files, streams, async sources) serve TIFF.
+  `HeaderReady` comes as soon as a prefix probes; rows come from
+  `push_decoder` once the whole file is offered. A seekable binding that reads
+  only the strips and tiles a decode needs is a follow-up. `tests/sansio.rs`
+  runs the testkit's incremental contract on encoder-written RGB8, RGBA8,
+  1×1 gray and RGB16 files.
 - Default-off `inventory` feature reusing the TIFF walker in zenmeta. The
   configured decode job reports structural inventory and its capability only
   when compiled in; disabled calls return `UnsupportedOperation::Inventory`.
