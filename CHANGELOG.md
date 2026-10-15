@@ -11,10 +11,12 @@ member entries here reference those files.
 ### Dependency integration
 
 - Align temporary zencodec/zenmeta/testkit pins with the checked fidelity and operation-matrix contracts (`4fda4391`). Replace coordinated git pins with released versions before publication.
+- Pins move to zencodec `44c2ccaf` (zencodec PR 152: the media contracts), a descendant of `4fda4391`; root and fuzz locks re-resolved (the zenpdf and zensvg fuzz locks had drifted to crates.io zencodec 0.1.26, which lacks `inventory`).
 
 
 ### Added
 
+- `zenivf` (new member, unpublished): IVF as a sans-I/O `zencodec-media` `Demuxer` and pull-output `Muxer`. Fourccs map to `CodecId` (AV1, VP9, VP8, H.264, HEVC); extended headers are skipped; a frame count of 0 or all ones is unknown and a declared count must match; signed timestamps; empty, truncated and over-limit packets are typed errors. Packets carry `RandomAccess::Unknown` (IVF records none), so only `SeekScope::Any` seeks are supported, by an index scan with range requests. The muxer streams with an unknown count, or patches the count at `finish` for seekable destinations. Passes the media testkit's demuxer, seek and muxer checks.
 - TIFF, JPEG 2000, SVG and PDF exercise checked policy admission and inventory through the shared testkit with inventory enabled and disabled. TIFF includes strided pixel input. EXR retains native-only inventory tests because it has no zencodec decoder adapter.
 
 - PDF inventory oracle CI now supplies an absolute fixture directory; Cargo
