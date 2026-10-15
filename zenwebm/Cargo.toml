@@ -1,0 +1,26 @@
+[package]
+name = "zenwebm"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+license = "AGPL-3.0-only OR LicenseRef-Imazen-Commercial"
+description = "Sans-I/O WebM demuxer and muxer implementing the zencodec-media container contracts"
+categories = ["multimedia::video", "parser-implementations"]
+keywords = ["webm", "matroska", "av1", "container", "sans-io"]
+repository = "https://github.com/imazen/zenextras"
+include = ["/src/**", "/README.md", "/CHANGELOG.md", "/LICENSE*"]
+# zencodec-media is unpublished.
+publish = false
+
+[dependencies]
+zencodec = { git = "https://github.com/imazen/zencodec", rev = "a8b35aa0de4250ef835782a19f1e91593ee0331d", version = ">=0.1.27, <0.3.0", default-features = false }
+zencodec-media = { git = "https://github.com/imazen/zencodec", rev = "a8b35aa0de4250ef835782a19f1e91593ee0331d", version = "0.1.0" }
+enough = { version = "0.4.4", default-features = false }
+
+[dev-dependencies]
+zencodec-media-testkit = { git = "https://github.com/imazen/zencodec", rev = "a8b35aa0de4250ef835782a19f1e91593ee0331d", version = "0.1.0" }
+zencodec-io = { git = "https://github.com/imazen/zencodec", rev = "a8b35aa0de4250ef835782a19f1e91593ee0331d", version = "0.1.0" }
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
