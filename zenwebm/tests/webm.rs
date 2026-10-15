@@ -711,3 +711,142 @@ fn negative_timestamps_round_trip_through_a_zero_cluster() {
     let pts: Vec<_> = got.iter().map(|p| p.pts().unwrap().ticks()).collect();
     assert_eq!(pts, [-20, 0, 40]);
 }
+
+/// Seeking: the testkit's checks on a muxed file, and exact ordinals and
+/// payloads after a seek compared with a straight demux.
+mod seeking {
+    use super::*;
+    use zencodec_media::container::{Demuxer, SeekMode, SeekScope, SeekStatus, SeekTarget};
+    use zencodec_media_testkit::check_demuxer_seek;
+
+    fn file() -> Vec<u8> {
+        mux(WebmMuxer::new(), &tracks(), &packets(23))
+    }
+
+    #[test]
+    fn the_seek_contract_holds() {
+        let ms = |t| Timestamp::new(t, MS);
+        let targets = [
+            SeekTarget::new(
+                0,
+                ms(500),
+                SeekMode::AtOrBefore,
+                SeekScope::RandomAccessPoints,
+            ),
+            SeekTarget::new(0, ms(510), SeekMode::Nearest, SeekScope::Any),
+            SeekTarget::new(0, ms(0), SeekMode::AtOrAfter, SeekScope::Any),
+            SeekTarget::new(
+                0,
+                ms(790),
+                SeekMode::AtOrAfter,
+                SeekScope::RandomAccessPoints,
+            ),
+            SeekTarget::new(
+                1,
+                Timestamp::new(30_000, opus_clock()),
+                SeekMode::Nearest,
+                SeekScope::Any,
+            ),
+            SeekTarget::new(0, ms(120), SeekMode::AtOrBefore, SeekScope::Any),
+        ];
+        check_demuxer_seek(
+            || WebmDemuxer::new(MediaLimits::default()),
+            &file(),
+            &targets,
+        )
+        .unwrap();
+        // Past the last random-access point there is nothing to land on.
+        let mut dem = WebmDemuxer::new(MediaLimits::default());
+        let f = file();
+        let mut cursor = SliceCursor::new(64);
+        while !matches!(
+            cursor
+                .next(&f, &mut DemuxStage(&mut dem), &Unstoppable)
+                .unwrap()
+                .into_inner(),
+            DemuxEvent::Headers
+        ) {}
+        dem.seek(&SeekTarget::new(
+            0,
+            ms(830),
+            SeekMode::AtOrAfter,
+            SeekScope::RandomAccessPoints,
+        ))
+        .unwrap();
+        let e = loop {
+            match cursor.next(&f, &mut DemuxStage(&mut dem), &Unstoppable) {
+                Ok(y) if y.is_finished() => panic!("scan ended without an answer"),
+                Ok(_) => {}
+                Err(e) => break format!("{e:?}"),
+            }
+        };
+        assert!(e.contains("NoSuchFrame"), "{e}");
+    }
+
+    #[test]
+    fn packets_after_a_seek_are_the_straight_demux_from_there() {
+        let f = file();
+        let (_, all) = demux(&f).unwrap();
+        let mut dem = WebmDemuxer::new(MediaLimits::default());
+        let mut cursor = SliceCursor::new(11);
+        loop {
+            if let DemuxEvent::Headers = cursor
+                .next(&f, &mut DemuxStage(&mut dem), &Unstoppable)
+                .unwrap()
+                .into_inner()
+            {
+                break;
+            }
+        }
+        for (target_ms, mode, scope) in [
+            (400, SeekMode::AtOrBefore, SeekScope::RandomAccessPoints),
+            (680, SeekMode::Nearest, SeekScope::Any),
+            (0, SeekMode::AtOrAfter, SeekScope::Any),
+        ] {
+            let target = SeekTarget::new(0, Timestamp::new(target_ms, MS), mode, scope);
+            let result = match dem.seek(&target).unwrap() {
+                SeekStatus::Positioned(r) => r,
+                _ => loop {
+                    if let DemuxEvent::Seeked(r) = cursor
+                        .next(&f, &mut DemuxStage(&mut dem), &Unstoppable)
+                        .unwrap()
+                        .into_inner()
+                    {
+                        break r;
+                    }
+                },
+            };
+            let mut after = Vec::new();
+            loop {
+                let y = cursor
+                    .next(&f, &mut DemuxStage(&mut dem), &Unstoppable)
+                    .unwrap();
+                let done = y.is_finished();
+                if let DemuxEvent::Packet(p) = y.into_inner() {
+                    after.push(p);
+                }
+                if done {
+                    break;
+                }
+            }
+            // The first packet after the seek is the one reported, with its
+            // true ordinal; everything after it matches the straight demux.
+            let first = after.iter().find(|p| p.track() == 0).unwrap();
+            assert_eq!(
+                first.ordinal(),
+                Some(result.ordinal),
+                "{target_ms} {mode:?}"
+            );
+            let at = all
+                .iter()
+                .position(|p| p.track() == after[0].track() && p.ordinal() == after[0].ordinal())
+                .unwrap();
+            let key = |p: &Packet| (p.track(), p.ordinal(), p.pts(), p.bytes().to_vec());
+            assert_eq!(
+                after.iter().map(key).collect::<Vec<_>>(),
+                all[at..].iter().map(key).collect::<Vec<_>>(),
+                "{target_ms} {mode:?}"
+            );
+        }
+    }
+}

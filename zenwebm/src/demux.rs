@@ -10,7 +10,8 @@ use enough::Stop;
 use zencodec::Cicp;
 use zencodec::time::{FrameDuration, TimeBase, Timestamp};
 use zencodec_media::container::{
-    AccessPattern, DemuxEvent, DemuxProgress, Demuxer, Input, Request, SeekStatus, SeekTarget,
+    AccessPattern, DemuxEvent, DemuxProgress, Demuxer, Input, Request, SeekMode, SeekResult,
+    SeekStatus, SeekTarget,
 };
 use zencodec_media::limits::{MediaLimitExceeded, MediaLimits};
 use zencodec_media::packet::{Discard, Packet, PacketAddition, PacketPayload, RandomAccess};
@@ -34,7 +35,34 @@ enum State {
     Ebml,
     Segment,
     Body,
+    /// A seek is indexing block headers.
+    Scanning,
     Done,
+}
+
+/// One block, as a seek index records it: enough to resume demuxing there.
+#[derive(Clone, Copy, Debug)]
+struct SeekEntry {
+    /// Offset of the SimpleBlock or BlockGroup element.
+    offset: u64,
+    cluster_end: Option<u64>,
+    cluster_ts: i64,
+    track: usize,
+    /// The first frame's timestamp (later frames of a lace have none).
+    pts: i64,
+    key: bool,
+    /// Per-track ordinal of the first frame.
+    ordinal: u64,
+    frames: u64,
+}
+
+/// Where a seek's index scan is.
+#[derive(Debug)]
+struct Scan {
+    pos: u64,
+    /// In a cluster: its end (when known) and Timestamp (once read).
+    cluster: Option<(Option<u64>, Option<i64>)>,
+    ordinals: Vec<u64>,
 }
 
 #[derive(Debug)]
@@ -98,6 +126,13 @@ pub struct WebmDemuxer {
     matroska: bool,
     /// The source length, once a driver told it.
     total: Option<u64>,
+    /// Offset of the first byte of the Segment's data.
+    segment_data: u64,
+    /// Every block's header, built by the first seek.
+    index: Vec<SeekEntry>,
+    index_complete: bool,
+    scan: Option<Scan>,
+    pending_seek: Option<SeekTarget>,
 }
 
 impl WebmDemuxer {
@@ -120,6 +155,11 @@ impl WebmDemuxer {
             pending: VecDeque::new(),
             matroska: false,
             total: None,
+            segment_data: 0,
+            index: Vec::new(),
+            index_complete: false,
+            scan: None,
+            pending_seek: None,
         }
     }
 
@@ -242,6 +282,7 @@ impl WebmDemuxer {
         match h.id {
             id::SEGMENT => {
                 self.pos += h.len as u64;
+                self.segment_data = self.pos;
                 self.segment_end = h.size.map(|s| self.pos + s);
                 self.state = State::Body;
                 self.need(h.len)
@@ -381,6 +422,247 @@ impl WebmDemuxer {
             }
             _ => self.skip(&h, &input),
         }
+    }
+
+    /// Ask for `len` bytes at `pos` during a scan.
+    fn scan_need(&mut self, pos: u64, len: usize) -> Res<DemuxProgress> {
+        if self.total.is_some_and(|t| pos > t) {
+            return err(WebmError::Truncated);
+        }
+        self.requests.push(Request::at_least(pos, len));
+        Ok(DemuxProgress::need(0))
+    }
+
+    /// One step of a seek's index scan: read the element header at the scan
+    /// position and record blocks without reading their payloads.
+    fn scan_step(&mut self, input: Input<'_>) -> Res<DemuxProgress> {
+        let scan = self.scan.as_mut().expect("scanning");
+        if let Some((Some(end), _)) = scan.cluster
+            && end == scan.pos
+        {
+            scan.cluster = None;
+        }
+        let pos = scan.pos;
+        let at_end = self.segment_end == Some(pos)
+            || (input.offset == pos && input.bytes.is_empty() && input.reaches_end());
+        if at_end {
+            self.index_complete = true;
+            self.scan = None;
+            return self.resolve_seek();
+        }
+        if input.offset != pos {
+            return self.scan_need(pos, 32);
+        }
+        let h = match ebml::header(input.bytes).map_err(SessionError::Codec)? {
+            Some(h) => h,
+            None if input.reaches_end() => return err(WebmError::Truncated),
+            None => return self.scan_need(pos, 32),
+        };
+        let scan = self.scan.as_mut().expect("scanning");
+        if scan.cluster.is_some() && id::is_top_level(h.id) {
+            // A top-level element ends a cluster of unknown size.
+            scan.cluster = None;
+        }
+        let Some((cluster_end, cluster_ts)) = scan.cluster else {
+            if h.id == id::CLUSTER {
+                scan.cluster = Some((h.size.map(|s| pos + h.len as u64 + s), None));
+                scan.pos = pos + h.len as u64;
+                return self.scan_need(pos + h.len as u64, 32);
+            }
+            if matches!(h.id, id::EBML | id::SEGMENT) {
+                self.index_complete = true;
+                self.scan = None;
+                return self.resolve_seek();
+            }
+            let total = h
+                .total()
+                .ok_or(SessionError::Codec(WebmError::UnknownSize))?;
+            let next = pos + total;
+            scan.pos = next;
+            return self.scan_need(next, 32);
+        };
+        let total = h
+            .total()
+            .ok_or(SessionError::Codec(WebmError::UnknownSize))?;
+        match h.id {
+            id::TIMESTAMP | id::SIMPLE_BLOCK | id::BLOCK_GROUP => {
+                // A Timestamp's body; a SimpleBlock's head (track number,
+                // timecode, flags, lace count); a BlockGroup whole.
+                let want = match h.id {
+                    id::SIMPLE_BLOCK => total.min(h.len as u64 + 12),
+                    id::BLOCK_GROUP => {
+                        self.limits
+                            .check_packet_bytes(total)
+                            .map_err(SessionError::Limit)?;
+                        total
+                    }
+                    _ => total,
+                };
+                let want =
+                    usize::try_from(want).map_err(|_| SessionError::Codec(WebmError::Overrun))?;
+                if input.bytes.len() < want {
+                    if input.reaches_end() {
+                        return err(WebmError::Truncated);
+                    }
+                    return self.scan_need(pos, want);
+                }
+                let body = &input.bytes[h.len..want];
+                match h.id {
+                    id::TIMESTAMP => {
+                        let ts = ebml::uint(body).map_err(SessionError::Codec)?;
+                        let ts = i64::try_from(ts)
+                            .map_err(|_| SessionError::Codec(WebmError::TimestampOverflow))?;
+                        let scan = self.scan.as_mut().expect("scanning");
+                        scan.cluster = Some((cluster_end, Some(ts)));
+                    }
+                    _ => {
+                        let (head, key_from_group) = if h.id == id::SIMPLE_BLOCK {
+                            (body, None)
+                        } else {
+                            let mut block = None;
+                            let mut referenced = false;
+                            for child in ebml::children(body) {
+                                let (cid, p) = child.map_err(SessionError::Codec)?;
+                                match cid {
+                                    id::BLOCK => block = Some(p),
+                                    id::REFERENCE_BLOCK => referenced = true,
+                                    _ => {}
+                                }
+                            }
+                            (
+                                block.ok_or(SessionError::Codec(WebmError::BadBlock))?,
+                                Some(!referenced),
+                            )
+                        };
+                        let bad = SessionError::Codec(WebmError::BadBlock);
+                        let (number, nlen) = ebml::vint(head, 8, false)
+                            .map_err(SessionError::Codec)?
+                            .ok_or(bad)?;
+                        if head.len() < nlen + 3 {
+                            return err(WebmError::BadBlock);
+                        }
+                        let rel = i16::from_be_bytes([head[nlen], head[nlen + 1]]);
+                        let flags = head[nlen + 2];
+                        let frames = if (flags >> 1) & 3 != 0 {
+                            u64::from(
+                                *head
+                                    .get(nlen + 3)
+                                    .ok_or(SessionError::Codec(WebmError::BadBlock))?,
+                            ) + 1
+                        } else {
+                            1
+                        };
+                        let track = self
+                            .numbers
+                            .iter()
+                            .position(|&n| n == number)
+                            .ok_or(SessionError::Codec(WebmError::UndeclaredTrack))?;
+                        let base = cluster_ts
+                            .ok_or(SessionError::Codec(WebmError::BlockBeforeTimestamp))?;
+                        let pts = base
+                            .checked_add(i64::from(rel))
+                            .ok_or(SessionError::Codec(WebmError::TimestampOverflow))?;
+                        self.limits
+                            .check_table_entries(self.index.len() as u64 + 1)
+                            .map_err(SessionError::Limit)?;
+                        let scan = self.scan.as_mut().expect("scanning");
+                        let ordinal = scan.ordinals[track];
+                        scan.ordinals[track] += frames;
+                        self.index.push(SeekEntry {
+                            offset: pos,
+                            cluster_end,
+                            cluster_ts: base,
+                            track,
+                            pts,
+                            key: key_from_group.unwrap_or(flags & 0x80 != 0),
+                            ordinal,
+                            frames,
+                        });
+                    }
+                }
+            }
+            _ => {}
+        }
+        let next = pos + total;
+        self.scan.as_mut().expect("scanning").pos = next;
+        self.scan_need(next, 32)
+    }
+
+    /// The index entry a seek selects.
+    fn pick(&self, target: &SeekTarget) -> Res<SeekEntry> {
+        let track = target.track as usize;
+        let tb = self.time_base;
+        let t = target.time;
+        let value = |pts: i64| {
+            i128::from(pts) * i128::from(tb.numerator()) * i128::from(t.base().denominator())
+        };
+        let want =
+            i128::from(t.ticks()) * i128::from(t.base().numerator()) * i128::from(tb.denominator());
+        let candidates = self.index.iter().filter(|e| {
+            e.track == track && (e.key || target.scope == zencodec_media::container::SeekScope::Any)
+        });
+        let chosen = match target.mode {
+            SeekMode::Nearest => candidates.min_by(|a, b| {
+                (value(a.pts) - want)
+                    .abs()
+                    .cmp(&(value(b.pts) - want).abs())
+                    .then(a.pts.cmp(&b.pts))
+            }),
+            SeekMode::AtOrBefore => candidates
+                .filter(|e| value(e.pts) <= want)
+                .max_by_key(|e| (e.pts, e.offset)),
+            SeekMode::AtOrAfter => candidates
+                .filter(|e| value(e.pts) >= want)
+                .min_by_key(|e| (e.pts, e.offset)),
+            _ => return Err(SessionError::Unsupported(UnsupportedMedia::Seek)),
+        };
+        chosen
+            .copied()
+            .ok_or(SessionError::Codec(WebmError::NoSuchFrame))
+    }
+
+    /// Resume demuxing at `e`; every track's ordinals continue from there.
+    fn position(&mut self, e: SeekEntry) -> SeekResult {
+        self.pos = e.offset;
+        self.cluster = Some(Cluster {
+            end: e.cluster_end,
+            timestamp: Some(e.cluster_ts),
+        });
+        self.pending.clear();
+        for (t, ord) in self.ordinals.iter_mut().enumerate() {
+            *ord = self
+                .index
+                .iter()
+                .find(|x| x.track == t && x.offset >= e.offset)
+                .map_or_else(
+                    || {
+                        self.index
+                            .iter()
+                            .filter(|x| x.track == t)
+                            .map(|x| x.frames)
+                            .sum()
+                    },
+                    |x| x.ordinal,
+                );
+        }
+        self.state = State::Body;
+        SeekResult::new(
+            Timestamp::new(e.pts, self.time_base),
+            e.ordinal,
+            if e.key {
+                RandomAccess::Yes
+            } else {
+                RandomAccess::No
+            },
+            0,
+        )
+    }
+
+    fn resolve_seek(&mut self) -> Res<DemuxProgress> {
+        let target = self.pending_seek.take().expect("a scan serves a seek");
+        let e = self.pick(&target)?;
+        let r = self.position(e);
+        Ok(DemuxProgress::new(0, DemuxEvent::Seeked(r)))
     }
 
     fn read_info(&mut self, body: &[u8]) -> Res<()> {
@@ -804,6 +1086,7 @@ impl Demuxer for WebmDemuxer {
             State::Ebml => self.ebml_header(input),
             State::Segment => self.segment_header(input),
             State::Body => self.body_step(input),
+            State::Scanning => self.scan_step(input),
             State::Done => Ok(DemuxProgress::new(0, DemuxEvent::Done)),
         }
     }
@@ -820,10 +1103,31 @@ impl Demuxer for WebmDemuxer {
         AccessPattern::Sequential
     }
 
-    fn seek(&mut self, _target: &SeekTarget) -> Res<SeekStatus> {
+    /// Seek by time. The first seek scans every element header from the
+    /// start of the Segment with range requests (block payloads are not
+    /// read; a BlockGroup is, for its ReferenceBlock), indexing each
+    /// block's track, timestamp, key flag and per-track ordinal; later
+    /// seeks use the index. Demuxing resumes at the chosen block, whose
+    /// first frame is the target track's next packet.
+    fn seek(&mut self, target: &SeekTarget) -> Res<SeekStatus> {
         if !self.headers_sent {
             return err(WebmError::HeadersFirst);
         }
-        Err(SessionError::Unsupported(UnsupportedMedia::Seek))
+        if target.track as usize >= self.tracks.len() {
+            return err(WebmError::NoSuchFrame);
+        }
+        if self.index_complete {
+            let e = self.pick(target)?;
+            return Ok(SeekStatus::Positioned(self.position(e)));
+        }
+        self.pending_seek = Some(*target);
+        self.pending.clear();
+        self.scan = Some(Scan {
+            pos: self.segment_data,
+            cluster: None,
+            ordinals: vec![0; self.tracks.len()],
+        });
+        self.state = State::Scanning;
+        Ok(SeekStatus::Scanning)
     }
 }

@@ -92,4 +92,35 @@ PY
     echo "${f%.*}: DECODED FRAMES DIFFER"; fail=1
   fi
 done
+# 3. Seeking: on each file's first stream (video), seek at or before 25%, 50%
+#    and 90% of its packets' times. A random-access seek must land on the
+#    last ffprobe key packet at or before the target, an `any` seek on the
+#    last packet at or before it, and the next packet must be that one.
+(cd "$here" && cargo build -q --release --example webm_seek)
+seek=$(dirname "$remux")/webm_seek
+for f in *.webm *.mkv; do
+  [ -e "$f" ] || continue
+  case $f in *.zen.*) continue ;; esac
+  ffprobe -v error -select_streams 0 -show_entries packet=pts,flags -of csv=p=0 "$f" > "$f.seek.csv"
+  for q in 25 50 90; do
+    for scope in key any; do
+      got=$("$seek" "$f" 0 "$(python3 -c "
+import csv; p=[int(r[0]) for r in csv.reader(open('$f.seek.csv'))]; p.sort(); print(p[len(p)*$q//100])")" \
+        $([ $scope = any ] && echo any) 2>&1) || { echo "$f seek $q% $scope: FAILED ($got)"; fail=1; continue; }
+      if python3 - "$f" "$q" "$scope" "$got" <<'PY'
+import csv, sys
+f, q, scope, got = sys.argv[1], int(sys.argv[2]), sys.argv[3], sys.argv[4]
+rows = [(int(r[0]), "K" in r[1]) for r in csv.reader(open(f + ".seek.csv"))]
+times = sorted(t for t, _ in rows)
+target = times[len(times) * q // 100]
+want = max(t for t, k in rows if t <= target and (k or scope == "any"))
+(landed, _, lk), (nxt, _, nk) = [tuple(int(x) for x in line.split()) for line in got.splitlines()]
+ok = landed == want and nxt == landed and (lk == 1 or scope == "any") and lk == nk
+print(f"{f}: seek {q}% {scope}: target {target}, landed {landed}, ffprobe says {want}" + ("" if ok else "  MISMATCH"))
+sys.exit(0 if ok else 1)
+PY
+      then :; else fail=1; fi
+    done
+  done
+done
 exit $fail

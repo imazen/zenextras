@@ -18,7 +18,10 @@
 //!   [`PacketAddition`](zencodec_media::packet::PacketAddition)s. Tracks
 //!   carry `CodecPrivate`, `CodecDelay`, `SeekPreRoll`, display size and the
 //!   `Colour` element's CICP codes. Compressed or encrypted tracks
-//!   (`ContentEncodings`) are refused rather than passed through.
+//!   (`ContentEncodings`) are refused rather than passed through. Seeking by
+//!   time indexes every block's header once (range requests, no payloads;
+//!   `Cues` are not needed) and resumes at the chosen block with exact
+//!   per-track ordinals.
 //! - [`WebmMuxer`] writes the live profile: unknown-size `Segment`, one
 //!   cluster at a time, each cluster's bytes pending as soon as it closes
 //!   (at each video random-access point, and at the configured length), no
