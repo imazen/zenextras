@@ -188,6 +188,53 @@ fn round_trip_keeps_tracks_packets_and_side_data() {
     }
 }
 
+/// AV1 blocks drop a leading temporal delimiter (Matroska's AV1 mapping:
+/// SHOULD NOT be in a Block); other OBUs, and other codecs' bytes that
+/// happen to look like one, are kept.
+#[test]
+fn av1_blocks_drop_the_temporal_delimiter() {
+    const TD: [u8; 2] = [0x12, 0x00];
+    let frame_obu = [0x32u8, 0x03, 0xAA, 0xBB, 0xCC];
+    let with_td: Vec<u8> = TD.iter().chain(&frame_obu).copied().collect();
+    let tr = tracks();
+    let input = vec![
+        Packet::from_vec(with_td.clone())
+            .unwrap()
+            .with_track(0)
+            .with_pts(Timestamp::new(0, MS))
+            .with_random_access(RandomAccess::Yes),
+        Packet::from_vec(with_td.clone())
+            .unwrap()
+            .with_track(1)
+            .with_pts(Timestamp::new(0, opus_clock()))
+            .with_random_access(RandomAccess::Yes),
+        // Duration forces a BlockGroup: the same rule applies there.
+        Packet::from_vec(with_td.clone())
+            .unwrap()
+            .with_track(0)
+            .with_pts(Timestamp::new(40, MS))
+            .with_duration_ticks(40),
+        Packet::from_vec(frame_obu.to_vec())
+            .unwrap()
+            .with_track(0)
+            .with_pts(Timestamp::new(80, MS)),
+    ];
+    let (_, out) = demux(&mux(WebmMuxer::new(), &tr, &input)).unwrap();
+    let bodies: Vec<(u32, Vec<u8>)> = out
+        .iter()
+        .map(|p| (p.track(), p.bytes().to_vec()))
+        .collect();
+    assert_eq!(
+        bodies,
+        vec![
+            (0, frame_obu.to_vec()),
+            (1, with_td.clone()),
+            (0, frame_obu.to_vec()),
+            (0, frame_obu.to_vec()),
+        ]
+    );
+}
+
 #[test]
 fn clusters_start_at_video_random_access_points() {
     let mut m = WebmMuxer::new();

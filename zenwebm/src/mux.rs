@@ -8,7 +8,7 @@ use zencodec::time::{FrameDuration, Rounding, TimeBase, Timestamp};
 use zencodec_media::container::{MuxFinish, MuxHint, MuxTiming, Muxer};
 use zencodec_media::packet::{Packet, RandomAccess};
 use zencodec_media::session::{ProtocolViolation, SessionError};
-use zencodec_media::track::{TrackInfo, TrackKind};
+use zencodec_media::track::{CodecId, TrackInfo, TrackKind};
 
 use crate::ebml::{self, id};
 use crate::{WebmError, codec_id_for};
@@ -49,7 +49,37 @@ struct MuxTrack {
     time_base: TimeBase,
     epoch: u32,
     video: bool,
+    /// AV1: blocks drop a leading temporal delimiter (the Matroska AV1
+    /// mapping says it SHOULD NOT be in a Block; readers prepend one).
+    av1: bool,
     last_ticks: Option<i64>,
+}
+
+/// `b` without a leading AV1 temporal delimiter OBU (one with a size
+/// field; a delimiter without one cannot be told apart from the rest).
+fn without_temporal_delimiter(b: &[u8]) -> &[u8] {
+    const OBU_TEMPORAL_DELIMITER: u8 = 2;
+    let Some(&header) = b.first() else { return b };
+    // A delimiter has no payload: forbidden bit clear, type 2, a size
+    // field, size 0.
+    if header & 0x80 != 0 || (header >> 3) & 0xF != OBU_TEMPORAL_DELIMITER || header & 0x2 == 0 {
+        return b;
+    }
+    let mut i = 1 + usize::from(header & 0x4 != 0);
+    let (mut size, mut shift) = (0usize, 0u32);
+    loop {
+        let Some(&byte) = b.get(i) else { return b };
+        i += 1;
+        size |= usize::from(byte & 0x7F) << shift;
+        if byte & 0x80 == 0 {
+            break;
+        }
+        shift += 7;
+        if shift > 56 {
+            return b;
+        }
+    }
+    if size == 0 { &b[i..] } else { b }
 }
 
 #[derive(Debug)]
@@ -362,6 +392,7 @@ impl Muxer for WebmMuxer {
                 time_base: t.time_base(),
                 epoch: t.config_epoch(),
                 video: t.kind() == TrackKind::Video,
+                av1: *t.codec() == CodecId::Av1,
                 last_ticks: None,
             })
             .collect();
@@ -388,6 +419,7 @@ impl Muxer for WebmMuxer {
             return Err(SessionError::Protocol(ProtocolViolation::ClockMismatch));
         }
         let video = track.video;
+        let av1 = track.av1;
         let prev = track.last_ticks;
         let discard = packet.discard();
         let padding = match discard.map(|d| (d.start, d.end)) {
@@ -452,7 +484,12 @@ impl Muxer for WebmMuxer {
         }
         let c = self.cluster.as_mut().expect("opened above");
         let rel = (ticks - c.base) as i16;
-        let mut block = Vec::with_capacity(payload.len() + 4);
+        let body = if av1 {
+            without_temporal_delimiter(payload.as_bytes())
+        } else {
+            payload.as_bytes()
+        };
+        let mut block = Vec::with_capacity(body.len() + 4);
         block.push(0x80 | (index as u8 + 1));
         block.extend_from_slice(&rel.to_be_bytes());
         let additions = packet.additions();
@@ -462,11 +499,11 @@ impl Muxer for WebmMuxer {
             } else {
                 0
             });
-            block.extend_from_slice(payload.as_bytes());
+            block.extend_from_slice(body);
             ebml::put(&mut c.body, id::SIMPLE_BLOCK, &block);
         } else {
             block.push(0);
-            block.extend_from_slice(payload.as_bytes());
+            block.extend_from_slice(body);
             let mut g = Vec::with_capacity(block.len() + 32);
             ebml::put(&mut g, id::BLOCK, &block);
             if let Some(d) = duration {
