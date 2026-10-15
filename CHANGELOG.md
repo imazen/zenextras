@@ -10,6 +10,11 @@ member entries here reference those files.
 
 ### Dependency integration
 
+- Move the temporary zencodec/testkit pins to `fa49f7ce` (zencodec's `WholeFileIncremental`, PR 148).
+
+### Added (incremental decode)
+
+- zentiff, zenjp2, zensvg and zenpdf return `WholeFileIncremental` from `dyn_incremental_decoder` and declare `incremental`: `HeaderReady` as soon as a prefix probes, rows once the whole file is offered. Each has a `tests/sansio.rs` running the testkit's incremental contract (TIFF: encoder-written RGB8/RGBA8/gray/RGB16; JP2 and J2K fixtures; two SVG documents; the PDF fixture), wired into the host and i686 CI steps. zenexr has no zencodec decoder adapter.
 - Align temporary zencodec/zenmeta/testkit pins with the checked fidelity and operation-matrix contracts (`4fda4391`). Replace coordinated git pins with released versions before publication.
 - Pins move to zencodec `44c2ccaf` (zencodec PR 152: the media contracts), a descendant of `4fda4391`; root and fuzz locks re-resolved (the zenpdf and zensvg fuzz locks had drifted to crates.io zencodec 0.1.26, which lacks `inventory`).
 - Pins move to zencodec `a8b35aa0` (PR 152 head: `Packet::discard`, inlined driver cursors); root and every fuzz lock re-resolved to that one copy.

@@ -82,6 +82,7 @@ pub(crate) fn pdf_format_for_tests() -> ImageFormat {
 // ---------------------------------------------------------------------------
 
 static PDF_DECODE_CAPS: DecodeCapabilities = DecodeCapabilities::new()
+    .with_incremental(true)
     .with_cheap_probe(true)
     .with_native_alpha(true)
     .with_enforces_max_pixels(true)
@@ -426,6 +427,21 @@ impl<'a> zencodec::decode::DecodeJob<'a> for PdfDecodeJob {
         _preferred: &[PixelDescriptor],
     ) -> Result<Unsupported<At<CodecError>>, At<CodecError>> {
         Err(PdfError::Unsupported(UnsupportedOperation::AnimationDecode).into())
+    }
+
+    /// Incremental (sans-I/O) decode: the header is reported as soon as it
+    /// probes, and the image decodes through `push_decoder` once the whole
+    /// file is offered. A PDF's cross-reference table sits at the end of the file.
+    fn dyn_incremental_decoder(
+        self,
+        preferred: &[PixelDescriptor],
+    ) -> Result<
+        alloc::boxed::Box<zencodec::decode::DynIncrementalDecoder>,
+        zencodec::decode::BoxedError,
+    > {
+        Ok(zencodec::decode::erase_incremental(
+            zencodec::helpers::WholeFileIncremental::new(self, preferred),
+        ))
     }
 }
 
