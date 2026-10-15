@@ -22,7 +22,9 @@ ff -f lavfi -i testsrc=size=96x64:rate=25 -f lavfi -i sine=frequency=300:sample_
 ff -f lavfi -i testsrc=size=64x48:rate=30 -t 1 -c:v libvpx-vp9 -g 10 -live 1 -f webm live_vp9.webm
 ff -f lavfi -i testsrc=size=64x48:rate=30 -t 1 -vf format=yuva420p -c:v libvpx-vp9 \
   -auto-alt-ref 0 alpha_vp9.webm
-if ffmpeg -hide_banner -encoders 2>/dev/null | grep -q libx264; then
+# Not `| grep -q`: under pipefail its early exit fails the pipeline.
+encoders=$(ffmpeg -hide_banner -encoders 2>/dev/null)
+if grep -q libx264 <<< "$encoders"; then
   ff -f lavfi -i testsrc=size=64x48:rate=24 -f lavfi -i sine=sample_rate=44100 -t 1 \
     -c:v libx264 -c:a aac h264_aac.mkv
 fi
