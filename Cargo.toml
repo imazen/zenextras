@@ -12,8 +12,8 @@ members = [
 
 [patch.crates-io]
 # Unpublished metadata implementation under review; one contract version for all consumers.
-zencodec = { git = "https://github.com/imazen/zencodec", rev = "a8b35aa0de4250ef835782a19f1e91593ee0331d" }
-zencodec-testkit = { git = "https://github.com/imazen/zencodec", rev = "a8b35aa0de4250ef835782a19f1e91593ee0331d" }
+zencodec = { git = "https://github.com/imazen/zencodec", rev = "7cc3d3ec6b41103ee8398c30b1582ebdbb6df914" }
+zencodec-testkit = { git = "https://github.com/imazen/zencodec", rev = "7cc3d3ec6b41103ee8398c30b1582ebdbb6df914" }
 # Pinned PDF stream resource-limit fork used by zenpdf.
 hayro-syntax = { git = "https://github.com/lilith/hayro", rev = "beec7225f7f8cec6cb62f6ecf116db738177d0b9" }
 
