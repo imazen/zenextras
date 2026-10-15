@@ -803,7 +803,10 @@ fn pq_cicp_only_source_synthesizes_a_pq_icc() {
     let buf = make_rgb8(4, 4);
     let encoded = TiffEncoderCodecConfig::new()
         .job()
-        .with_metadata_policy(Metadata::none().with_cicp(pq), MetadataPolicy::PreserveExact)
+        .with_metadata_policy(
+            Metadata::none().with_cicp(pq),
+            MetadataPolicy::PreserveExact,
+        )
         .encoder()
         .unwrap()
         .encode(buf.as_slice())
