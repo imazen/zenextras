@@ -26,4 +26,4 @@ bench = false
 
 # Inventory API (imazen/zencodec#133). Swap for the released version before merge.
 [patch.crates-io]
-zencodec = { git = "https://github.com/imazen/zencodec", rev = "7cc3d3ec6b41103ee8398c30b1582ebdbb6df914" }
+zencodec = { git = "https://github.com/imazen/zencodec", rev = "d327434b0826a3e39633665c76f5081c0ceb34cc" }

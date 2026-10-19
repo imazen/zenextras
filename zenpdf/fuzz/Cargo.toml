@@ -44,5 +44,5 @@ bench = false
 # the zencodec inventory API (imazen/zencodec#133; swap for the release
 # before merge) and the hayro-syntax fork the decoder ships with.
 [patch.crates-io]
-zencodec = { git = "https://github.com/imazen/zencodec", rev = "7cc3d3ec6b41103ee8398c30b1582ebdbb6df914" }
+zencodec = { git = "https://github.com/imazen/zencodec", rev = "d327434b0826a3e39633665c76f5081c0ceb34cc" }
 hayro-syntax = { git = "https://github.com/lilith/hayro", rev = "beec7225f7f8cec6cb62f6ecf116db738177d0b9" }

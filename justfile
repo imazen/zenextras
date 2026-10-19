@@ -208,3 +208,17 @@ shared-contract-check:
     cargo clippy -p zentiff -p zenjp2 -p zenpdf -p zensvg --features zentiff/inventory,zenjp2/inventory,zenpdf/inventory,zensvg/inventory --test shared_contracts -- -D warnings
     cargo test -p zenexr --features inventory --test inventory_feature
     cargo test -p zenexr --features zencodec --test inventory_feature
+
+# Shared inventory/policy identity plus the remaining workspace consumers.
+contract-pin-check:
+    just shared-contract-check
+    cargo check --workspace
+    cargo check --manifest-path zentiff/fuzz/Cargo.toml --features inventory --bin inventory
+
+# Refresh each standalone fuzz graph after the coordinated contract revision changes.
+contract-pin-resolve:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    for member in zenexr zentiff zensvg zenpdf zenjp2; do
+        cargo metadata --manifest-path "$member/fuzz/Cargo.toml" --format-version 1 > /dev/null
+    done

@@ -10,6 +10,8 @@ member entries here reference those files.
 
 ### Dependency integration
 
+- Use zencodec/zenmeta/testkit/media `d327434b` in the workspace and standalone fuzz manifests, matching streaming consumers. Workspace lint/checks, shared policy/inventory tests in both feature states and TIFF inventory fuzz compilation pass; every standalone fuzz lock is refreshed (`just contract-pin-check`, `just contract-pin-resolve`).
+
 - Move the temporary zencodec/testkit pins to `fa49f7ce` (zencodec's `WholeFileIncremental`, PR 148).
 
 ### Added (incremental decode)
