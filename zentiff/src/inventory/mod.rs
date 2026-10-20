@@ -52,14 +52,46 @@ pub(crate) struct Surfaced {
     /// image-tiff's `Limits::decoding_buffer_size` for the job
     /// (`decode::derive_tiff_limits` over the effective decode config).
     pub(crate) decoding_buffer_size: u64,
+    /// image-tiff's `Limits::ifd_value_size` for the job, from the same
+    /// derivation.
+    pub(crate) ifd_value_size: u64,
+}
+
+/// The two image-tiff limits a tag value is read under.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ValueLimits {
+    /// `decoding_buffer_size`: bounds the in-memory `Value` list.
+    pub(crate) dbs: u64,
+    /// `ifd_value_size`: bounds the value's raw bytes in the file.
+    pub(crate) ivs: u64,
+}
+
+impl ValueLimits {
+    /// image-tiff's defaults, which apply to IFD0's own tags: `Decoder::new`
+    /// parses IFD0 before `with_limits` sets the job's limits.
+    fn image_tiff_default() -> Self {
+        let d = tiff::decoder::Limits::default();
+        Self {
+            dbs: d.decoding_buffer_size as u64,
+            ivs: d.ifd_value_size as u64,
+        }
+    }
 }
 
 /// Tags image-tiff's `Image::from_reader` reads for every page it parses.
-const IMAGE_TAGS: &[u16] = &[256, 257, 258, 259, 262, 277, 284, 317, 338, 339, 530];
-/// Read only for a strip layout.
+const IMAGE_TAGS: &[u16] = &[256, 257, 258, 259, 262, 266, 277, 284, 317, 338, 339, 530];
+/// FillOrder: read for every page, used only by the CCITT decoders.
+const FILL_ORDER: u16 = 266;
+/// Read for a strip layout; StripOffsets/StripByteCounts also stand in for
+/// the tile offsets of a tiled page that lacks them.
 const STRIP_TAGS: &[u16] = &[273, 278, 279];
 /// Read only for a tile layout.
 const TILE_TAGS: &[u16] = &[322, 323, 324, 325];
+/// SGILog and SGILog24 (`CompressionMethod::SgiLog{,24}`): decoding
+/// replaces the sample format and depth with 32-bit float.
+const SGILOG: &[u64] = &[34676, 34677];
+/// CCITT RLE, Group 3 and Group 4: the decoders that honour FillOrder.
+const CCITT: &[u64] = &[2, 3, 4];
 /// Read only when Compression is 7.
 const JPEG_TABLES: u16 = 347;
 
@@ -67,16 +99,22 @@ const JPEG_TABLES: u16 = 347;
 /// (`decode::IFD0_DESCRIPTIVE_TAGS`).
 const IFD0_EXIF_TAGS: &[u16] = &[269, 270, 271, 272, 305, 306, 315, 316, 33432];
 
-/// PhotometricInterpretation values image-tiff knows (`tags.rs`).
-const PHOTOMETRIC_KNOWN: &[u64] = &[0, 1, 2, 3, 4, 5, 6, 8, 9, 10];
+/// PhotometricInterpretation values image-tiff knows (`tags.rs`): unknown
+/// values parse as `Unknown` but `from_u16` still rejects them.
+const PHOTOMETRIC_KNOWN: &[u64] = &[0, 1, 2, 3, 4, 5, 6, 8, 9, 10, 32844, 32845];
 
-/// How a page lays out its pixels, from which offset tags it carries
-/// (`Image::from_reader`'s match on the four strip and tile tags).
+/// How a page lays out its pixels (`Image::from_reader`, aligned with
+/// libtiff): TileWidth or TileLength makes a page tiled; a tiled page takes
+/// its offsets from TileOffsets/TileByteCounts, else from
+/// StripOffsets/StripByteCounts.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Layout {
     Strips,
-    Tiles,
-    /// Both or neither: image-tiff rejects the page.
+    /// `strip_offsets`: the tile offsets come from the strip tags.
+    Tiles {
+        strip_offsets: bool,
+    },
+    /// No usable offset pair for the layout: image-tiff rejects the page.
     Conflict,
 }
 
@@ -234,7 +272,27 @@ impl TiffPolicy<'_> {
     /// or the ASCII length check) refuses `e`'s value, if it does. Only
     /// out-of-line values of more than one element are checked.
     fn over_limit(&self, w: &Walk<'_>, e: &Entry) -> Option<String> {
-        over_limit_in(w, e, self.surf.decoding_buffer_size)
+        over_limit_in(
+            w,
+            e,
+            ValueLimits {
+                dbs: self.surf.decoding_buffer_size,
+                ivs: self.surf.ifd_value_size,
+            },
+        )
+    }
+
+    /// The limits `Image::from_reader` reads `ifd`'s tags under: image-tiff's
+    /// defaults for IFD0, the job's for later pages.
+    fn page_limits(&self, ifd: &Ifd) -> ValueLimits {
+        if ifd.page() == Some(0) {
+            ValueLimits::image_tiff_default()
+        } else {
+            ValueLimits {
+                dbs: self.surf.decoding_buffer_size,
+                ivs: self.surf.ifd_value_size,
+            }
+        }
     }
 
     /// `read_bytes_tag`: `get_tag_u8_vec` accepts BYTE or UNDEFINED, except
@@ -312,9 +370,17 @@ impl TiffPolicy<'_> {
 
     fn layout(&self, w: &Walk<'_>, ifd: &Ifd) -> Layout {
         let has = |t: u16| w.find(ifd, t).is_some();
-        match (has(279), has(273), has(325), has(324)) {
-            (true, true, false, false) => Layout::Strips,
-            (false, false, true, true) => Layout::Tiles,
+        let tiled = has(322) || has(323);
+        let strips = has(273) && has(279);
+        let tiles = has(324) && has(325);
+        match (tiled, strips, tiles) {
+            (false, true, _) => Layout::Strips,
+            (true, _, true) => Layout::Tiles {
+                strip_offsets: false,
+            },
+            (true, true, false) => Layout::Tiles {
+                strip_offsets: true,
+            },
             _ => Layout::Conflict,
         }
     }
@@ -384,24 +450,42 @@ impl TiffPolicy<'_> {
         if one(530).is_some_and(|e| e.count != 2) {
             return Some("YCbCrSubSampling count is not 2");
         }
-        // `Decoder::new` parses IFD0 under image-tiff's default limits; the
-        // job's limits apply from `with_limits` on, to later pages.
-        let dbs = if ifd.page() == Some(0) {
-            tiff::decoder::Limits::default().decoding_buffer_size as u64
-        } else {
-            self.surf.decoding_buffer_size
-        };
+        // `into_u16`: a present FillOrder must be one BYTE/SHORT/LONG/LONG8
+        // integer that fits in 16 bits.
+        if one(FILL_ORDER).is_some_and(|e| !matches!(e.typ, 1 | 3 | 4 | 7 | 16))
+            || !matches!(int(FILL_ORDER), Ok(None | Some(0..=0xFFFF)))
+        {
+            return Some("FillOrder not one 16-bit integer");
+        }
+        let limits = self.page_limits(ifd);
+        if matches!(int(262), Ok(Some(3))) {
+            // ColorMap: required, `into_u16_vec`, exactly 3 * 2^BitsPerSample.
+            let Some(e) = one(COLOR_MAP) else {
+                return Some("palette image without a ColorMap");
+            };
+            let bps = one(258)
+                .and_then(|e| w.uints(e, 1).first().copied())
+                .unwrap_or(1);
+            let expected = 1u64.checked_shl(bps as u32).and_then(|n| n.checked_mul(3));
+            if over_limit_in(w, e, limits).is_some()
+                || !matches!(e.typ, 1 | 3 | 4 | 7 | 16)
+                || expected != Some(e.count)
+                || w.uints(e, e.count as usize).iter().any(|&v| v > 0xFFFF)
+            {
+                return Some("ColorMap is not 3 * 2^BitsPerSample 16-bit entries");
+            }
+        }
         let counts_match = |offs: u16, cnts: u16, expected: u64| {
             let (Some(o), Some(c)) = (one(offs), one(cnts)) else {
                 return false;
             };
             o.count == c.count
                 && o.count == expected
-                && over_limit_in(w, o, dbs).is_none()
-                && over_limit_in(w, c, dbs).is_none()
+                && over_limit_in(w, o, limits).is_none()
+                && over_limit_in(w, c, limits).is_none()
         };
         match self.layout(w, ifd) {
-            Layout::Conflict => Some("strip and tile tags conflict"),
+            Layout::Conflict => Some("no strip or tile offsets for the page's layout"),
             Layout::Strips => {
                 let Ok(rps) = int(278) else {
                     return Some("RowsPerStrip not one integer");
@@ -414,9 +498,9 @@ impl TiffPolicy<'_> {
                 (!counts_match(273, 279, expected))
                     .then_some("strip count does not match the image")
             }
-            Layout::Tiles => {
+            Layout::Tiles { strip_offsets } => {
                 let (Ok(Some(tw)), Ok(Some(tl))) = (int(322), int(323)) else {
-                    return Some("TileWidth or TileLength missing");
+                    return Some("TileWidth or TileLength missing or not one integer");
                 };
                 if tw == 0 || tl == 0 {
                     return Some("TileWidth or TileLength is 0");
@@ -425,7 +509,13 @@ impl TiffPolicy<'_> {
                     .div_ceil(tw)
                     .saturating_mul(height.div_ceil(tl))
                     .saturating_mul(planes);
-                (!counts_match(324, 325, expected)).then_some("tile count does not match the image")
+                let (offs, cnts) = if strip_offsets {
+                    (273, 279)
+                } else {
+                    (324, 325)
+                };
+                (!counts_match(offs, cnts, expected))
+                    .then_some("tile count does not match the image")
             }
         }
     }
@@ -436,18 +526,48 @@ impl TiffPolicy<'_> {
             return Ok(true);
         }
         let layout = self.layout(w, ifd);
+        // Under `Conflict` the offset tags' presence decides the rejection.
         if STRIP_TAGS.contains(&tag) {
-            return match layout {
-                Layout::Strips => Ok(true),
-                Layout::Conflict if tag != 278 => Ok(true),
-                _ => Err("RowsPerStrip and strip tags are not read for a tiled image"),
+            return match (layout, tag) {
+                (Layout::Strips, _) => Ok(true),
+                (
+                    Layout::Tiles {
+                        strip_offsets: true,
+                    },
+                    273 | 279,
+                ) => Ok(true),
+                (Layout::Conflict, 273 | 279) => Ok(true),
+                (Layout::Tiles { .. }, 278) => Err("RowsPerStrip is not read for a tiled image"),
+                _ => Err("strip tags are not read for a tiled image with tile offsets"),
             };
         }
         if TILE_TAGS.contains(&tag) {
-            return match layout {
-                Layout::Tiles => Ok(true),
-                Layout::Conflict if matches!(tag, 324 | 325) => Ok(true),
+            return match (layout, tag) {
+                (Layout::Tiles { .. }, 322 | 323) => Ok(true),
+                (
+                    Layout::Tiles {
+                        strip_offsets: false,
+                    },
+                    _,
+                ) => Ok(true),
+                (Layout::Conflict, _) => Ok(true),
+                (
+                    Layout::Tiles {
+                        strip_offsets: true,
+                    },
+                    _,
+                ) => {
+                    Err("a lone tile offset tag is not read; the strip tags carry the tile offsets")
+                }
                 _ => Err("tile tags are not read for a striped image"),
+            };
+        }
+        if tag == COLOR_MAP {
+            let palette = w.find(ifd, 262).and_then(|e| w.single_uint(e)) == Some(3);
+            return if palette {
+                Ok(true)
+            } else {
+                Err("ColorMap is read only for a palette image (PhotometricInterpretation 3)")
             };
         }
         if tag == JPEG_TABLES {
@@ -489,6 +609,12 @@ impl TiffPolicy<'_> {
                     "read; only its count matters for this image (the first value marks alpha only in 3-colour RGB or 4-colour CMYK)",
                 )
             }
+            FILL_ORDER if !CCITT.contains(&compression) => Some(
+                "read; only the CCITT decoders use its value, so for this compression only its validity matters",
+            ),
+            339 if SGILOG.contains(&compression) => Some(
+                "read; SGILog decoding replaces the sample format with 32-bit float, so only its validity matters",
+            ),
             530 if photometric != 6 || compression == 7 => Some(
                 "read; only its count matters for this image (the values matter for YCbCr without JPEG compression)",
             ),
@@ -561,15 +687,6 @@ impl TiffPolicy<'_> {
             }
             GPS_IFD => Fate::because(Disposition::Skipped, "GPS IFD pointer, not followed"),
             SUB_IFDS => Fate::because(Disposition::Skipped, "SubIFDs pointer, not followed"),
-            // decode.rs reads ColorMap only under the `_palette` feature;
-            // without it palette images fail to decode.
-            COLOR_MAP if cfg!(feature = "_palette") => {
-                Fate::because(Disposition::Structure, "palette for `_palette` expansion")
-            }
-            COLOR_MAP => Fate::because(
-                Disposition::Skipped,
-                "palette images need the unreleased `_palette` feature; decode fails",
-            ),
             JPEG_IF_OFFSET | JPEG_IF_LENGTH => {
                 Fate::because(Disposition::Skipped, "old-style JPEG stream, not decoded")
             }
@@ -770,17 +887,34 @@ impl TiffPolicy<'_> {
     }
 }
 
-/// Why image-tiff's per-value limit refuses `e`'s value under a
-/// `decoding_buffer_size` of `dbs` (see [`TiffPolicy::over_limit`]).
-fn over_limit_in(w: &Walk<'_>, e: &Entry, dbs: u64) -> Option<String> {
+/// Why image-tiff's per-value limits refuse `e`'s value (see
+/// [`TiffPolicy::over_limit`]). `Entry::val` checks only out-of-line values
+/// of more than one element: ASCII by its length against `ifd_value_size`;
+/// every other type by its raw bytes against `ifd_value_size` and its element
+/// count against `decoding_buffer_size / size_of::<Value>()`.
+fn over_limit_in(w: &Walk<'_>, e: &Entry, limits: ValueLimits) -> Option<String> {
     let size = type_size(e.typ)?.checked_mul(e.count)?;
     if e.count <= 1 || size <= w.lay.inline_cap() {
         return None;
     }
-    let limit = if e.typ == 2 { dbs } else { dbs / VALUE_SIZE };
-    (e.count > limit).then(|| {
+    if e.typ == 2 {
+        return (e.count > limits.ivs).then(|| {
+            format!(
+                "{} characters exceed image-tiff's per-value limit of {} bytes; reading it fails (zenextras#36)",
+                e.count, limits.ivs
+            )
+        });
+    }
+    if size > limits.ivs {
+        return Some(format!(
+            "{size} bytes exceed image-tiff's per-value limit of {} bytes; reading it fails (zenextras#36)",
+            limits.ivs
+        ));
+    }
+    let max = limits.dbs / VALUE_SIZE;
+    (e.count > max).then(|| {
         format!(
-            "{} elements exceed image-tiff's per-value limit of {limit}; reading it fails (zenextras#36)",
+            "{} elements exceed image-tiff's per-value limit of {max}; reading it fails (zenextras#36)",
             e.count
         )
     })
@@ -883,6 +1017,8 @@ mod tests {
             xmp: true,
             decoding_buffer_size: crate::decode::derive_tiff_limits(&Default::default())
                 .decoding_buffer_size as u64,
+            ifd_value_size: crate::decode::derive_tiff_limits(&Default::default()).ifd_value_size
+                as u64,
         };
         let rules = TiffPolicy {
             surf,

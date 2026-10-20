@@ -61,9 +61,10 @@ zstd = ["tiff/zstd"]
 # gamut) be written as ICC, TIFF's only colour carrier, without a CMS.
 zencodec = ["dep:zencodec", "dep:zenpixels-convert", "zenpixels-convert/icc-db", "zencodec/std"]
 inventory = ["zencodec", "dep:zenmeta"]
-# Palette TIFF support requires tiff crate's color_map() API, which is
-# not available in tiff 0.11.x (only on git main). Enable this feature
-# once tiff 0.12+ is released. Not included in all-codecs or default.
+# Palette TIFF expansion. zentiff reads ColorMap with `find_tag`, which
+# 0.11.3 has, but crates.io tiff 0.11.3 rejects palette images before that;
+# image-tiff main (and the workspace's fork pin) decodes them. Enable by
+# default once a tiff release decodes palettes. Not in all-codecs or default.
 _palette = []
 # Expert-only cross-codec uniformity knobs. Pure visibility gate (no deps):
 # exposes `InternalParams` + `TiffEncodeConfig::with_internal_params`, mirroring

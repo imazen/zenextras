@@ -1,5 +1,9 @@
 //! Decode every file in the tiff-conformance corpus and report results.
 
+// See src/decode.rs: the 0.11.3 names stay while the workspace fork marks
+// them deprecated.
+#![allow(deprecated)]
+
 use enough::Unstoppable;
 use zenpixels::PixelDescriptor;
 use zentiff::{TiffDecodeConfig, decode, probe};

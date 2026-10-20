@@ -692,13 +692,14 @@ impl<'a> zencodec::decode::DecodeJob<'a> for TiffDecodeJob {
             ))));
         }
         let policy = self.policy.as_ref();
+        let limits = crate::decode::derive_tiff_limits(&self.effective_decode_config());
         let surf = crate::inventory::Surfaced {
             icc: policy.is_none_or(|p| p.resolve_icc(true)),
             exif: policy.is_none_or(|p| p.resolve_exif(true)),
             xmp: policy.is_none_or(|p| p.resolve_xmp(true)),
-            // The value limit the decode applies (`decode::decode_inner`).
-            decoding_buffer_size: crate::decode::derive_tiff_limits(&self.effective_decode_config())
-                .decoding_buffer_size as u64,
+            // The value limits the decode applies (`decode::decode_inner`).
+            decoding_buffer_size: limits.decoding_buffer_size as u64,
+            ifd_value_size: limits.ifd_value_size as u64,
         };
         match crate::inventory::inventory(data, surf, stop) {
             Ok(inv) => Ok(inv),

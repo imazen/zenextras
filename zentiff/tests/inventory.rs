@@ -1542,16 +1542,18 @@ fn exif_ifd_reached_by_another_path_is_still_re_serialized() {
     );
 }
 
-/// image-tiff reads RowsPerStrip only for strips, TileWidth/TileLength only
-/// for tiles and JPEGTables only for Compression 7.
+/// image-tiff reads RowsPerStrip only for strips, tile offsets only for tiles
+/// and JPEGTables only for Compression 7. TileWidth or TileLength makes a page
+/// tiled (as in libtiff), and a tiled page without tile offsets takes them
+/// from the strip tags.
 #[test]
 fn layout_tags_count_only_for_their_layout() {
     let mut w = W::new();
     let strip = w.put(&[1, 2, 3, 4]);
     let tables = w.put(b"HIDDEN-IN-JPEGTABLES");
-    let tile_width = w.put(b"TILEWIDTH-HIDDEN");
+    let tile_offsets = w.put(b"TILEOFFS-HIDDEN!");
     let mut e = page(strip);
-    e.insert(9, at(322, 4, 4, tile_width));
+    e.insert(9, at(324, 4, 4, tile_offsets));
     e.insert(10, at(347, 7, 20, tables));
     let ifd0 = w.ifd(&e, 0);
     w.set_ifd0(ifd0);
@@ -1565,7 +1567,7 @@ fn layout_tags_count_only_for_their_layout() {
             "Compression is 7",
         ),
         (
-            u64::from(tile_width)..u64::from(tile_width) + 16,
+            u64::from(tile_offsets)..u64::from(tile_offsets) + 16,
             "striped image",
         ),
     ] {
@@ -1604,6 +1606,75 @@ fn layout_tags_count_only_for_their_layout() {
     assert_eq!(
         entry(&inv, ifd0, 322).disposition(),
         Disposition::Structure,
+        "{inv}"
+    );
+
+    // A tiled page whose offsets sit in the strip tags decodes from them.
+    let mut w = W::new();
+    let tile = w.put(&[7; 256]);
+    let ifd0 = w.ifd(
+        &[
+            short(256, 16),
+            short(257, 16),
+            short(258, 8),
+            short(259, 1),
+            short(262, 1),
+            long(273, tile),
+            short(277, 1),
+            short(278, 3),
+            long(279, 256),
+            short(322, 16),
+            short(323, 16),
+        ],
+        0,
+    );
+    w.set_ifd0(ifd0);
+    let data = w.b;
+    let inv = inventory(&data);
+    inv.validate().unwrap();
+    assert!(decode_summary(&data).is_ok());
+    for tag in [273, 279, 322, 323] {
+        assert_eq!(
+            entry(&inv, ifd0, tag).disposition(),
+            Disposition::Structure,
+            "{tag} {inv}"
+        );
+    }
+    assert_eq!(
+        entry(&inv, ifd0, 278).disposition(),
+        Disposition::Skipped,
+        "{inv}"
+    );
+    assert_eq!(
+        part(&inv, u64::from(tile)..u64::from(tile) + 256).disposition(),
+        Disposition::ImageData,
+        "{inv}"
+    );
+
+    // A lone TileWidth makes a striped page tiled; without TileLength
+    // image-tiff rejects it.
+    let mut w = W::new();
+    let strip = w.put(&[1, 2, 3, 4]);
+    let mut e = page(strip);
+    e.push(short(322, 16));
+    let ifd0 = w.ifd(&e, 0);
+    w.set_ifd0(ifd0);
+    let data = w.b;
+    let inv = inventory(&data);
+    inv.validate().unwrap();
+    assert!(decode_summary(&data).is_err());
+    let dir = inv
+        .parts()
+        .iter()
+        .find(|p| p.kind() == PartKind::Ifd && p.range().start == u64::from(ifd0))
+        .unwrap();
+    assert!(
+        dir.detail().unwrap().contains("TileLength missing"),
+        "{inv}"
+    );
+    assert_eq!(
+        entry(&inv, ifd0, 278).disposition(),
+        Disposition::Skipped,
         "{inv}"
     );
 }
@@ -2021,6 +2092,50 @@ fn resolution_as_integer_pairs_is_reported() {
 /// part reported as read (`Structure`, `Metadata`, `ImageData`) changes the
 /// decode, under one of four XOR masks, unless its detail says why not.
 /// Entries are mutated in their value field only.
+/// Whether `p` is exactly the zero next-IFD pointer of its directory. It is a
+/// leaf part only when another extent splits the directory into pieces (in
+/// cramps-tile.tif the last strip's byte count runs over IFD0). A zero
+/// pointer can change the decode only by naming another valid page, which no
+/// byte mask builds: `count_pages` stops at the first page it cannot read.
+fn is_last_next_pointer(data: &[u8], parts: &[Part], p: &Part, big: bool) -> bool {
+    if p.kind() != PartKind::Ifd {
+        return false;
+    }
+    let head = |q: &Part| {
+        q.detail()
+            .unwrap_or("")
+            .split(';')
+            .next()
+            .unwrap_or("")
+            .to_owned()
+    };
+    let h = head(p);
+    let Some(start) = parts
+        .iter()
+        .filter(|q| q.kind() == PartKind::Ifd && head(q) == h)
+        .map(|q| q.range().start)
+        .min()
+    else {
+        return false;
+    };
+    let le = data.starts_with(b"II");
+    let read = |at: u64, n: u64| -> Option<u64> {
+        let b = data.get(usize::try_from(at).ok()?..usize::try_from(at + n).ok()?)?;
+        let fold = |a: u64, &x: &u8| (a << 8) | u64::from(x);
+        Some(if le {
+            b.iter().rev().fold(0, fold)
+        } else {
+            b.iter().fold(0, fold)
+        })
+    };
+    let (count, entry, ptr) = if big { (8, 20, 8) } else { (2, 12, 4) };
+    let Some(n) = read(start, count) else {
+        return false;
+    };
+    let end = start + count + n * entry + ptr;
+    p.range() == (end - ptr..end) && read(end - ptr, ptr) == Some(0)
+}
+
 #[test]
 fn read_parts_influence_decode() {
     // Details that name why a read part leaves this decode unchanged.
@@ -2032,6 +2147,8 @@ fn read_parts_influence_decode() {
         "reads only the rows inside",
         "only checks the counts",
         "only its count matters",
+        // Read and validated; the value is overridden or unused here.
+        "only its validity matters",
     ];
     let mut inputs: Vec<(String, Vec<u8>)> = corpus_tiffs()
         .into_iter()
@@ -2063,6 +2180,7 @@ fn read_parts_influence_decode() {
                 let d = p.detail().unwrap_or("");
                 !EXPLAINED.iter().any(|x| d.contains(x))
             })
+            .filter(|(_, p)| !is_last_next_pointer(data, parts, p, big))
             .map(|(_, p)| p)
             .collect();
         // At most 40 per file, spread over the file.
@@ -2111,6 +2229,10 @@ fn read_parts_influence_decode() {
                 (s..s + 1, 0x80),
                 (e - 1..e, 0x01),
                 (e - 1..e, 0x07),
+                // 1 <-> 2 in either byte of a 16-bit value (FillOrder's two
+                // meanings).
+                (s..s + 1, 0x03),
+                (s + 1..(s + 2).min(e), 0x03),
             ];
             let changed = variants
                 .into_iter()

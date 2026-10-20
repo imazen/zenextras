@@ -1,5 +1,12 @@
 //! TIFF decoding and probing.
 
+// zentiff builds against crates.io tiff 0.11.3 and, inside this workspace,
+// against the lilith/image-tiff fork, which carries upstream's 0.12-dev API.
+// The replacements the fork's deprecations suggest (`Decoder::open`,
+// `current_ifd`, `DecodingSampleBuffer`) do not exist in 0.11.3, so the
+// 0.11.3 names stay until a tiff release carries both.
+#![allow(deprecated)]
+
 use alloc::string::String;
 use alloc::vec::Vec;
 use enough::Stop;
@@ -223,8 +230,9 @@ impl Default for TiffDecodeConfig {
 /// underneath our final pixel/memory cap.
 ///
 /// We start from `image-tiff`'s defaults (256 MiB decode buffer, 128 MiB
-/// intermediate buffer, 1 MiB per-IFD value) and only *tighten* them toward
-/// `max_memory_bytes` — never loosen. A single decoding/intermediate buffer
+/// intermediate buffer, 1 MiB per-IFD value) and only *tighten* the two
+/// buffers toward `max_memory_bytes` — never loosen. The per-IFD value limit
+/// follows the decode buffer (see the note in the body). A single decoding/intermediate buffer
 /// should never need to exceed the whole-image memory budget, so capping both
 /// at `max_memory_bytes` bounds the per-segment allocations without rejecting
 /// any image that already fits under the pixel/memory cap.
@@ -236,6 +244,14 @@ pub(crate) fn derive_tiff_limits(config: &TiffDecodeConfig) -> tiff::decoder::Li
         limits.decoding_buffer_size = limits.decoding_buffer_size.min(cap);
         limits.intermediate_buffer_size = limits.intermediate_buffer_size.min(cap);
     }
+    // tiff 0.11.3 never enforced `ifd_value_size`; newer image-tiff checks
+    // each out-of-line value's raw bytes against it (1 MiB by default), which
+    // would drop ICC profiles and XMP packets over 1 MiB. Tie it to the
+    // decoding buffer instead: the in-memory bound image-tiff also applies
+    // (`decoding_buffer_size / size_of::<Value>()` elements) is the stricter
+    // of the two, so no allocation grows. IFD0's own tags are parsed by
+    // `Decoder::new` before `with_limits` and keep image-tiff's defaults.
+    limits.ifd_value_size = limits.decoding_buffer_size;
     limits
 }
 
