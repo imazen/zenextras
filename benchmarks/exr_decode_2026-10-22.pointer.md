@@ -6,8 +6,11 @@ Location: `dev:/mnt/v/output/zenexr/exr-decode-bench-2026-10-22/`
 |---|---|---|
 | results-t1.csv | 8929260c5dbbb2d0d02d7642adff479658aa4ed2481f17b2b11995acbb394327 | `run ... 1 2 200` rows (9,516), P-core 2 |
 | verify.csv | 6c065d686a9b8f4c28a7c7eb19bddea4f74c029ca7d215758c54d5ec353aaac3 | per-file mismatch counts, all decoders vs OpenEXR (all zero) |
-| contention-t1.log | | watcher samples during the t1 run |
-| summary-t1.md, run-t1.log, prepare.log, encode_failures.txt | | summary, progress, prep and exr-encoder panics |
+| results-t8.csv | 276bcf9613c82c4cc76af5b3230e605db1c74770235d56a8a3e8fd0926968861 | `run ... 8 2 200` rows (7,930), P-cores 0-7; 607 files contended |
+| results-t8-rerun1.csv | 9e2b2422229bdb127215ac34591080006f3098f37de3e5d6f4c3c7ca2e0935cf | re-run of the 607 contended files (rerun-t8.txt) |
+| results-t8-rerun2.csv | 5007534cca6bcfd0d8988b04d2123c26feaa4f760ff76e598253416a7c50f66a | re-run of the one file contended again |
+| contention-t1.log, contention-t8*.log | | watcher samples during each run |
+| summary-t1.md, summary-t8.md, run-*.log, prepare.log, encode_failures.txt | | summary, progress, prep and exr-encoder panics |
 | cg-*.out | | callgrind profiles cited in the results |
 
 Produced on `i270` with zenextras `tools/exr-decode-bench` (commit with this file),

@@ -1,16 +1,20 @@
 # EXR lossy decode speed: B44, B44A, DWAA, DWAB (2026-10-22)
 
-zenexr / `exr` 1.74.2 against OpenEXR 3.5.2, single thread. Harness and method:
-[`tools/exr-decode-bench`](../tools/exr-decode-bench/README.md). Full tables:
-[`exr_decode_2026-10-22_t1_summary.md`](exr_decode_2026-10-22_t1_summary.md).
+zenexr / `exr` 1.74.2 against OpenEXR 3.5.2, on one thread and on eight. Harness
+and method: [`tools/exr-decode-bench`](../tools/exr-decode-bench/README.md). Full
+tables: [single thread](exr_decode_2026-10-22_t1_summary.md),
+[8 threads](exr_decode_2026-10-22_t8_summary.md).
 Raw data: [`exr_decode_2026-10-22.pointer.md`](exr_decode_2026-10-22.pointer.md).
 
 ## Setup
 
 - Host `i270`: Core Ultra 7 270K Plus (8 P-cores 0-7, 16 E-cores; AVX2, F16C,
-  no AVX-512), 30 GiB, Ubuntu, governor `powersave` (HWP). Every timed process
-  was pinned to P-core 2. A watcher logged other processes; none reached half a
-  core during the run, so no file was dropped.
+  no AVX-512), 30 GiB, Ubuntu, governor `powersave` (HWP). Single-thread
+  processes were pinned to P-core 2; 8-thread processes to P-cores 0-7. A
+  watcher logged other processes. None reached half a core during the
+  single-thread run. A 24-core training job overlapped 607 files of the 8-thread
+  run; those files were re-run once the box was idle (one of them twice), so
+  every reported value comes from an uncontended round.
 - OpenEXR 3.5.2 (`69b2604f`), CMake Release, internal Imath 3.2.3 and
   libdeflate, g++ 15.2.0, no `-march`. `exr` 1.74.2 and zenexr at zenextras
   `e014062c`, rustc 1.99.0, default `--release`, no `target-cpu`.
@@ -68,6 +72,34 @@ DWA level (medium, OpenEXR f16 / exr-blocks f16): DWAA 15 → 150 is 122 → 215
 39 → 56 MP/s; DWAB 15 → 150 is 124 → 218 / 47 → 73 MP/s. Lower levels keep
 more AC coefficients and decode more slowly.
 
+## Results, 8 threads (MP/s, geomean over images, OpenEXR-encoded files)
+
+OpenEXR uses its global pool of 8 threads; `exr` uses its parallel reader, which
+builds a new rayon pool of 8 on every call. `exr-blocks pool` decompresses `exr`
+chunks on a persistent 8-thread rayon pool, separating the codec from that
+per-call pool. zenexr has no threaded path. Timing noise is higher than single
+thread: the median per-file interquartile range is 16% of the median (2% single
+thread).
+
+| size | compression | OpenEXR f16 | OpenEXR f32 | exr-blocks pool f16 | exr f16 | exr f32 |
+|---|---|---|---|---|---|---|
+| medium | B44 | 924 | 604 | 1036 | 622 | 373 |
+| medium | B44A | 953 | 601 | 1062 | 622 | 395 |
+| medium | DWAA 45 | 505 | 383 | 254 | 204 | 192 |
+| medium | DWAB 45 | 353 | 277 | 153 | 141 | 130 |
+| large | B44 | 433 | 225 | 506 | 226 | 186 |
+| large | B44A | 427 | 226 | 569 | 251 | 187 |
+| large | DWAA 45 | 356 | 205 | 352 | 150 | 182 |
+| large | DWAB 45 | 288 | 184 | 309 | 141 | 141 |
+
+Per-call time at 64x64 (µs), 8 threads (single thread in brackets):
+
+| compression | OpenEXR f16 | exr-blocks pool f16 | exr f16 |
+|---|---|---|---|
+| B44 | 38 (13) | 33 (20) | 90 (21) |
+| DWAA 45 | 245 (36) | 468 (825) | 537 (825) |
+| DWAB 45 | 30 (30) | 513 (437) | 647 (436) |
+
 ## Findings
 
 1. **Within each decoder:** B44 and B44A decode 2.8x faster than DWA in OpenEXR
@@ -97,7 +129,23 @@ more AC coefficients and decode more slowly.
 5. **The bitstream doesn't matter:** files from the `exr` encoder and the
    OpenEXR encoder decode at the same speed in every decoder (0.99-1.02x), and
    sizes agree within 1%.
-6. **The cache cliff is real.** At 4096x2048 the 50 MB half output (100 MB as
+6. **With 8 threads, chunk size decides DWA's ranking.** DWAA's 32-line chunks
+   give 8 threads work on a 0.24-1.1 MP frame, while DWAB's 256-line chunks give
+   only 2-5. OpenEXR's DWAA reaches 505 MP/s against DWAB's 353 at
+   medium (3.3x and 2.3x their single-thread speeds), and 356 vs 288 at
+   4096x2048. On 64x64 the ranking reverses: DWAA's two chunks cost OpenEXR
+   245 µs through its thread pool against 36 µs on one thread, while DWAB's
+   single chunk costs the same as on one thread (30 µs). B44 and B44A gain 2.2x
+   at medium and 1.9x at 4096x2048.
+7. **On a persistent pool, `exr` catches OpenEXR where work is plentiful.**
+   `exr`'s chunk decompression on a persistent 8-thread pool beats OpenEXR on
+   B44/B44A (0.75-0.90x OpenEXR's time at medium and large) and matches it on
+   DWA at 4096x2048 (0.93-1.01x), where both are bound by memory traffic. DWA
+   at medium stays 2.0-2.3x slower. `exr`'s own parallel reader is 1.5-2.5x
+   slower than OpenEXR at medium and large: it creates a rayon pool per call
+   (B44 at 64x64: 90 µs against 33 µs on a persistent pool) and assembles the
+   image on the calling thread.
+8. **The cache cliff is real.** At 4096x2048 the 50 MB half output (100 MB as
    f32) leaves L3, and the allocation is inside the timed call. Uncompressed
    OpenEXR f16 drops from 2614 to 478 MP/s and B44 from 421 to 231. A single
    `alpha + beta * pixels` fit does not describe these decoders, so the summary
@@ -115,8 +163,7 @@ but B44 pads that row to 4x4 blocks (300 blocks x 3 channels x 14 bytes =
 
 ## Not covered
 
-- Multi-threaded decode: the 8-thread run on i270 lost 607 of 793 files to a
-  concurrent 24-core training job; the re-run waits for an idle box.
+- Thread counts other than 1 and 8, and E-cores.
 - Alpha, tiled outputs and mip levels: inputs are R,G,B HALF scanline files.
 - Zen 5 / AVX-512: not measured.
 - OpenEXR 3.1.12 (the Ubuntu package): not measured. Its Core C symbols clash

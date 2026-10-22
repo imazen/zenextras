@@ -10,7 +10,7 @@ member entries here reference those files.
 
 ### Tooling
 
-- `tools/exr-decode-bench` (standalone, never built by the workspace or CI): decode speed of B44/B44A/DWAA/DWAB (NONE/ZIP/PIZ as references) in zenexr and `exr` against OpenEXR C++, same bytes in, bit-identical pixels out, same threads. Single-thread results in [`benchmarks/exr_decode_2026-10-22.md`](benchmarks/exr_decode_2026-10-22.md) (5cc33682).
+- `tools/exr-decode-bench` (standalone, never built by the workspace or CI): decode speed of B44/B44A/DWAA/DWAB (NONE/ZIP/PIZ as references) in zenexr and `exr` against OpenEXR C++, same bytes in, bit-identical pixels out, same threads. Results for 1 and 8 threads in [`benchmarks/exr_decode_2026-10-22.md`](benchmarks/exr_decode_2026-10-22.md) (5cc33682).
 
 ### Dependency integration
 
