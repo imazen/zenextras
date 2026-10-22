@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
 """Summarize exr-decode-bench `run` CSVs (standard library only).
 
-usage: summarize.py results.csv [contention.log] > summary.md
+usage: summarize.py results.csv[,more.csv] [contention.log[,more.log] [min-cpu-percent [rerun-list]]] > summary.md
 
 Per file and arm, the value is the lower of the per-round medians (the round
-least disturbed by other load). Rows whose process window overlaps a sample in
-the contention log (another process above 15% CPU) are dropped and listed.
+least disturbed by other load). A round's rows are discarded when its process
+window overlaps a contention-log sample of another process at or above
+min-cpu-percent (default 50, i.e. half a core of real work; the watcher logs
+from 15%). A file is dropped, and listed, unless every arm kept a clean round;
+re-run those files and pass both CSVs.
 """
 
+import bisect
 import csv
 import math
 import sys
@@ -45,33 +49,37 @@ def geomean(values):
     return math.exp(sum(math.log(v) for v in values) / len(values))
 
 
-def load(path, contention_path):
-    rows = list(csv.DictReader(open(path)))
+def load(paths, contention_paths, min_cpu):
+    rows = [r for path in paths.split(",") for r in csv.DictReader(open(path))]
     contention = []
-    if contention_path:
+    for contention_path in filter(None, (contention_paths or "").split(",")):
         for line in open(contention_path):
             parts = line.split()
-            if parts:
+            if parts and float(parts[2]) >= min_cpu:
                 contention.append(int(parts[0]))
+    contention.sort()
     starts = sorted({int(r["unix_ms"]) for r in rows})
     next_start = {s: e for s, e in zip(starts, starts[1:] + [starts[-1] + 60_000])}
-    dropped = set()
-    for r in rows:
-        s = int(r["unix_ms"])
-        e = next_start[s]
+
+    def contended(s, e):
         # A contention sample at t covers roughly [t, t + 2000).
-        if any(s - 2000 < t < e for t in contention):
-            dropped.add((r["image"], r["width"], r["height"], r["encoder"], r["compression"], r["level"]))
+        i = bisect.bisect_right(contention, s - 2000)
+        return i < len(contention) and contention[i] < e
+
     best = {}
+    arms_seen = set()
     for r in rows:
         key = (r["image"], r["width"], r["height"], r["encoder"], r["compression"], r["level"])
-        if key in dropped:
+        arms_seen.add(r["arm"])
+        s = int(r["unix_ms"])
+        if contended(s, next_start[s]):
             continue
         k = key + (r["threads"], r["arm"])
         ns = int(r["median_ns"])
         if k not in best or ns < best[k]["ns"]:
             w, h = int(r["width"]), int(r["height"])
             best[k] = {
+                "key": key,
                 "image": r["image"],
                 "w": w,
                 "h": h,
@@ -83,7 +91,13 @@ def load(path, contention_path):
                 "ns": ns,
                 "bpp": float(r["bits_per_pixel"]),
             }
-    return list(best.values()), dropped
+    # A file counts only when every arm kept at least one clean round.
+    arms_by_key = defaultdict(set)
+    for v in best.values():
+        arms_by_key[v["key"]].add(v["arm"])
+    all_keys = {(r["image"], r["width"], r["height"], r["encoder"], r["compression"], r["level"]) for r in rows}
+    dropped = {k for k in all_keys if arms_by_key.get(k, set()) != arms_seen}
+    return [v for v in best.values() if v["key"] not in dropped], dropped
 
 
 def table(header, rows):
@@ -93,13 +107,23 @@ def table(header, rows):
 
 
 def main():
-    data, dropped = load(sys.argv[1], sys.argv[2] if len(sys.argv) > 2 else None)
+    data, dropped = load(
+        sys.argv[1],
+        sys.argv[2] if len(sys.argv) > 2 else "",
+        float(sys.argv[3]) if len(sys.argv) > 3 else 50.0,
+    )
     threads = sorted({d["threads"] for d in data})
     arms = sorted({d["arm"] for d in data}, key=lambda a: (not a.startswith("openexr"), a))
     print(f"# exr decode benchmark summary ({sys.argv[1]}, threads {threads})\n")
     print(f"{len(data)} file x arm values; {len(dropped)} files dropped for contention.\n")
     if dropped:
         print("Dropped: " + ", ".join(sorted("/".join(k) for k in dropped)) + "\n")
+        if len(sys.argv) > 4:
+            # Re-run list for `exr-decode-bench run ... @list`.
+            with open(sys.argv[4], "w") as f:
+                for image, w, h, enc, comp, level in sorted(dropped):
+                    name = f"{enc}_{comp}" + (f"_{level}" if level else "")
+                    f.write(f"{image}/{w}x{h}/{name}.exr\n")
 
     # 1. Geomean MP/s per size class, compression and arm (OpenEXR-encoded inputs).
     print("## Geomean MP/s, OpenEXR-encoded inputs\n")
@@ -156,25 +180,19 @@ def main():
             print(f"### {size}\n")
             print(table(["compression"] + [f"{c} / {r}" for r, c in pairs], rows) + "\n")
 
-    # 3. Fixed cost + per-pixel cost: ns = alpha + beta * pixels, least squares.
-    print("## Fit: time = alpha + beta * pixels (OpenEXR-encoded, all sizes)\n")
-    print("alpha is the per-call fixed cost; 1000/beta is the asymptotic MP/s.\n")
+    # 3. Per-call time at 64x64. A linear alpha + beta * pixels fit does not
+    # hold here: output beyond L3 (the 4096x2048 frames) drops throughput.
+    print("## Per-call time at 64x64 (geomean us, OpenEXR-encoded): the fixed cost\n")
     rows = []
     for comp in COMP_ORDER:
+        cells = []
         for arm in arms:
-            pts = [(d["px"], d["ns"]) for d in data if d["encoder"] == "openexr" and d["comp"] == comp and d["arm"] == arm]
-            if len(pts) < 3:
-                continue
-            n = len(pts)
-            mx = sum(p for p, _ in pts) / n
-            my = sum(t for _, t in pts) / n
-            sxx = sum((p - mx) ** 2 for p, _ in pts)
-            beta = sum((p - mx) * (t - my) for p, t in pts) / sxx
-            alpha = my - beta * mx
-            resid = [t - (alpha + beta * p) for p, t in pts]
-            rel = geomean([abs(r) / t + 1e-9 for r, (_, t) in zip(resid, pts)])
-            rows.append([comp, arm, n, f"{alpha / 1e3:.1f}", f"{1e3 / beta:.0f}", f"{rel * 100:.1f}%"])
-    print(table(["compression", "arm", "files", "alpha (us)", "MP/s (1000/beta)", "geomean |resid|/t"], rows) + "\n")
+            v = [d["ns"] / 1e3 for d in data if d["encoder"] == "openexr" and d["comp"] == comp
+                 and d["arm"] == arm and d["px"] == 64 * 64]
+            cells.append(f"{geomean(v):.0f}" if v else "")
+        if any(cells):
+            rows.append([comp] + cells)
+    print(table(["compression"] + arms, rows) + "\n")
 
     # 4. Encoder effect: same pixels, exr-encoded vs OpenEXR-encoded bitstreams.
     print("## Encoder effect: time(exr-encoded file) / time(OpenEXR-encoded file), same decoder\n")

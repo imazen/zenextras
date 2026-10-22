@@ -6,7 +6,8 @@
 //!   prepare <src-dir> <out-dir> <openexr-bench>
 //!   verify <out-dir> <openexr-bench> <verify.csv>
 //!   bench <threads> <min-ms> <min-samples> <max-samples> <file>...
-//!   run <out-dir> <openexr-bench> <threads> <rounds> <min-ms> <results.csv> [filter]
+//!   run <out-dir> <openexr-bench> <threads> <rounds> <min-ms> <results.csv> [filter | @list]
+//!     filter: substring of the path; @list: file of `<image>/<WxH>/<name>.exr` lines.
 
 use enough::Unstoppable;
 use exr::block::UncompressedBlock;
@@ -637,7 +638,14 @@ fn run(
     filter: Option<&str>,
 ) -> BoxResult<()> {
     let me = std::env::current_exe()?;
-    let files = encoded_files(out_dir, filter)?;
+    let files = match filter.and_then(|f| f.strip_prefix('@')) {
+        Some(list) => std::fs::read_to_string(list)?
+            .lines()
+            .filter(|l| !l.is_empty())
+            .map(|l| out_dir.join(l))
+            .collect(),
+        None => encoded_files(out_dir, filter)?,
+    };
     let mut out = std::fs::File::create(csv)?;
     writeln!(
         out,
