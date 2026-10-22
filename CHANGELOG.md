@@ -8,6 +8,10 @@ member entries here reference those files.
 
 ### [Unreleased]
 
+### Tooling
+
+- `tools/exr-decode-bench` (standalone, never built by the workspace or CI): decode speed of B44/B44A/DWAA/DWAB (NONE/ZIP/PIZ as references) in zenexr and `exr` against OpenEXR C++, same bytes in, bit-identical pixels out, same threads. Single-thread results in [`benchmarks/exr_decode_2026-10-22.md`](benchmarks/exr_decode_2026-10-22.md) (5cc33682).
+
 ### Dependency integration
 
 - tiff (lilith/image-tiff fork) `ad468f42` → `da9f8647` in the workspace and zentiff fuzz manifests: upstream image-rs/image-tiff through PR 415, kept at the 0.11.3 public API. zentiff changes in [`zentiff/CHANGELOG.md`](zentiff/CHANGELOG.md).
