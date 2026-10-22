@@ -1,0 +1,21 @@
+[package]
+name = "exr-decode-bench"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.93"
+license = "MIT OR Apache-2.0"
+publish = false
+description = "Decode-speed comparison of EXR lossy compressions: zenexr / exr vs the OpenEXR C++ library"
+
+# Standalone tool: the OpenEXR side is a separate C++ binary (cpp/), so the
+# zenextras workspace and its CI never build or link it.
+[workspace]
+
+[dependencies]
+zenexr = { path = "../../zenexr" }
+exr = "1.74.2"
+enough = "0.4.4"
+rayon = "1.12.0"
+
+[lints.rust]
+unsafe_code = "forbid"
