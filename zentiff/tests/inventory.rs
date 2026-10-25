@@ -2705,3 +2705,71 @@ fn mid_walk_cancellation_preserves_the_first_reason() {
         ErrorCategory::Stopped(enough::StopReason::TimedOut)
     );
 }
+
+/// image-tiff resolves a missing PhotometricInterpretation from the color
+/// sample count (1 is BlackIsZero, 3 is RGB) and rejects the page otherwise;
+/// T4Options is read only for Group 3.
+#[test]
+fn photometric_default_and_t4_options() {
+    // No PhotometricInterpretation, one sample: decodes.
+    let mut w = W::new();
+    let strip = w.put(&[1, 2, 3, 4]);
+    let mut e = page(strip);
+    e.retain(|x| x.tag != 262);
+    let ifd0 = w.ifd(&e, 0);
+    w.set_ifd0(ifd0);
+    let data = w.b;
+    let inv = inventory(&data);
+    inv.validate().unwrap();
+    assert!(decode_summary(&data).is_ok());
+
+    // No PhotometricInterpretation, two samples: rejected.
+    let mut w = W::new();
+    let strip = w.put(&[1, 2, 3, 4, 5, 6, 7, 8]);
+    let mut e = page(strip);
+    e.retain(|x| x.tag != 262);
+    e[2] = inline(258, 3, 2, &[8, 0, 8, 0]);
+    for x in e.iter_mut() {
+        if x.tag == 277 {
+            *x = short(277, 2);
+        }
+        if x.tag == 279 {
+            *x = long(279, 8);
+        }
+    }
+    let ifd0 = w.ifd(&e, 0);
+    w.set_ifd0(ifd0);
+    let data = w.b;
+    let inv = inventory(&data);
+    inv.validate().unwrap();
+    assert!(decode_summary(&data).is_err());
+    let dir = inv
+        .parts()
+        .iter()
+        .find(|p| p.kind() == PartKind::Ifd && p.range().start == u64::from(ifd0))
+        .unwrap();
+    assert!(
+        dir.detail().unwrap().contains("color sample count"),
+        "{inv}"
+    );
+
+    // T4Options: skipped for an uncompressed page, image structure for Group 3.
+    for (compression, read) in [(1, false), (3, true)] {
+        let mut w = W::new();
+        let strip = w.put(&[1, 2, 3, 4]);
+        let mut e = page(strip);
+        e[3] = short(259, compression);
+        e.insert(5, long(292, 0));
+        let ifd0 = w.ifd(&e, 0);
+        w.set_ifd0(ifd0);
+        let inv = inventory(&w.b);
+        inv.validate().unwrap();
+        let p = entry(&inv, ifd0, 292);
+        if read {
+            assert_eq!(p.disposition(), Disposition::Structure, "{inv}");
+        } else {
+            assert_eq!(p.disposition(), Disposition::Skipped, "{inv}");
+            assert!(p.detail().unwrap().contains("Compression is 3"), "{inv}");
+        }
+    }
+}

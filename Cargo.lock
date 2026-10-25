@@ -369,9 +369,9 @@ checksum = "da7c62ceae207dd37ea5b845da6a0696c799f85e97da1ab5b7910be3c1c80223"
 
 [[package]]
 name = "fax"
-version = "0.2.7"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "caf1079563223d5d59d83c85886a56e586cfd5c1a26292e971a0fa266531ac5a"
+checksum = "70ed8646f3993cad0585c6669ffba6f7e5440a0bfb0a1f16600cae33ce7cf307"
 
 [[package]]
 name = "fd-lock"
@@ -1431,7 +1431,7 @@ dependencies = [
 [[package]]
 name = "tiff"
 version = "0.11.3"
-source = "git+https://github.com/lilith/image-tiff?rev=da9f86471ffe04575efaaf8d581e3088bf9ca5a4#da9f86471ffe04575efaaf8d581e3088bf9ca5a4"
+source = "git+https://github.com/lilith/image-tiff?rev=ae426c1e1b49160dea17da802ed17f5cbbb7058c#ae426c1e1b49160dea17da802ed17f5cbbb7058c"
 dependencies = [
  "fax",
  "flate2",

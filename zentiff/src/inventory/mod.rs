@@ -94,6 +94,13 @@ const SGILOG: &[u64] = &[34676, 34677];
 const CCITT: &[u64] = &[2, 3, 4];
 /// Read only when Compression is 7.
 const JPEG_TABLES: u16 = 347;
+/// T4Options: read only when Compression is 3 (`into_u32`); bit 0 selects
+/// two-dimensional coding, bit 1 (uncompressed mode) is unsupported.
+const T4_OPTIONS: u16 = 292;
+/// YCbCrCoefficients and ReferenceBlackWhite: zentiff reads them to convert
+/// YCbCr pages to RGB.
+const YCBCR_COEFFICIENTS: u16 = 529;
+const REFERENCE_BLACK_WHITE: u16 = 532;
 
 /// IFD0 descriptive tags folded into the re-serialized EXIF blob
 /// (`decode::IFD0_DESCRIPTIVE_TAGS`).
@@ -102,6 +109,22 @@ const IFD0_EXIF_TAGS: &[u16] = &[269, 270, 271, 272, 305, 306, 315, 316, 33432];
 /// PhotometricInterpretation values image-tiff knows (`tags.rs`): unknown
 /// values parse as `Unknown` but `from_u16` still rejects them.
 const PHOTOMETRIC_KNOWN: &[u64] = &[0, 1, 2, 3, 4, 5, 6, 8, 9, 10, 32844, 32845];
+
+/// image-tiff's PhotometricInterpretation for a page without the tag, as in
+/// libtiff's RGBA reader: one color sample (SamplesPerPixel minus
+/// ExtraSamples) is BlackIsZero, three are RGB; other counts have none.
+fn default_photometric(w: &Walk<'_>, ifd: &Ifd) -> Option<u64> {
+    let spp = match w.find(ifd, 277) {
+        None => 1,
+        Some(e) => w.single_uint(e)?,
+    };
+    let extra = w.find(ifd, 338).map_or(0, |e| e.count);
+    match spp.checked_sub(extra)? {
+        1 => Some(1),
+        3 => Some(2),
+        _ => None,
+    }
+}
 
 /// How a page lays out its pixels (`Image::from_reader`, aligned with
 /// libtiff): TileWidth or TileLength makes a page tiled; a tiled page takes
@@ -404,9 +427,13 @@ impl TiffPolicy<'_> {
         if width == 0 || height == 0 || !fits(width) || !fits(height) {
             return Some("ImageWidth or ImageLength zero or too large");
         }
-        if !matches!(int(262), Ok(Some(p)) if PHOTOMETRIC_KNOWN.contains(&p)) {
-            return Some("PhotometricInterpretation missing or unknown");
-        }
+        // A present PhotometricInterpretation must be known; a missing one is
+        // resolved from the color sample count below.
+        let photometric = match int(262) {
+            Ok(Some(p)) if PHOTOMETRIC_KNOWN.contains(&p) => Some(p),
+            Ok(None) => None,
+            _ => return Some("PhotometricInterpretation not one known value"),
+        };
         let Ok(compression) = int(259) else {
             return Some("Compression not one integer");
         };
@@ -422,6 +449,11 @@ impl TiffPolicy<'_> {
         }
         if one(338).is_some_and(|e| e.count > spp) {
             return Some("more ExtraSamples than samples");
+        }
+        if photometric.is_none() && default_photometric(w, ifd).is_none() {
+            return Some(
+                "PhotometricInterpretation missing and the color sample count is not 1 or 3",
+            );
         }
         if let Some(e) = one(339) {
             let v = w.uints(e, 64);
@@ -456,6 +488,14 @@ impl TiffPolicy<'_> {
             || !matches!(int(FILL_ORDER), Ok(None | Some(0..=0xFFFF)))
         {
             return Some("FillOrder not one 16-bit integer");
+        }
+        // `into_u32`: a present T4Options must be one BYTE/UNDEFINED/SHORT/
+        // LONG/LONG8/IFD integer that fits in 32 bits.
+        if compression == Some(3)
+            && (one(T4_OPTIONS).is_some_and(|e| !matches!(e.typ, 1 | 3 | 4 | 7 | 13 | 16 | 18))
+                || !matches!(int(T4_OPTIONS), Ok(None | Some(0..=0xFFFF_FFFF))))
+        {
+            return Some("T4Options not one 32-bit integer");
         }
         let limits = self.page_limits(ifd);
         if matches!(int(262), Ok(Some(3))) {
@@ -570,6 +610,23 @@ impl TiffPolicy<'_> {
                 Err("ColorMap is read only for a palette image (PhotometricInterpretation 3)")
             };
         }
+        if tag == YCBCR_COEFFICIENTS || tag == REFERENCE_BLACK_WHITE {
+            // Read by zentiff itself, to convert YCbCr samples to RGB.
+            let ycbcr = w.find(ifd, 262).and_then(|e| w.single_uint(e)) == Some(6);
+            return if ycbcr {
+                Ok(true)
+            } else {
+                Err("read only for YCbCr (PhotometricInterpretation 6), to convert it to RGB")
+            };
+        }
+        if tag == T4_OPTIONS {
+            let group3 = w.find(ifd, 259).and_then(|e| w.single_uint(e)) == Some(3);
+            return if group3 {
+                Ok(true)
+            } else {
+                Err("T4Options is read only when Compression is 3")
+            };
+        }
         if tag == JPEG_TABLES {
             let jpeg = w.find(ifd, 259).and_then(|e| w.single_uint(e)) == Some(7);
             return if jpeg {
@@ -587,7 +644,7 @@ impl TiffPolicy<'_> {
         let int = |t: u16| w.find(ifd, t).and_then(|e| w.single_uint(e));
         let height = int(257)?;
         let compression = int(259).unwrap_or(1);
-        let photometric = int(262)?;
+        let photometric = int(262).or_else(|| default_photometric(w, ifd))?;
         match tag {
             278 if int(278).is_some_and(|r| r >= height) => Some(
                 "at or above the image height: one strip per plane, so any such value decodes the same",
