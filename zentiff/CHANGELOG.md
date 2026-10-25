@@ -8,6 +8,9 @@ semantic versioning.
 
 ### Changed
 
+- Workspace builds use the image-tiff fork at `ae426c1e`: tiled planar and floating-point-predictor border tiles, Group 3 2D, Modified Huffman and Group 3 without EOLs, CCITT wider than 65,535 pixels and Group 4 strips without EOFB, YCbCr subsampling without JPEG (including border tiles), a default for a missing PhotometricInterpretation, and `Decoder::new` reading IFD0 with 0.11.3's value limits (the IFD0 1 MiB regression is gone). On tiff-conformance `valid/`, dscf0013.tif and ycbcr-cat.tif now decode, and testfax3_bug54_1dnoEOL.tif matches libtiff. Inventory model: T4Options is read for Group 3, a missing PhotometricInterpretation is accepted with 1 or 3 color samples, YCbCrCoefficients and ReferenceBlackWhite are read for YCbCr.
+- The fuzz crate no longer patches `fax` to a local checkout; crates.io fax 0.3.0 has the fixes it was waiting for.
+
 - Workspace builds use the lilith/image-tiff fork at `da9f8647`, which now carries upstream through PR 415. Of the tiff-conformance corpus, 144 files now decode with `--all-features` against 104 before, and none stopped decoding. The 40 new ones include palette files (with `_palette`; output matches tifffile's indices and colormap `>> 8` on all 7), CIE LogL/LogLuv (SGILog), extended and odd bit depths (2/4/10/12/14/24-bit), CCITT Group 3 variants, and tiled pages whose offsets sit in the strip tags (libtiff's tile detection). Upstream also added 16-bit CIELab and old-style LZW, which the corpus does not cover. Published zentiff still builds against crates.io tiff 0.11.3.
 - `derive_tiff_limits` sets image-tiff's `ifd_value_size` to `decoding_buffer_size`. tiff 0.11.3 never enforced that limit; the fork caps raw value bytes at it (1 MiB by default), which would have dropped ICC profiles and XMP packets over 1 MiB. IFD0's own tags are parsed by `Decoder::new` before `with_limits` and keep the 1 MiB default, so a BigTIFF with more than 131,072 tile offsets fails to open in workspace builds until zentiff can use `Decoder::open` (not in 0.11.3). See `docs/GEOTIFF_PYRAMIDS.md`.
 - The inventory model follows the new image-tiff: FillOrder is read on every page (its value matters only for CCITT), a page is tiled when it has TileWidth or TileLength and takes tile offsets from the strip tags when it lacks TileOffsets, RowsPerStrip is read only for strips, ColorMap is read and validated for palette pages, LogL/LogLuv are known photometrics, SGILog overrides SampleFormat, and out-of-line values are checked against `ifd_value_size` as well as the in-memory bound.
@@ -17,6 +20,11 @@ semantic versioning.
 - `docs/GEOTIFF_PYRAMIDS.md`: GeoTIFF 1.1, COG 1.0 and pyramid conventions, reference implementations, the zencodec hooks, and a stepwise plan for level, region, range-driven and COG support.
 
 ### Fixed
+
+- YCbCr pages decoded as RGB without conversion: every YCbCr TIFF, JPEG-in-TIFF included, had wrong colors (up to 251 levels off). They are now converted with YCbCrCoefficients and ReferenceBlackWhite (TIFF 6.0 section 21) and match libtiff within 1 level (JPEG within 4, a JPEG decoder difference). Tests: `tests/color_spaces.rs`.
+- Associated alpha (ExtraSamples 1) was labelled straight; it is now labelled premultiplied in both decode output and probe descriptors. CMYK with associated alpha is reported unsupported.
+- Lab pages were returned as RGB; they are now an unsupported-feature error.
+- The ICC profile tag is written with field type UNDEFINED, as ICC.1 Annex B requires, instead of BYTE.
 
 - A CICP-only source whose colour needs a profile outside the always-built set (PQ, HLG) was written with no ICC, so readers took it as sRGB. The `zencodec` feature now enables `zenpixels-convert/icc-db`, which serves a profile for every assigned H.273 pair without a CMS, and an encode that still can't get one fails instead of writing the pixels unlabelled. Test: `pq_cicp_only_source_synthesizes_a_pq_icc`.
 

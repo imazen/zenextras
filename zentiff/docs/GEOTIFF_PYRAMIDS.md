@@ -30,16 +30,12 @@ zentiff, image-tiff and zencodec were checked against source at zenextras
 
 ### Limits that bite large GeoTIFFs today
 
-- **IFD0's tag values are capped at 1 MiB of raw bytes in workspace builds.**
-  image-tiff now enforces `Limits::ifd_value_size` on every out-of-line value
-  (0.11.3 did not). `Decoder::new` parses IFD0 before `with_limits` can apply
-  zentiff's limits, so IFD0 gets image-tiff's default. A BigTIFF needs more
-  than 1 MiB of TileOffsets (8 bytes each) once it has more than 131,072
-  tiles, for example 100k × 100k pixels at 256 × 256 tiles; IFD0 is then
-  rejected. The fix is `Decoder::open` + `with_limits` + `next_image`, which
-  does not exist in 0.11.3, so it waits for a tiff release that has it.
-  `derive_tiff_limits` already sets `ifd_value_size` to
-  `decoding_buffer_size` for every later read.
+- IFD0's tag values: image-tiff now enforces `Limits::ifd_value_size` on
+  out-of-line values (0.11.3 did not), and `Decoder::new` parses IFD0 before
+  `with_limits`. The fork's `Decoder::new` reads IFD0 with the value limit
+  raised to `decoding_buffer_size` (fork `2a7d124f`), so first images with
+  more than 1 MiB of offsets open; `derive_tiff_limits` sets
+  `ifd_value_size` for every later read.
 - Whole-image decode only: a 100k × 100k RGB8 image needs 30 GB of output
   buffer, far past the defaults (`max_pixels` 120 M, `max_memory_bytes`
   4 GiB). Region and level decode are the only workable paths for such
@@ -170,8 +166,8 @@ Ordered so that each step lands on its own with tests.
   generic ones.
 - Each level's scale is its measured width/height ratio to level 0.
 - Needs from image-tiff: decode an IFD reached by pointer (SubIFD levels).
-  `read_directory(ptr)` reads the directory but cannot decode it as an
-  image; upstream PR [#284](https://github.com/image-rs/image-tiff/pull/284)
+  `read_directory(ptr)` and `read_directory_tags` read a directory and its
+  tags but cannot decode it as an image; upstream PR [#284](https://github.com/image-rs/image-tiff/pull/284)
   (independent IFD/SubIFD seeking) is open. Land the equivalent in the fork
   first.
 - Fixtures: COG (GDAL), libvips pyramids in the main chain and in SubIFDs,
@@ -239,13 +235,16 @@ Ordered so that each step lands on its own with tests.
 
 - Decode coverage today, through image-tiff: none, LZW, Deflate (8 and
   32946), PackBits, CCITT Group 3 and 4, JPEG (zune-jpeg), WebP, ZSTD,
-  SGILog/SGILog24. Missing: CCITT RLE (2), LERC 34887 (+ tag 50674), LZMA 34925, JPEG XL 50002 (GDAL ≤ 3.10) and
+  SGILog/SGILog24, and in the fork CCITT RLE (2) and Group 3 2D (fork
+  `19ab3adb`). Missing: LERC 34887 (+ tag 50674), LZMA 34925, JPEG XL 50002 (GDAL ≤ 3.10) and
   52546 (DNG 1.7; GDAL ≥ 3.11 writes this), JPEG 2000 33003/33005 (Aperio),
   DNG predictors 34892–34895.
-- The fork's unmerged `feature/pluggable-decompressors` branch adds a
-  `TileDecompressor` registry. With it, zenjpeg, zenwebp, zenjxl and zenjp2
-  can decode TIFF tiles, which closes the JXL and JPEG 2000 gaps with our own
-  codecs.
+- `Decoder::with_decompressor` (fork PR lilith/image-tiff#9, in review)
+  takes a `ChunkDecompressor` per compression method. Its output replaces only
+  decompression, so predictors and the rest of the pipeline still apply. With
+  it, zenjpeg, zenwebp, zenjxl and zenjp2 can decode TIFF tiles, which closes
+  the JXL and JPEG 2000 gaps with our own codecs. The March
+  `feature/pluggable-decompressors` branch is superseded.
 
 ## 6. Open decisions
 

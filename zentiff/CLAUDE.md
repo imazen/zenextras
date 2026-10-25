@@ -2,14 +2,17 @@
 
 ## Known Bugs
 
-- Regression in workspace builds since the image-tiff fork bump to
-  `da9f8647` (2026-10-20): IFD0's tag values are capped at image-tiff's
-  default `ifd_value_size` (1 MiB raw). `Decoder::new` parses IFD0 before
-  `with_limits`, so a BigTIFF with more than 131,072 tile offsets (or a
-  classic TIFF with more than 262,144 strip offsets) fails to open.
-  Published builds against crates.io tiff 0.11.3 are unaffected (0.11.3 did
-  not enforce the limit). Fix: `Decoder::open` + `with_limits` +
-  `next_image`, once a tiff release has it. See `docs/GEOTIFF_PYRAMIDS.md`.
+- Fixed (fork `2a7d124f`, 2026-10-24): after the fork bump to `da9f8647`,
+  IFD0's tag values were capped at image-tiff's default `ifd_value_size`
+  because `Decoder::new` parsed IFD0 before `with_limits`. The fork's
+  `Decoder::new` now reads the first directory with 0.11.3's behaviour.
+
+- Fixed 2026-10-24: YCbCr pages (JPEG-in-TIFF included) were returned as RGB
+  without conversion, up to 251 levels off; associated alpha was labelled
+  straight. Found by diffing the tiff-conformance corpus against libtiff
+  (Pillow). Lab now errors instead of being mislabelled. Remaining known
+  differences: JPEG-compressed YCbCr within 4 levels of libtiff (zune-jpeg vs
+  libjpeg decode), signed 8-bit gray offset by 128 (convention).
 
 - Resolved during metadata integration: `TiffError` retained typed limit and
   unsupported-operation values but did not expose them through
