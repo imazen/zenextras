@@ -783,8 +783,7 @@ where
         let dir = image.encoder();
 
         if let Some(icc) = meta.icc.as_deref() {
-            dir.write_tag(Tag::IccProfile, icc)
-                .map_err(|e| at!(TiffError::from(e)))?;
+            write_icc_profile(dir, icc)?;
         }
         if let Some(xmp) = meta.xmp.as_deref() {
             // XMP is carried in tag 700 as a byte (UNDEFINED/BYTE) array.
@@ -855,8 +854,7 @@ where
         let dir = image.encoder();
 
         if let Some(icc) = meta.icc.as_deref() {
-            dir.write_tag(Tag::IccProfile, icc)
-                .map_err(|e| at!(TiffError::from(e)))?;
+            write_icc_profile(dir, icc)?;
         }
         if let Some(xmp) = meta.xmp.as_deref() {
             dir.write_tag(Tag::Unknown(700), xmp)
@@ -1201,6 +1199,21 @@ fn is_ifd0_descriptive_tag(tag: u16) -> bool {
 /// (source byte order) into typed values and writing them via `write_tag` (which
 /// re-encodes to the output file's byte order). Returns `true` if a tag was
 /// written, `false` if the type/count was unsupported or malformed.
+/// Write the ICC profile (tag 34675) with field type UNDEFINED, which ICC.1
+/// Annex B requires; `write_tag` with a byte slice would type it BYTE.
+#[cfg(feature = "zencodec")]
+fn write_icc_profile<W: std::io::Write + std::io::Seek, K: tiff::encoder::TiffKind>(
+    dir: &mut tiff::encoder::DirectoryEncoder<'_, W, K>,
+    icc: &[u8],
+) -> Result<()> {
+    use tiff::tags::{Tag, Type};
+    let entry = dir
+        .write_entry_bytes(Type::UNDEFINED, icc)
+        .map_err(|e| at!(TiffError::from(e)))?;
+    dir.extend_from(&[(Tag::IccProfile, entry)].into_iter().collect());
+    Ok(())
+}
+
 #[track_caller]
 #[cfg(feature = "zencodec")]
 fn write_exif_entry<W: std::io::Write + std::io::Seek, K: tiff::encoder::TiffKind>(
@@ -1366,5 +1379,34 @@ mod tests {
         assert_eq!(config.compression, Compression::Deflate);
         assert_eq!(config.predictor, Predictor::None);
         assert!(config.big_tiff);
+    }
+
+    /// ICC.1 Annex B: the ICC profile tag has field type UNDEFINED (7).
+    #[test]
+    #[cfg(feature = "zencodec")]
+    fn icc_profile_is_written_as_undefined() {
+        let icc = vec![0u8, 0, 2, 12, b'a', b'c', b's', b'p', 1, 2, 3, 4];
+        let meta = TiffEncodeMeta {
+            icc: Some(icc.clone()),
+            ..Default::default()
+        };
+        let buf = zenpixels::PixelBuffer::from_vec(vec![7u8; 3 * 4], 2, 2, PixelDescriptor::RGB8)
+            .unwrap();
+        for big_tiff in [false, true] {
+            let config = TiffEncodeConfig::default().with_big_tiff(big_tiff);
+            let data =
+                encode_with_meta(&buf.as_slice(), &config, &meta, &enough::Unstoppable).unwrap();
+            let mut decoder = tiff::decoder::Decoder::open(std::io::Cursor::new(data)).unwrap();
+            decoder.next_image().unwrap();
+            let mut ifd = decoder.current_ifd();
+            let entry = ifd
+                .directory()
+                .get(tiff::tags::Tag::IccProfile)
+                .cloned()
+                .unwrap();
+            assert_eq!(entry.field_type(), tiff::tags::Type::UNDEFINED);
+            let value = ifd.find_tag(tiff::tags::Tag::IccProfile).unwrap().unwrap();
+            assert_eq!(value.into_u8_vec().unwrap(), icc);
+        }
     }
 }
