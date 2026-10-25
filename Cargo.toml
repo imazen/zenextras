@@ -17,5 +17,10 @@ zencodec-testkit = { git = "https://github.com/imazen/zencodec", rev = "d327434b
 # Pinned PDF stream resource-limit fork used by zenpdf.
 hayro-syntax = { git = "https://github.com/lilith/hayro", rev = "beec7225f7f8cec6cb62f6ecf116db738177d0b9" }
 
+# zenjpeg 0.9.0 (unreleased; byte-exact with libjpeg-turbo) for zentiff's JPEG pages, and the
+# unreleased zenanalyze 0.2 it requires. Drop once both are on crates.io.
+zenjpeg = { git = "https://github.com/imazen/zenjpeg", rev = "a2a128ab0bc36f01338225f61c285f462ae67ca6" }
+zenanalyze = { git = "https://github.com/imazen/zenanalyze", rev = "8ca647c525cf488c61bbf35475ca8ba3db6b628e" }
+
 # Pinned TIFF scratch-buffer resource-limit fork used by zentiff.
 tiff = { git = "https://github.com/lilith/image-tiff", rev = "0219e7099c658422d47bd986ff279b686202b2e0" }

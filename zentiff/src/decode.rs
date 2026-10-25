@@ -836,10 +836,6 @@ pub fn decode(
                 "Lab PhotometricInterpretation (L*a*b* samples are not converted to RGB)".into()
             )));
         }
-        let ycbcr = match color_type {
-            tiff::ColorType::YCbCr(bits) => Some(YCbCrToRgb::from_tags(&mut decoder, bits)?),
-            _ => None,
-        };
 
         // Check limits before allocating.
         let output_bpp = output_bytes_per_pixel(color_type);
@@ -875,18 +871,38 @@ pub fn decode(
 
         extract_metadata(&mut decoder, &mut info);
 
-        // Use read_image_to_buffer instead of read_image to support planar
-        // images. read_image() only reads the first plane for planar TIFFs
-        // (known bug).
-        let layout = decoder
-            .image_buffer_layout()
-            .map_err(|e| at!(TiffError::from(e)))?;
-        let num_planes = layout.planes;
+        // JPEG pages zenjpeg handles decode there, already as RGB (or gray),
+        // byte-identical to libtiff with libjpeg-turbo.
+        #[cfg(feature = "zenjpeg")]
+        let jpeg =
+            crate::jpeg::decode_page(&mut decoder, data, width, height, config.alloc_pref, cancel)?;
+        #[cfg(not(feature = "zenjpeg"))]
+        let jpeg: Option<tiff::decoder::DecodingResult> = None;
+        // YCbCr samples from image-tiff need converting; zenjpeg already returned RGB, so its
+        // pages never read YCbCrCoefficients / ReferenceBlackWhite.
+        let ycbcr = match color_type {
+            tiff::ColorType::YCbCr(bits) if jpeg.is_none() => {
+                Some(YCbCrToRgb::from_tags(&mut decoder, bits)?)
+            }
+            _ => None,
+        };
 
-        let mut result = tiff::decoder::DecodingResult::U8(Vec::new());
-        decoder
-            .read_image_to_buffer(&mut result)
-            .map_err(|e| at!(TiffError::from(e)))?;
+        let (result, num_planes) = match jpeg {
+            Some(result) => (result, 1),
+            None => {
+                // Use read_image_to_buffer instead of read_image to support planar
+                // images. read_image() only reads the first plane for planar TIFFs
+                // (known bug).
+                let layout = decoder
+                    .image_buffer_layout()
+                    .map_err(|e| at!(TiffError::from(e)))?;
+                let mut result = tiff::decoder::DecodingResult::U8(Vec::new());
+                decoder
+                    .read_image_to_buffer(&mut result)
+                    .map_err(|e| at!(TiffError::from(e)))?;
+                (result, layout.planes)
+            }
+        };
 
         let (is_float, is_signed) = result_format_flags(&result);
         info.is_float = is_float;

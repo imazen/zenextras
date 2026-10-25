@@ -28,6 +28,9 @@ zenmeta = { git = "https://github.com/imazen/zencodec", rev = "d327434b0826a3e39
 # lowering a CICP-only source for a format (TIFF) with no CICP carrier.
 zenpixels-convert = { version = ">=0.2.13, <0.4.0", default-features = false, optional = true }
 bytemuck = { version = "1.25.2", default-features = false, features = ["extern_crate_alloc"] }
+# JPEG pages (Compression 7) through zenjpeg, byte-exact with libjpeg-turbo (islow IDCT,
+# fancy upsampling, its YCbCr->RGB tables). 0.9.0 is patched in by the workspace until released.
+zenjpeg = { version = "0.9.0", default-features = false, optional = true }
 
 [dev-dependencies]
 codec-corpus = "1.1.0"
@@ -44,11 +47,14 @@ zencodec-testkit = ">=0.1.0, <0.3.0"
 
 [features]
 default = ["std", "deflate", "lzw"]
-all-codecs = ["deflate", "fax", "jpeg", "lzw", "webp", "zstd"]
+all-codecs = ["deflate", "fax", "jpeg", "lzw", "webp", "zstd", "zenjpeg"]
 std = ["tiff/default", "enough/std", "whereat/std"]
 deflate = ["tiff/deflate"]
 fax = ["tiff/fax"]
 jpeg = ["tiff/jpeg"]
+# Decode 8-bit gray, RGB and YCbCr JPEG pages with zenjpeg instead of image-tiff's zune-jpeg:
+# byte-identical to libtiff with libjpeg-turbo. Other JPEG pages keep using `jpeg`.
+zenjpeg = ["std", "dep:zenjpeg"]
 lzw = ["tiff/lzw"]
 webp = ["tiff/webp"]
 zstd = ["tiff/zstd"]

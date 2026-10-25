@@ -110,6 +110,20 @@ const IFD0_EXIF_TAGS: &[u16] = &[269, 270, 271, 272, 305, 306, 315, 316, 33432];
 /// values parse as `Unknown` but `from_u16` still rejects them.
 const PHOTOMETRIC_KNOWN: &[u64] = &[0, 1, 2, 3, 4, 5, 6, 8, 9, 10, 32844, 32845];
 
+/// Whether `jpeg::decode_page` takes this page: JPEG compression, chunky, three 8-bit samples
+/// and no extra samples (the YCbCr case; the stream's own color space is checked at decode).
+fn zenjpeg_page(w: &Walk<'_>, ifd: &Ifd) -> bool {
+    let int = |t: u16| w.find(ifd, t).and_then(|e| w.single_uint(e));
+    let bits_8 = w
+        .find(ifd, 258)
+        .is_some_and(|e| w.uints(e, 64).iter().all(|&b| b == 8));
+    int(259) == Some(7)
+        && matches!(int(284), None | Some(1))
+        && int(277) == Some(3)
+        && bits_8
+        && w.find(ifd, 338).is_none()
+}
+
 /// image-tiff's PhotometricInterpretation for a page without the tag, as in
 /// libtiff's RGBA reader: one color sample (SamplesPerPixel minus
 /// ExtraSamples) is BlackIsZero, three are RGB; other counts have none.
@@ -613,11 +627,17 @@ impl TiffPolicy<'_> {
         if tag == YCBCR_COEFFICIENTS || tag == REFERENCE_BLACK_WHITE {
             // Read by zentiff itself, to convert YCbCr samples to RGB.
             let ycbcr = w.find(ifd, 262).and_then(|e| w.single_uint(e)) == Some(6);
-            return if ycbcr {
-                Ok(true)
-            } else {
-                Err("read only for YCbCr (PhotometricInterpretation 6), to convert it to RGB")
-            };
+            if !ycbcr {
+                return Err(
+                    "read only for YCbCr (PhotometricInterpretation 6), to convert it to RGB",
+                );
+            }
+            if cfg!(feature = "zenjpeg") && zenjpeg_page(w, ifd) {
+                return Err(
+                    "not read for a JPEG page zenjpeg decodes: it converts YCbCr with libjpeg-turbo's fixed tables, as libtiff does",
+                );
+            }
+            return Ok(true);
         }
         if tag == T4_OPTIONS {
             let group3 = w.find(ifd, 259).and_then(|e| w.single_uint(e)) == Some(3);

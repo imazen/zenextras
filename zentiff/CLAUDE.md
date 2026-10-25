@@ -11,8 +11,9 @@
   without conversion, up to 251 levels off; associated alpha was labelled
   straight. Found by diffing the tiff-conformance corpus against libtiff
   (Pillow). Lab now errors instead of being mislabelled. Remaining known
-  differences: JPEG-compressed YCbCr within 4 levels of libtiff (zune-jpeg vs
-  libjpeg decode), signed 8-bit gray offset by 128 (convention).
+  differences: without the `zenjpeg` feature, JPEG-compressed YCbCr is within
+  4 levels of libtiff (zune-jpeg vs libjpeg-turbo; with `zenjpeg` it is
+  byte-identical); signed 8-bit gray offset by 128 (convention).
 
 - Resolved during metadata integration: `TiffError` retained typed limit and
   unsupported-operation values but did not expose them through

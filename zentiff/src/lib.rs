@@ -27,7 +27,8 @@
 //! - Gray, GrayAlpha, RGB, RGBA in u8/u16/u32/u64/i8/i16/i32/i64/f16/f32/f64
 //! - Palette (expanded to RGB8)
 //! - CMYK/CMYKA (converted to RGBA)
-//! - YCbCr (converted to RGB with YCbCrCoefficients and ReferenceBlackWhite)
+//! - YCbCr (converted to RGB with YCbCrCoefficients and ReferenceBlackWhite; JPEG pages with
+//!   the `zenjpeg` feature decode through zenjpeg, byte-identical to libtiff + libjpeg-turbo)
 //! - Associated alpha is labelled premultiplied
 //! - Lab is not supported (no conversion to RGB)
 //!
@@ -57,6 +58,8 @@ mod encode;
 mod error;
 #[cfg(feature = "inventory")]
 mod inventory;
+#[cfg(feature = "zenjpeg")]
+mod jpeg;
 
 /// Sweep-plan construction over the encoder knob space (variant-
 /// generation playbook; see `zenjpeg/docs/VARIANT_GENERATION.md`).

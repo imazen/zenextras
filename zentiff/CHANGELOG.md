@@ -17,6 +17,8 @@ semantic versioning.
 
 ### Added
 
+- `zenjpeg` feature (in `all-codecs`): JPEG pages (Compression 7) with 8-bit gray, RGB or YCbCr samples decode through zenjpeg, byte-identical to libtiff with libjpeg-turbo (YCbCr converted to RGB as libtiff's JPEGCOLORMODE_RGB does). Measured on 64 JPEG TIFFs (4:4:4, 4:2:2, 4:2:0; q30/75/95; strips and tiles; odd sizes; gray; RGB photometric; the four tiff-conformance JPEG files): all byte-identical, where image-tiff's zune-jpeg path is off by up to 4 levels. Other JPEG pages still use image-tiff. Needs zenjpeg 0.9.0 and zenanalyze 0.2.0, patched in by the workspace from git until they are released; zentiff cannot publish with this feature until then. Test: `tests/jpeg_libjpeg_turbo.rs`.
+
 - `docs/GEOTIFF_PYRAMIDS.md`: GeoTIFF 1.1, COG 1.0 and pyramid conventions, reference implementations, the zencodec hooks, and a stepwise plan for level, region, range-driven and COG support.
 
 ### Fixed
