@@ -77,6 +77,9 @@ pub struct TiffInfo {
     pub page_count: Option<u32>,
     /// Page name (Tag 285). `None` if not present.
     pub page_name: Option<alloc::string::String>,
+    /// ExtraSamples marks the first extra sample as associated (premultiplied)
+    /// alpha.
+    pub(crate) associated_alpha: bool,
 }
 
 /// TIFF decode output.
@@ -699,6 +702,12 @@ fn extract_metadata<R: std::io::Read + std::io::Seek>(
     info.compression = read_u16_tag(decoder, Tag::Compression);
     info.photometric = read_u16_tag(decoder, Tag::PhotometricInterpretation);
     info.samples_per_pixel = read_u16_tag(decoder, Tag::SamplesPerPixel);
+    info.associated_alpha = decoder
+        .find_tag(Tag::ExtraSamples)
+        .ok()
+        .flatten()
+        .and_then(|v| v.into_u16_vec().ok())
+        .is_some_and(|v| v.first() == Some(&1));
 
     // Page name
     info.page_name = read_ascii_tag(decoder, TAG_PAGE_NAME);
@@ -749,6 +758,7 @@ pub fn probe(data: &[u8]) -> Result<TiffInfo> {
             samples_per_pixel: None,
             page_count: None,
             page_name: None,
+            associated_alpha: false,
         };
 
         extract_metadata(&mut decoder, &mut info);
@@ -808,83 +818,94 @@ pub fn decode(
     // tracking work as before; `catch_unwind`'s outer `Err` means a panic was
     // caught and is mapped to a `TiffError::Decode`.
     let limits = derive_tiff_limits(config);
-    let guarded = std::panic::catch_unwind(std::panic::AssertUnwindSafe(
-        || -> Result<(TiffInfo, tiff::decoder::DecodingResult, usize, Option<Vec<u16>>)> {
-            let cursor = std::io::Cursor::new(data);
-            let mut decoder = tiff::decoder::Decoder::new(cursor)
-                .map_err(|e| at!(TiffError::from(e)))?
-                // Bound image-tiff's intermediate/decoding-buffer allocations so
-                // an inflated strip/tile count can't allocate large intermediates
-                // under our pixel/memory cap.
-                .with_limits(limits);
-            let (width, height) = decoder.dimensions().map_err(|e| at!(TiffError::from(e)))?;
-            let color_type = decoder.colortype().map_err(|e| at!(TiffError::from(e)))?;
+    let guarded = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<Decoded> {
+        let cursor = std::io::Cursor::new(data);
+        let mut decoder = tiff::decoder::Decoder::new(cursor)
+            .map_err(|e| at!(TiffError::from(e)))?
+            // Bound image-tiff's intermediate/decoding-buffer allocations so
+            // an inflated strip/tile count can't allocate large intermediates
+            // under our pixel/memory cap.
+            .with_limits(limits);
+        let (width, height) = decoder.dimensions().map_err(|e| at!(TiffError::from(e)))?;
+        let color_type = decoder.colortype().map_err(|e| at!(TiffError::from(e)))?;
+        if matches!(color_type, tiff::ColorType::Lab(_)) {
+            // image-tiff returns the L*a*b* samples as stored; there is no
+            // conversion to RGB here, and passing them on as RGB would be
+            // wrong colors.
+            return Err(at!(TiffError::UnsupportedFeature(
+                "Lab PhotometricInterpretation (L*a*b* samples are not converted to RGB)".into()
+            )));
+        }
+        let ycbcr = match color_type {
+            tiff::ColorType::YCbCr(bits) => Some(YCbCrToRgb::from_tags(&mut decoder, bits)?),
+            _ => None,
+        };
 
-            // Check limits before allocating.
-            let output_bpp = output_bytes_per_pixel(color_type);
-            let peak_factor = decode_peak_factor(color_type);
-            config.validate(width, height, output_bpp as u32, peak_factor)?;
+        // Check limits before allocating.
+        let output_bpp = output_bytes_per_pixel(color_type);
+        let peak_factor = decode_peak_factor(color_type);
+        config.validate(width, height, output_bpp as u32, peak_factor)?;
 
-            // Extract metadata before decoding pixels, because image reading
-            // repositions the stream and may interfere with tag reads.
-            let mut info = TiffInfo {
-                width,
-                height,
-                channels: color_type.num_samples(),
-                bit_depth: color_type.bit_depth(),
-                color_type,
-                is_float: false,
-                is_signed: false,
-                icc_profile: None,
-                exif: None,
-                xmp: None,
-                iptc: None,
-                resolution_unit: None,
-                x_resolution: None,
-                y_resolution: None,
-                dpi: None,
-                orientation: None,
-                compression: None,
-                photometric: None,
-                samples_per_pixel: None,
-                page_count: None,
-                page_name: None,
-            };
+        // Extract metadata before decoding pixels, because image reading
+        // repositions the stream and may interfere with tag reads.
+        let mut info = TiffInfo {
+            width,
+            height,
+            channels: color_type.num_samples(),
+            bit_depth: color_type.bit_depth(),
+            color_type,
+            is_float: false,
+            is_signed: false,
+            icc_profile: None,
+            exif: None,
+            xmp: None,
+            iptc: None,
+            resolution_unit: None,
+            x_resolution: None,
+            y_resolution: None,
+            dpi: None,
+            orientation: None,
+            compression: None,
+            photometric: None,
+            samples_per_pixel: None,
+            page_count: None,
+            page_name: None,
+            associated_alpha: false,
+        };
 
-            extract_metadata(&mut decoder, &mut info);
+        extract_metadata(&mut decoder, &mut info);
 
-            // Use read_image_to_buffer instead of read_image to support planar
-            // images. read_image() only reads the first plane for planar TIFFs
-            // (known bug).
-            let layout = decoder
-                .image_buffer_layout()
-                .map_err(|e| at!(TiffError::from(e)))?;
-            let num_planes = layout.planes;
+        // Use read_image_to_buffer instead of read_image to support planar
+        // images. read_image() only reads the first plane for planar TIFFs
+        // (known bug).
+        let layout = decoder
+            .image_buffer_layout()
+            .map_err(|e| at!(TiffError::from(e)))?;
+        let num_planes = layout.planes;
 
-            let mut result = tiff::decoder::DecodingResult::U8(Vec::new());
-            decoder
-                .read_image_to_buffer(&mut result)
-                .map_err(|e| at!(TiffError::from(e)))?;
+        let mut result = tiff::decoder::DecodingResult::U8(Vec::new());
+        decoder
+            .read_image_to_buffer(&mut result)
+            .map_err(|e| at!(TiffError::from(e)))?;
 
-            let (is_float, is_signed) = result_format_flags(&result);
-            info.is_float = is_float;
-            info.is_signed = is_signed;
+        let (is_float, is_signed) = result_format_flags(&result);
+        info.is_float = is_float;
+        info.is_signed = is_signed;
 
-            #[cfg(feature = "_palette")]
-            let color_map = decoder
-                .find_tag(Tag::ColorMap)
-                .map_err(|e| at!(TiffError::from(e)))?
-                .map(|v| v.into_u16_vec())
-                .transpose()
-                .map_err(|e| at!(TiffError::from(e)))?;
-            #[cfg(not(feature = "_palette"))]
-            let color_map: Option<Vec<u16>> = None;
+        #[cfg(feature = "_palette")]
+        let color_map = decoder
+            .find_tag(Tag::ColorMap)
+            .map_err(|e| at!(TiffError::from(e)))?
+            .map(|v| v.into_u16_vec())
+            .transpose()
+            .map_err(|e| at!(TiffError::from(e)))?;
+        #[cfg(not(feature = "_palette"))]
+        let color_map: Option<Vec<u16>> = None;
 
-            Ok((info, result, num_planes, color_map))
-        },
-    ));
+        Ok((info, result, num_planes, color_map, ycbcr))
+    }));
 
-    let (info, mut result, num_planes, color_map) = match guarded {
+    let (info, mut result, num_planes, color_map, ycbcr) = match guarded {
         Ok(inner) => inner?,
         Err(_) => {
             return Err(at!(TiffError::Decode(
@@ -911,6 +932,17 @@ pub fn decode(
         )?;
     }
 
+    if let Some(ycbcr) = ycbcr {
+        ycbcr.convert(&mut result)?;
+    }
+
+    if info.associated_alpha && matches!(color_type, tiff::ColorType::CMYKA(_)) {
+        // The CMYK-to-RGB conversion assumes unassociated ink values.
+        return Err(at!(TiffError::UnsupportedFeature(
+            "CMYK with associated (premultiplied) alpha".into()
+        )));
+    }
+
     let (pixels, _descriptor) = convert_to_pixel_buffer(
         width,
         height,
@@ -920,7 +952,135 @@ pub fn decode(
         config.alloc_pref,
     )?;
 
+    // Associated alpha: the color samples are premultiplied. Label them so,
+    // rather than as straight alpha.
+    let pixels = if info.associated_alpha && pixels.descriptor().alpha().is_some() {
+        pixels.with_alpha_mode(Some(zenpixels::AlphaMode::Premultiplied))
+    } else {
+        pixels
+    };
+
     Ok(TiffDecodeOutput { pixels, info })
+}
+
+/// What the guarded decode returns: info, samples, plane count, ColorMap and
+/// the YCbCr conversion to apply.
+type Decoded = (
+    TiffInfo,
+    tiff::decoder::DecodingResult,
+    usize,
+    Option<Vec<u16>>,
+    Option<YCbCrToRgb>,
+);
+
+/// YCbCr to RGB conversion of TIFF 6.0 section 21, as libtiff's RGBA
+/// interface does it. image-tiff returns YCbCr samples as stored (JPEG
+/// included: it decodes without color conversion), so the RGB output
+/// descriptor is only right after this step.
+#[derive(Clone, Copy, Debug)]
+struct YCbCrToRgb {
+    /// YCbCrCoefficients: luma weights of red, green and blue.
+    luma: [f64; 3],
+    /// ReferenceBlackWhite: black and white code values of Y, Cb and Cr.
+    reference: [f64; 6],
+    bits: u8,
+}
+
+impl YCbCrToRgb {
+    fn from_tags<R: std::io::Read + std::io::Seek>(
+        decoder: &mut tiff::decoder::Decoder<R>,
+        bits: u8,
+    ) -> Result<Self> {
+        let max = f64::from((1u32 << bits.min(16)) - 1);
+        let mid = f64::from(1u32 << (bits.min(16) - 1));
+        let luma = rationals(decoder, 529)?
+            .and_then(|v| <[f64; 3]>::try_from(v).ok())
+            .unwrap_or([0.299, 0.587, 0.114]);
+        let reference = rationals(decoder, 532)?
+            .and_then(|v| <[f64; 6]>::try_from(v).ok())
+            .unwrap_or([0.0, max, mid, max, mid, max]);
+        if luma[1] == 0.0 {
+            return Err(at!(TiffError::Decode(
+                "YCbCrCoefficients has a zero green weight".into()
+            )));
+        }
+        Ok(Self {
+            luma,
+            reference,
+            bits,
+        })
+    }
+
+    fn convert(&self, result: &mut tiff::decoder::DecodingResult) -> Result<()> {
+        use tiff::decoder::DecodingResult as DR;
+        match result {
+            DR::U8(buf) if self.bits <= 8 => {
+                for px in buf.as_chunks_mut::<3>().0 {
+                    let rgb = self.pixel(px.map(f64::from), 255.0);
+                    *px = rgb.map(|v| v as u8);
+                }
+            }
+            DR::U16(buf) if self.bits <= 16 => {
+                for px in buf.as_chunks_mut::<3>().0 {
+                    let rgb = self.pixel(px.map(f64::from), 65535.0);
+                    *px = rgb.map(|v| v as u16);
+                }
+            }
+            _ => {
+                return Err(at!(TiffError::UnsupportedFeature(format!(
+                    "{}-bit YCbCr",
+                    self.bits
+                ))));
+            }
+        }
+        Ok(())
+    }
+
+    /// One pixel: code values to Y, Cb, Cr through ReferenceBlackWhite, then
+    /// to RGB with the luma weights, rounded and clamped to `max`.
+    fn pixel(&self, [y, cb, cr]: [f64; 3], max: f64) -> [f64; 3] {
+        let [lr, lg, lb] = self.luma;
+        let r = &self.reference;
+        let full = |c: f64, black: f64, white: f64, range: f64| {
+            let span = if white == black { 1.0 } else { white - black };
+            (c - black) * range / span
+        };
+        // The chroma range is half the luma range, as in libtiff's Code2V.
+        let half = (max - 1.0) / 2.0;
+        let y = full(y, r[0], r[1], max);
+        let cb = full(cb, r[2], r[3], half);
+        let cr = full(cr, r[4], r[5], half);
+        let red = y + cr * (2.0 - 2.0 * lr);
+        let blue = y + cb * (2.0 - 2.0 * lb);
+        let green = (y - lb * blue - lr * red) / lg;
+        [red, green, blue].map(|v| v.round().clamp(0.0, max))
+    }
+}
+
+/// A RATIONAL (or integer/float) array tag as `f64`s; `None` when absent.
+fn rationals<R: std::io::Read + std::io::Seek>(
+    decoder: &mut tiff::decoder::Decoder<R>,
+    tag: u16,
+) -> Result<Option<Vec<f64>>> {
+    use tiff::decoder::ifd::Value;
+    fn one(v: &Value) -> Option<f64> {
+        Some(match *v {
+            Value::Rational(n, d) if d != 0 => f64::from(n) / f64::from(d),
+            Value::SRational(n, d) if d != 0 => f64::from(n) / f64::from(d),
+            Value::Short(v) => f64::from(v),
+            Value::Unsigned(v) => f64::from(v),
+            Value::Float(v) => f64::from(v),
+            Value::Double(v) => v,
+            _ => return None,
+        })
+    }
+    let value = decoder
+        .find_tag(Tag::Unknown(tag))
+        .map_err(|e| at!(TiffError::from(e)))?;
+    Ok(value.and_then(|v| match &v {
+        Value::List(items) => items.iter().map(one).collect(),
+        single => one(single).map(|x| vec![x]),
+    }))
 }
 
 /// Determine float/signed flags from the DecodingResult variant.

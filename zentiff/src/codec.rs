@@ -1082,6 +1082,16 @@ fn has_alpha_from_color_type(ct: tiff::ColorType) -> bool {
 /// Uses the same logic as `descriptor_for()` in decode.rs but works
 /// from probe info (where `is_float` may not be known).
 fn descriptor_for_probe(tiff: &TiffInfo) -> PixelDescriptor {
+    let descriptor = descriptor_for_color_type(tiff);
+    // Associated alpha decodes as premultiplied (see `decode::decode`).
+    if tiff.associated_alpha && descriptor.alpha().is_some() {
+        descriptor.with_alpha(Some(zenpixels::AlphaMode::Premultiplied))
+    } else {
+        descriptor
+    }
+}
+
+fn descriptor_for_color_type(tiff: &TiffInfo) -> PixelDescriptor {
     let is_float = tiff.is_float;
     match tiff.color_type {
         tiff::ColorType::Gray(d) => match d {

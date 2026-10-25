@@ -27,7 +27,9 @@
 //! - Gray, GrayAlpha, RGB, RGBA in u8/u16/u32/u64/i8/i16/i32/i64/f16/f32/f64
 //! - Palette (expanded to RGB8)
 //! - CMYK/CMYKA (converted to RGBA)
-//! - YCbCr, Lab (decoded as RGB)
+//! - YCbCr (converted to RGB with YCbCrCoefficients and ReferenceBlackWhite)
+//! - Associated alpha is labelled premultiplied
+//! - Lab is not supported (no conversion to RGB)
 //!
 //! ## Encode
 //!
