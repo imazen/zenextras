@@ -18,4 +18,4 @@ zencodec-testkit = { git = "https://github.com/imazen/zencodec", rev = "d327434b
 hayro-syntax = { git = "https://github.com/lilith/hayro", rev = "beec7225f7f8cec6cb62f6ecf116db738177d0b9" }
 
 # Pinned TIFF scratch-buffer resource-limit fork used by zentiff.
-tiff = { git = "https://github.com/lilith/image-tiff", rev = "ae426c1e1b49160dea17da802ed17f5cbbb7058c" }
+tiff = { git = "https://github.com/lilith/image-tiff", rev = "0219e7099c658422d47bd986ff279b686202b2e0" }
