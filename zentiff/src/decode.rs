@@ -871,6 +871,15 @@ pub fn decode(
 
         extract_metadata(&mut decoder, &mut info);
 
+        // image-tiff decodes old-style JPEG, but zentiff does not take it yet: its tables sit
+        // at offsets the inventory's IFD walk cannot yet locate (zenmeta's `jpeg_table` rule,
+        // zencodec PR 168), and every decoded byte must be accounted for there.
+        if info.compression == Some(6) {
+            return Err(at!(TiffError::UnsupportedFeature(
+                "old-style JPEG (compression 6) is not decoded yet".into()
+            )));
+        }
+
         // JPEG pages zenjpeg handles decode there, already as RGB (or gray),
         // byte-identical to libtiff with libjpeg-turbo.
         #[cfg(feature = "zenjpeg")]

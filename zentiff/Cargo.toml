@@ -2,7 +2,7 @@
 name = "zentiff"
 version = "0.1.2"
 edition = "2024"
-rust-version = "1.93"
+rust-version = "1.99"
 license = "AGPL-3.0-only OR LicenseRef-Imazen-Commercial"
 description = "TIFF decoding and encoding wrapper with zenpixels integration"
 categories = ["multimedia::images", "multimedia::encoding"]

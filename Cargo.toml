@@ -24,4 +24,4 @@ zenjpeg = { git = "https://github.com/imazen/zenjpeg", rev = "a2a128ab0bc36f0133
 zenanalyze = { git = "https://github.com/imazen/zenanalyze", rev = "8ca647c525cf488c61bbf35475ca8ba3db6b628e" }
 
 # Pinned TIFF scratch-buffer resource-limit fork used by zentiff.
-tiff = { git = "https://github.com/lilith/image-tiff", rev = "0219e7099c658422d47bd986ff279b686202b2e0" }
+tiff = { git = "https://github.com/lilith/image-tiff", rev = "10a3b6b2fa88eb5943525066a989ea9e64e644d5" }

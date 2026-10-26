@@ -179,22 +179,22 @@ jobs:
         run: cargo fmt --all -- --check
 
   # ==========================================================================
-  # MSRV check (workspace max: zentiff/zenpdf rust-version = 1.93)
+  # MSRV check (workspace max: zentiff rust-version = 1.99, for the image-tiff fork it patches in)
   # ==========================================================================
   msrv:
-    name: MSRV (1.93)
+    name: MSRV (1.99)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
 
       - name: Install MSRV toolchain
-        run: rustup toolchain install 1.93.0 --no-self-update --profile minimal
+        run: rustup toolchain install 1.99.0 --no-self-update --profile minimal
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
       - name: Check MSRV
-        run: cargo +1.93.0 check --workspace --all-features
+        run: cargo +1.99.0 check --workspace --all-features
 
   tiff-inventory-oracle:
     name: TIFF inventory independent reader

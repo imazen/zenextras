@@ -79,8 +79,12 @@ impl ValueLimits {
 }
 
 /// Tags image-tiff's `Image::from_reader` reads for every page it parses.
-const IMAGE_TAGS: &[u16] = &[256, 257, 258, 259, 262, 266, 277, 284, 317, 338, 339, 530];
-/// FillOrder: read for every page, used only by the CCITT decoders.
+const IMAGE_TAGS: &[u16] = &[256, 257, 258, 259, 262, 266, 277, 284, 338, 339, 530];
+/// Predictor: read only for the compressions that define one (LZW, Deflate, LZMA,
+/// Zstandard, PixarLog), as in libtiff; ignored for the others.
+const PREDICTOR: u16 = 317;
+const PREDICTOR_CODECS: &[u64] = &[5, 8, 32946, 34925, 50000, 32909];
+/// FillOrder: read for every page, used only by the bit-order sensitive decoders.
 const FILL_ORDER: u16 = 266;
 /// Read for a strip layout; StripOffsets/StripByteCounts also stand in for
 /// the tile offsets of a tiled page that lacks them.
@@ -90,8 +94,12 @@ const TILE_TAGS: &[u16] = &[322, 323, 324, 325];
 /// SGILog and SGILog24 (`CompressionMethod::SgiLog{,24}`): decoding
 /// replaces the sample format and depth with 32-bit float.
 const SGILOG: &[u64] = &[34676, 34677];
-/// CCITT RLE, Group 3 and Group 4: the decoders that honour FillOrder.
-const CCITT: &[u64] = &[2, 3, 4];
+/// CCITT RLE, Group 3, Group 4 and RLEW, and JBIG (which libtiff, and image-tiff after it,
+/// bit-reverses under FillOrder 1): the decoders that honour FillOrder.
+const CCITT: &[u64] = &[2, 3, 4, 32771, 34661];
+/// Old-style JPEG: image-tiff decodes it, but zentiff does not take it yet. Its tables sit at
+/// offsets the IFD walk must locate as extents (zenmeta's `jpeg_table` rule, zencodec PR 168).
+const OLD_JPEG: u64 = 6;
 /// Read only when Compression is 7.
 const JPEG_TABLES: u16 = 347;
 /// T4Options: read only when Compression is 3 (`into_u32`); bit 0 selects
@@ -451,6 +459,9 @@ impl TiffPolicy<'_> {
         let Ok(compression) = int(259) else {
             return Some("Compression not one integer");
         };
+        if compression == Some(OLD_JPEG) {
+            return Some("old-style JPEG (6): zentiff does not decode it yet");
+        }
         if compression == Some(7) && one(JPEG_TABLES).is_some_and(|e| e.count < 2) {
             return Some("JPEGTables shorter than 2 bytes");
         }
@@ -485,7 +496,9 @@ impl TiffPolicy<'_> {
                 return Some("BitsPerSample count, mix or value not supported");
             }
         }
-        if !matches!(int(317), Ok(None | Some(1..=3))) {
+        if compression.is_some_and(|c| PREDICTOR_CODECS.contains(&c))
+            && !matches!(int(PREDICTOR), Ok(None | Some(1..=3)))
+        {
             return Some("Predictor unknown");
         }
         let planes = match int(284) {
@@ -578,6 +591,14 @@ impl TiffPolicy<'_> {
     fn image_tag(&self, w: &Walk<'_>, ifd: &Ifd, tag: u16) -> Result<bool, &'static str> {
         if IMAGE_TAGS.contains(&tag) {
             return Ok(true);
+        }
+        if tag == PREDICTOR {
+            let compression = w.find(ifd, 259).and_then(|e| w.single_uint(e)).unwrap_or(1);
+            return if PREDICTOR_CODECS.contains(&compression) {
+                Ok(true)
+            } else {
+                Err("Predictor is read only for LZW, Deflate, LZMA, Zstandard and PixarLog")
+            };
         }
         let layout = self.layout(w, ifd);
         // Under `Conflict` the offset tags' presence decides the rejection.
@@ -687,7 +708,7 @@ impl TiffPolicy<'_> {
                 )
             }
             FILL_ORDER if !CCITT.contains(&compression) => Some(
-                "read; only the CCITT decoders use its value, so for this compression only its validity matters",
+                "read; only the CCITT and JBIG decoders use its value, so for this compression only its validity matters",
             ),
             339 if SGILOG.contains(&compression) => Some(
                 "read; SGILog decoding replaces the sample format with 32-bit float, so only its validity matters",
