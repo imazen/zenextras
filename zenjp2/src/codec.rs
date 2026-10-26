@@ -368,9 +368,42 @@ impl Decode for Jp2Decoder<'_> {
         let has_alpha = image.has_alpha();
         let color_space = image.color_space().clone();
 
-        let pixels_u8 = image.decode().map_err(Jp2Error::Decode)?;
+        let mut ctx = hayro_jpeg2000::DecoderContext::default();
+        let decoded = image.decode(&mut ctx).map_err(Jp2Error::Decode)?;
 
         let (descriptor, icc_profile) = pixel_format_and_icc(&color_space, has_alpha);
+        let components = decoded.components();
+        if components.is_empty() {
+            return Err(Jp2Error::PixelBuffer(alloc::string::String::from(
+                "decoded JPEG 2000 image has 0 components",
+            ))
+            .into());
+        }
+        let sample_count = components[0].samples().len();
+        let raw_bytes_len = sample_count.checked_mul(components.len()).ok_or_else(|| {
+            Jp2Error::PixelBuffer(alloc::string::String::from("pixel buffer size overflow"))
+        })?;
+        let mut raw_u8 = crate::alloc_util::alloc_zeroed(self.alloc_pref, true, raw_bytes_len)
+            .map_err(CodecError::of)?;
+        decoded.store_u8_into(&mut raw_u8);
+
+        let pixels_u8 = if components.len() == 2 && descriptor == PixelDescriptor::RGBA8_SRGB {
+            // Gray + Alpha ([G, A] per pixel) -> expand to RGBA8 ([G, G, G, A]).
+            let out_len = sample_count.checked_mul(4).ok_or_else(|| {
+                Jp2Error::PixelBuffer(alloc::string::String::from("RGBA8 buffer size overflow"))
+            })?;
+            let mut rgba = crate::alloc_util::alloc_zeroed(self.alloc_pref, true, out_len)
+                .map_err(CodecError::of)?;
+            for (ga, out) in raw_u8.chunks_exact(2).zip(rgba.chunks_exact_mut(4)) {
+                out[0] = ga[0];
+                out[1] = ga[0];
+                out[2] = ga[0];
+                out[3] = ga[1];
+            }
+            rgba
+        } else {
+            raw_u8
+        };
 
         let pixel_buffer = PixelBuffer::from_vec(pixels_u8, width, height, descriptor)
             .map_err(|e| Jp2Error::PixelBuffer(alloc::format!("{e}")))?;
@@ -413,10 +446,8 @@ fn pixel_format_and_icc(
     match color_space {
         hayro_jpeg2000::ColorSpace::Gray => {
             if has_alpha {
-                // GrayA: hayro interleaves [G, A] per pixel, but we lack GrayA8.
-                // The data is 2 bytes/pixel — doesn't match GRAY8 (1 bpp).
-                // Use GRAY8 for non-alpha gray.
-                (PixelDescriptor::GRAY8_SRGB, None)
+                // GrayA: hayro interleaves [G, A] per pixel; expand to RGBA8.
+                (PixelDescriptor::RGBA8_SRGB, None)
             } else {
                 (PixelDescriptor::GRAY8_SRGB, None)
             }
@@ -453,7 +484,8 @@ fn pixel_format_and_icc(
             }
         }
         hayro_jpeg2000::ColorSpace::Unknown { num_channels } => match (*num_channels, has_alpha) {
-            (1, _) => (PixelDescriptor::GRAY8_SRGB, None),
+            (1, false) => (PixelDescriptor::GRAY8_SRGB, None),
+            (1, true) => (PixelDescriptor::RGBA8_SRGB, None),
             (3, false) => (PixelDescriptor::RGB8_SRGB, None),
             (3, true) | (4, false) => (PixelDescriptor::RGBA8_SRGB, None),
             _ => (PixelDescriptor::RGBA8_SRGB, None),

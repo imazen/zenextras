@@ -7,7 +7,8 @@ zenbench::main!(|suite| {
             Box::leak(std::fs::read(&path).expect("fixture").into_boxed_slice());
         let image = zenjp2::Image::new(data, &zenjp2::DecodeSettings::default()).unwrap();
         let pixels = u64::from(image.width()) * u64::from(image.height());
-        let check = image.decode().unwrap();
+        let mut ctx = zenjp2::DecoderContext::default();
+        let check = image.decode(&mut ctx).unwrap().data_u8();
         let expected =
             std::fs::read(path.with_extension("rgb")).expect("lossless RGB fixture reference");
         assert_eq!(check, expected, "{} lossless pixels", path.display());
@@ -18,10 +19,12 @@ zenbench::main!(|suite| {
                 g.throughput(Throughput::Elements(pixels));
                 g.bench("hayro_jpeg2000", move |b| {
                     b.iter(|| {
+                        let mut ctx = zenjp2::DecoderContext::default();
                         zenjp2::Image::new(data, &zenjp2::DecodeSettings::default())
                             .unwrap()
-                            .decode()
+                            .decode(&mut ctx)
                             .unwrap()
+                            .data_u8()
                     })
                 });
             },

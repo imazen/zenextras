@@ -1008,6 +1008,7 @@ fn colr_effect(
     let (mut cs, builtin_icc, sycc_or_lab) = match kind {
         ColrKind::Enumerated(e, _) => match e {
             12 => (Cs::Cmyk, false, false),
+            13 => (Cs::Cmyk, false, true),
             16 | 20 => (Cs::Rgb, false, false),
             18 => (Cs::Rgb, false, true),
             17 => (Cs::Gray, false, false),

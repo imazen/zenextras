@@ -93,6 +93,9 @@ fn parse_params(c: &mut Cur<'_>, flags: u8) -> Option<Params> {
     let nres = nlev + 1;
     let cbw = c.u8()?.checked_add(2)?;
     let cbh = c.u8()?.checked_add(2)?;
+    if cbw > 10 || cbh > 10 || cbw + cbh > 12 {
+        return None;
+    }
     let cbstyle = c.u8()?;
     let transform = c.u8()?;
     if transform > 1 {
@@ -274,16 +277,14 @@ fn parse_siz(c: &mut Cur<'_>) -> Option<SizOut> {
         invalid = Some("first tile does not reach the image area");
     }
     if invalid.is_none() {
-        let same = comps.iter().all(|&r| r == comps[0]);
-        let (sx, sy) = if same {
-            (u64::from(comps[0].0), u64::from(comps[0].1))
-        } else {
-            (1, 1)
-        };
-        let w = u64::from(xsiz - xo).div_ceil(sx);
-        let h = u64::from(ysiz - yo).div_ceil(sy);
-        if w > 60000 || h > 60000 {
-            invalid = Some("image larger than 60000 pixels");
+        let nx = u64::from(xsiz - xto).div_ceil(u64::from(xt));
+        let ny = u64::from(ysiz - yto).div_ceil(u64::from(yt));
+        if u32::try_from(nx)
+            .ok()
+            .and_then(|x| u32::try_from(ny).ok().and_then(|y| x.checked_mul(y)))
+            .is_none()
+        {
+            invalid = Some("tile count overflows u32");
         }
     }
     Some(SizOut {

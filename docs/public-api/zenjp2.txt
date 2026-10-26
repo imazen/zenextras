@@ -6,7 +6,7 @@
 # impls omitted; re-export duplicates annotated `[also: path]`.
 # DO NOT EDIT BY HAND — commit regenerated changes with the code.
 #
-# files: zenjp2.txt 34 lines (supported surface) | zenjp2.features.txt 2 added (features: inventory,std,zencodec) | zenjp2.internal.txt 0 lines (0 hidden + 0 excluded-feature)
+# files: zenjp2.txt 37 lines (supported surface) | zenjp2.features.txt 2 added (features: inventory,std,zencodec) | zenjp2.internal.txt 0 lines (0 hidden + 0 excluded-feature)
 
 ## summary
 #
@@ -15,21 +15,24 @@
 #   free functions                              1
 #   inherent methods                            2
 #   enum variants                              12
-#   re-exports                                  3
+#   re-exports                                  6
 #   trait roster entries (type × trait)        14
 #   auto-trait-complete types                   2
 #   auto-trait exceptions                       2
 #
 # per-module pub lines:
-#   (root)                           18
+#   (root)                           21
 #   codec                             5
 #   error                             8
 
-## items (26 lines)
+## items (29 lines)
 
 pub mod zenjp2
 pub use ColorSpace
+pub use ComponentData
 pub use DecodeSettings
+pub use DecodedImage
+pub use DecoderContext
 pub use Image
 pub mod codec
 pub fn codec::Jp2DecoderConfig::new() -> Self

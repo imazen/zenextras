@@ -29,7 +29,9 @@ mod inventory;
 pub mod codec;
 
 pub use error::{Jp2Error, Result};
-pub use hayro_jpeg2000::{ColorSpace, DecodeSettings, Image};
+pub use hayro_jpeg2000::{
+    ColorSpace, ComponentData, DecodeSettings, DecodedImage, DecoderContext, Image,
+};
 
 #[cfg(feature = "zencodec")]
 pub use codec::{Jp2DecodeJob, Jp2Decoder, Jp2DecoderConfig};
