@@ -6,7 +6,7 @@
 # impls omitted; re-export duplicates annotated `[also: path]`.
 # DO NOT EDIT BY HAND — commit regenerated changes with the code.
 #
-# files: zentiff.txt 111 lines (supported surface) | zentiff.features.txt 31 added (features: all-codecs,deflate,fax,inventory,jpeg,lzw,std,webp,zencodec,zstd) | zentiff.internal.txt 19 lines (6 hidden + 38 excluded-feature)
+# files: zentiff.txt 111 lines (supported surface) | zentiff.features.txt 31 added (features: all-codecs,deflate,fax,inventory,jpeg,lzw,std,webp,zencodec,zenjpeg,zstd) | zentiff.internal.txt 14 lines (4 hidden + 38 excluded-feature)
 
 ## summary
 #
@@ -70,7 +70,7 @@ pub TiffError::Decode(alloc::string::String)
 pub TiffError::Encode(alloc::string::String)
 pub TiffError::IntSizeOverflow
 pub TiffError::InvalidInput(alloc::string::String)
-pub TiffError::Io(std::io::error::Error)
+pub TiffError::Io(core::io::error::Error)
 pub TiffError::LimitExceeded(alloc::string::String)
 pub TiffError::Stopped(enough::reason::StopReason)
 pub TiffError::Truncated(alloc::string::String)

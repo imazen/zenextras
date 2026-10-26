@@ -6,6 +6,7 @@ members = [
     "zenjp2",
     "zenpdf",
     "zenexr",
+    "zenpsd",
     "zenivf",
     "zenwebm",
 ]
@@ -15,7 +16,7 @@ members = [
 zencodec = { git = "https://github.com/imazen/zencodec", rev = "d327434b0826a3e39633665c76f5081c0ceb34cc" }
 zencodec-testkit = { git = "https://github.com/imazen/zencodec", rev = "d327434b0826a3e39633665c76f5081c0ceb34cc" }
 # Pinned PDF stream resource-limit fork used by zenpdf.
-hayro-syntax = { git = "https://github.com/lilith/hayro", rev = "beec7225f7f8cec6cb62f6ecf116db738177d0b9" }
+hayro-syntax = { git = "https://github.com/lilith/hayro", rev = "2ce50d0164878b8505e118f81dcb1d0367b26957" }
 
 # zenjpeg 0.9.0 (unreleased; byte-exact with libjpeg-turbo) for zentiff's JPEG pages, and the
 # unreleased zenanalyze 0.2 it requires. Drop once both are on crates.io.

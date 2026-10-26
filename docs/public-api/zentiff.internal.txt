@@ -11,23 +11,18 @@
 #
 #   pub modules                                 1
 #   pub types (struct/enum/trait/alias)         2
-#   inherent methods                            6
+#   inherent methods                            1
 #   struct fields                               6
 #   trait roster entries (type × trait)         8
 #   auto-trait-complete types                   1
 #
 # per-module pub lines:
-#   (root)                           11
+#   (root)                            6
 #   internal_params                   4
 
-## items (14 lines)
+## items (9 lines)
 
 #[non_exhaustive] pub struct InternalParams [also: internal_params]
-pub fn Compression::assert_fields_are_eq(&self)
-pub fn InternalParams::clone(&self) -> InternalParams
-pub fn InternalParams::default() -> InternalParams
-pub fn InternalParams::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-pub fn Predictor::assert_fields_are_eq(&self)
 pub fn TiffEncodeConfig::with_internal_params(self, InternalParams) -> Self
 pub mod internal_params
 pub InternalParams::big_tiff: core::option::Option<bool>

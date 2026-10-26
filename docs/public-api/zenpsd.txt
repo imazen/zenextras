@@ -1,0 +1,242 @@
+# zenpsd public API — supported surface (default features)
+# (regenerated on every `cargo test` by zenutils-apidoc; ZEN_API_DOC=check verifies, =off skips).
+# Encodings: crate-name prefix stripped; auto traits collapse to a
+# count + exceptions; trait impls collapse to one roster line per
+# type (method signatures live at the trait definition); blanket
+# impls omitted; re-export duplicates annotated `[also: path]`.
+# DO NOT EDIT BY HAND — commit regenerated changes with the code.
+#
+# files: zenpsd.txt 204 lines (supported surface) | zenpsd.features.txt 2 added (features: inventory,std,zencodec) | zenpsd.internal.txt 8 lines (8 hidden + 0 excluded-feature)
+
+## summary
+#
+#   pub modules                                 5
+#   pub types (struct/enum/trait/alias)        30
+#   pub consts/statics                          5
+#   free functions                             10
+#   inherent methods                           38
+#   struct fields                              48
+#   enum variants                              70
+#   trait roster entries (type × trait)        56
+#   auto-trait-complete types                  11
+#   auto-trait exceptions                       3
+#
+# per-module pub lines:
+#   (root)                           85
+#   codec                             8
+#   error                            20
+#   format                            3
+#   parser                           90
+
+## items (185 lines)
+
+pub mod zenpsd
+pub mod codec
+pub codec::PsdDecoderConfig::require_real_merged_data: bool
+pub fn codec::PsdDecoderConfig::new() -> Self
+pub fn codec::PsdDecoderConfig::with_require_real_merged_data(self, bool) -> Self
+pub mod error
+pub error::PsdError::InvalidDimensions
+pub error::PsdError::InvalidDimensions::channels: u16
+pub error::PsdError::InvalidDimensions::height: u32
+pub error::PsdError::InvalidDimensions::width: u32
+pub error::PsdError::InvalidSignature
+pub error::PsdError::Limit(zencodec::limits::LimitExceeded)
+pub error::PsdError::Malformed(&'static str)
+pub error::PsdError::MissingMergedData
+pub error::PsdError::OutOfMemory(alloc::string::String)
+pub error::PsdError::PixelBuffer(alloc::string::String)
+pub error::PsdError::Sink(zencodec::sink::SinkError)
+pub error::PsdError::Stopped(enough::reason::StopReason)
+pub error::PsdError::UnexpectedEof
+pub error::PsdError::UnsupportedBitDepth(u16)
+pub error::PsdError::UnsupportedColorMode(u16)
+pub error::PsdError::UnsupportedCompression(u16)
+pub error::PsdError::UnsupportedOperation(zencodec::capabilities::UnsupportedOperation)
+pub error::PsdError::UnsupportedVersion(u16)
+pub mod format
+pub mod parser
+pub parser::BitDepth::Eight = 8
+pub parser::BitDepth::One = 1
+pub parser::BitDepth::Sixteen = 16
+pub parser::BitDepth::ThirtyTwo = 32
+pub fn parser::BitDepth::bits(self) -> u8
+pub fn parser::BitDepth::from_u16(u16) -> core::option::Option<Self>
+pub fn parser::BitDepth::scanline_bytes(self, u32) -> core::option::Option<usize>
+pub parser::ColorMode::Bitmap = 0
+pub parser::ColorMode::Cmyk = 4
+pub parser::ColorMode::Duotone = 8
+pub parser::ColorMode::Grayscale = 1
+pub parser::ColorMode::Indexed = 2
+pub parser::ColorMode::Lab = 9
+pub parser::ColorMode::Multichannel = 7
+pub parser::ColorMode::Rgb = 3
+pub fn parser::ColorMode::base_channels(self) -> core::option::Option<u16>
+pub fn parser::ColorMode::from_u16(u16) -> core::option::Option<Self>
+pub fn parser::ColorMode::supports_depth(self, parser::BitDepth) -> bool
+pub parser::Compression::Raw = 0
+pub parser::Compression::Rle = 1
+pub parser::Compression::Zip = 2
+pub parser::Compression::ZipPrediction = 3
+pub fn parser::Compression::from_u16(u16) -> core::option::Option<Self>
+pub parser::ResolutionUnit::PixelsPerCentimeter = 2
+pub parser::ResolutionUnit::PixelsPerInch = 1
+pub parser::Version::Psb = 2
+pub parser::Version::Psd = 1
+pub fn parser::Version::from_u16(u16) -> core::option::Option<Self>
+pub fn parser::Version::max_dimension(self) -> u32
+pub fn parser::DecodedPsd::header(&self) -> &parser::PsdHeader
+pub fn parser::DecodedPsd::info(&self) -> &parser::PsdInfo
+pub fn parser::DecodedPsd::into_pixels(self) -> zenpixels::buffer::PixelBuffer
+pub fn parser::DecodedPsd::metadata(&self) -> &parser::PsdMetadata
+pub fn parser::DecodedPsd::pixels(&self) -> &zenpixels::buffer::PixelBuffer
+pub parser::PsdHeader::channels: u16
+pub parser::PsdHeader::color_mode: parser::ColorMode
+pub parser::PsdHeader::depth: parser::BitDepth
+pub parser::PsdHeader::height: u32
+pub parser::PsdHeader::version: parser::Version
+pub parser::PsdHeader::width: u32
+pub fn parser::PsdHeader::has_alpha(&self, &parser::PsdMetadata) -> bool
+pub fn parser::PsdHeader::output_descriptor(&self, &parser::PsdMetadata) -> zenpixels::descriptor::PixelDescriptor
+pub fn parser::PsdHeader::used_channels(&self) -> u16
+pub parser::PsdInfo::compression: parser::Compression
+pub parser::PsdInfo::header: parser::PsdHeader
+pub parser::PsdInfo::metadata: parser::PsdMetadata
+pub parser::PsdMetadata::alpha_channel_names: alloc::vec::Vec<alloc::string::String>
+pub parser::PsdMetadata::exif: core::option::Option<alloc::vec::Vec<u8>>
+pub parser::PsdMetadata::has_real_merged_data: core::option::Option<bool>
+pub parser::PsdMetadata::icc_profile: core::option::Option<alloc::vec::Vec<u8>>
+pub parser::PsdMetadata::resolution: core::option::Option<parser::ResolutionInfo>
+pub parser::PsdMetadata::transparency_index: core::option::Option<u16>
+pub parser::PsdMetadata::xmp: core::option::Option<alloc::vec::Vec<u8>>
+pub parser::ResolutionInfo::h_res: f32
+pub parser::ResolutionInfo::h_unit: parser::ResolutionUnit
+pub parser::ResolutionInfo::v_res: f32
+pub parser::ResolutionInfo::v_unit: parser::ResolutionUnit
+pub const parser::MAX_CHANNELS: u16
+pub const parser::MAX_PSB_DIMENSION: u32
+pub const parser::MAX_PSD_DIMENSION: u32
+pub enum BitDepth [also: parser]
+pub BitDepth::Eight = 8
+pub BitDepth::One = 1
+pub BitDepth::Sixteen = 16
+pub BitDepth::ThirtyTwo = 32
+pub fn parser::BitDepth::bits(self) -> u8
+pub fn parser::BitDepth::from_u16(u16) -> core::option::Option<Self>
+pub fn parser::BitDepth::scanline_bytes(self, u32) -> core::option::Option<usize>
+pub enum ColorMode [also: parser]
+pub ColorMode::Bitmap = 0
+pub ColorMode::Cmyk = 4
+pub ColorMode::Duotone = 8
+pub ColorMode::Grayscale = 1
+pub ColorMode::Indexed = 2
+pub ColorMode::Lab = 9
+pub ColorMode::Multichannel = 7
+pub ColorMode::Rgb = 3
+pub fn parser::ColorMode::base_channels(self) -> core::option::Option<u16>
+pub fn parser::ColorMode::from_u16(u16) -> core::option::Option<Self>
+pub fn parser::ColorMode::supports_depth(self, parser::BitDepth) -> bool
+pub enum Compression [also: parser]
+pub Compression::Raw = 0
+pub Compression::Rle = 1
+pub Compression::Zip = 2
+pub Compression::ZipPrediction = 3
+pub fn parser::Compression::from_u16(u16) -> core::option::Option<Self>
+#[non_exhaustive] pub enum PsdError [also: error]
+pub PsdError::InvalidDimensions
+pub PsdError::InvalidDimensions::channels: u16
+pub PsdError::InvalidDimensions::height: u32
+pub PsdError::InvalidDimensions::width: u32
+pub PsdError::InvalidSignature
+pub PsdError::Limit(zencodec::limits::LimitExceeded)
+pub PsdError::Malformed(&'static str)
+pub PsdError::MissingMergedData
+pub PsdError::OutOfMemory(alloc::string::String)
+pub PsdError::PixelBuffer(alloc::string::String)
+pub PsdError::Sink(zencodec::sink::SinkError)
+pub PsdError::Stopped(enough::reason::StopReason)
+pub PsdError::UnexpectedEof
+pub PsdError::UnsupportedBitDepth(u16)
+pub PsdError::UnsupportedColorMode(u16)
+pub PsdError::UnsupportedCompression(u16)
+pub PsdError::UnsupportedOperation(zencodec::capabilities::UnsupportedOperation)
+pub PsdError::UnsupportedVersion(u16)
+pub enum ResolutionUnit [also: parser]
+pub ResolutionUnit::PixelsPerCentimeter = 2
+pub ResolutionUnit::PixelsPerInch = 1
+pub enum Version [also: parser]
+pub Version::Psb = 2
+pub Version::Psd = 1
+pub fn parser::Version::from_u16(u16) -> core::option::Option<Self>
+pub fn parser::Version::max_dimension(self) -> u32
+pub struct DecodedPsd [also: parser]
+pub fn parser::DecodedPsd::header(&self) -> &parser::PsdHeader
+pub fn parser::DecodedPsd::info(&self) -> &parser::PsdInfo
+pub fn parser::DecodedPsd::into_pixels(self) -> zenpixels::buffer::PixelBuffer
+pub fn parser::DecodedPsd::metadata(&self) -> &parser::PsdMetadata
+pub fn parser::DecodedPsd::pixels(&self) -> &zenpixels::buffer::PixelBuffer
+pub struct PsdDecodeJob [also: codec]
+pub struct PsdDecoder<'a> [also: codec]
+pub struct PsdDecoderConfig [also: codec]
+pub PsdDecoderConfig::require_real_merged_data: bool
+pub fn codec::PsdDecoderConfig::new() -> Self
+pub fn codec::PsdDecoderConfig::with_require_real_merged_data(self, bool) -> Self
+pub struct PsdHeader [also: parser]
+pub PsdHeader::channels: u16
+pub PsdHeader::color_mode: parser::ColorMode
+pub PsdHeader::depth: parser::BitDepth
+pub PsdHeader::height: u32
+pub PsdHeader::version: parser::Version
+pub PsdHeader::width: u32
+pub fn parser::PsdHeader::has_alpha(&self, &parser::PsdMetadata) -> bool
+pub fn parser::PsdHeader::output_descriptor(&self, &parser::PsdMetadata) -> zenpixels::descriptor::PixelDescriptor
+pub fn parser::PsdHeader::used_channels(&self) -> u16
+pub struct PsdInfo [also: parser]
+pub PsdInfo::compression: parser::Compression
+pub PsdInfo::header: parser::PsdHeader
+pub PsdInfo::metadata: parser::PsdMetadata
+pub struct PsdMetadata [also: parser]
+pub PsdMetadata::alpha_channel_names: alloc::vec::Vec<alloc::string::String>
+pub PsdMetadata::exif: core::option::Option<alloc::vec::Vec<u8>>
+pub PsdMetadata::has_real_merged_data: core::option::Option<bool>
+pub PsdMetadata::icc_profile: core::option::Option<alloc::vec::Vec<u8>>
+pub PsdMetadata::resolution: core::option::Option<parser::ResolutionInfo>
+pub PsdMetadata::transparency_index: core::option::Option<u16>
+pub PsdMetadata::xmp: core::option::Option<alloc::vec::Vec<u8>>
+pub struct ResolutionInfo [also: parser]
+pub ResolutionInfo::h_res: f32
+pub ResolutionInfo::h_unit: parser::ResolutionUnit
+pub ResolutionInfo::v_res: f32
+pub ResolutionInfo::v_unit: parser::ResolutionUnit
+pub static PSD_FORMAT_DEFINITION: zencodec::format::ImageFormatDefinition [also: format]
+pub fn decode(&[u8]) -> error::Result<parser::DecodedPsd> [also: parser]
+pub fn decode_with_stop(&[u8], &dyn enough::Stop) -> error::Result<parser::DecodedPsd> [also: parser]
+pub fn detect_psd(&[u8]) -> bool [also: format]
+pub fn probe(&[u8]) -> error::Result<parser::PsdInfo> [also: parser]
+pub fn psd_format() -> zencodec::format::ImageFormat [also: format]
+pub type Result<T> = core::result::Result<T, whereat::at::At<error::PsdError>> [also: error]
+
+## trait impls (15 types)
+
+codec::PsdDecodeJob: zencodec::traits::decoding::DecodeJob<'a>
+codec::PsdDecoder<'_>: zencodec::traits::decoder::Decode
+codec::PsdDecoderConfig: Clone, Debug, Default, zencodec::traits::decoding::DecoderConfig
+error::PsdError: Debug, Display, Error, From<enough::reason::StopReason>, From<zencodec::capabilities::UnsupportedOperation>, From<zencodec::limits::LimitExceeded>, zencodec::error::CategorizedError
+parser::BitDepth: Clone, Copy, Debug, Eq, PartialEq
+parser::ColorMode: Clone, Copy, Debug, Eq, PartialEq
+parser::Compression: Clone, Copy, Debug, Eq, PartialEq
+parser::DecodedPsd: Debug
+parser::PsdHeader: Clone, Copy, Debug, Eq, PartialEq
+parser::PsdInfo: Clone, Debug, PartialEq
+parser::PsdMetadata: Clone, Debug, Default, PartialEq
+parser::ResolutionInfo: Clone, Copy, Debug, PartialEq
+parser::ResolutionUnit: Clone, Copy, Debug, Eq, PartialEq
+parser::Version: Clone, Copy, Debug, Eq, PartialEq
+whereat::at::At<zencodec::error::CodecError>: From<error::PsdError>
+
+## auto traits
+
+11 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe
+codec::PsdDecodeJob: !RefUnwindSafe !UnwindSafe
+codec::PsdDecoder<'a>: !RefUnwindSafe !UnwindSafe
+error::PsdError: !RefUnwindSafe !UnwindSafe
