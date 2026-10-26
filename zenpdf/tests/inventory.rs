@@ -2021,3 +2021,71 @@ fn r2_2_a_form_without_bbox_is_not_drawn() {
         assert_unconsumed(&without, &inv, b"1 0 0 rg");
     }
 }
+
+#[test]
+fn issue27_malformed_number_in_array_does_not_panic() {
+    let mut b = PdfBuilder::new();
+    b.obj(1, CAT).obj(2, PAGES1).obj(
+        3,
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 10 10] /Contents [ 4 0 R 8-. ] >>",
+    );
+    b.stream(4, "", RED);
+    b.end_revision("/Root 1 0 R");
+    let data = b.finish();
+    let _ = zenpdf::render_page(&data, 0, &zenpdf::RenderBounds::Scale(1.0));
+    let inv = inventory(&data);
+    inv.validate().unwrap();
+}
+
+#[test]
+fn issue34_incremental_update_free_xref_entry_deletes_object() {
+    // Revision 1 has object 5 (drawn via /Contents [4 0 R 5 0 R]); revision 2
+    // keeps the same page dictionary and marks object 5 free (`f`) in its xref.
+    let mut b = PdfBuilder::new();
+    b.obj(1, CAT)
+        .obj(2, PAGES1)
+        .obj(
+            3,
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 10 10] /Contents [4 0 R 5 0 R] >>",
+        )
+        .stream(4, "", RED)
+        .stream(5, "", b"0 1 0 rg 0 0 10 10 re f % SECRET-FREED-IN-REV2");
+    let prev = b.end_revision("/Root 1 0 R");
+
+    // Revision 2 frees object 5.
+    let xref2 = b.offset();
+    let _ = write!(
+        b,
+        "xref\n5 1\n0000000000 00001 f\r\ntrailer\n<< /Size 6 /Root 1 0 R /Prev {prev} >>\nstartxref\n{xref2}\n%%EOF\n"
+    );
+    let data = b.finish();
+    let inv = inventory(&data);
+    let obj5 = the_object(&inv, 5);
+    assert_eq!(obj5.disposition(), Disposition::Unreferenced, "{inv}");
+    assert_unconsumed(&data, &inv, b"SECRET-FREED-IN-REV2");
+}
+
+#[test]
+fn issue35_ccitt_filter_without_rows_does_not_panic() {
+    let data = one_page(
+        "",
+        &[0x35, 0x14],
+        &[(5, "/Filter /CCITTFaxDecode", Some(&[0x35, 0x14]))],
+    );
+    let _ = zenpdf::render_page(&data, 0, &zenpdf::RenderBounds::Scale(1.0));
+    let inv = inventory(&data);
+    inv.validate().unwrap();
+
+    // Also when the page's own /Contents stream uses /Filter /CCITTFaxDecode with Rows=0.
+    let mut b = PdfBuilder::new();
+    b.obj(1, CAT).obj(2, PAGES1).obj(
+        3,
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 10 10] /Contents 4 0 R >>",
+    );
+    b.stream(4, "/Filter /CCITTFaxDecode", &[0x35, 0x14]);
+    b.end_revision("/Root 1 0 R");
+    let data2 = b.finish();
+    let _ = zenpdf::render_page(&data2, 0, &zenpdf::RenderBounds::Scale(1.0));
+    let inv2 = inventory(&data2);
+    inv2.validate().unwrap();
+}

@@ -207,8 +207,10 @@ fn render_pages_inner(pdf: &Pdf, config: &PdfConfig) -> Result<Vec<RenderedPage>
         config.background[3],
     );
 
-    // Font/image render cache, shared across pages (hayro 0.7 `render()` API).
+    // Font/image render cache and vello_cpu rasterizer resources, shared across pages.
     let cache = hayro::RenderCache::new();
+    let render_settings = hayro::RenderSettings::default();
+    let mut resources = hayro::vello_cpu::Resources::default();
 
     let mut results = Vec::with_capacity(indices.len());
     for idx in indices {
@@ -223,7 +225,24 @@ fn render_pages_inner(pdf: &Pdf, config: &PdfConfig) -> Result<Vec<RenderedPage>
             config.limits.max_pixels_per_page,
         )?;
 
-        let pixmap = hayro::render(page, &cache, &interp, &settings);
+        let mut ctx = hayro::vello_cpu::RenderContext::new(settings.width, settings.height);
+        let transform =
+            hayro::kurbo::Affine::scale_non_uniform(
+                f64::from(settings.x_scale),
+                f64::from(settings.y_scale),
+            ) * hayro::hayro_interpret::util::TransformExt::to_kurbo(&page.initial_transform(true));
+        hayro::render_into(page, &cache, &interp, &render_settings, &mut ctx, transform);
+        ctx.flush();
+
+        let mut pixmap = hayro::vello_cpu::Pixmap::new(ctx.width(), ctx.height());
+        ctx.render_with(
+            &mut pixmap,
+            &mut resources,
+            hayro::vello_cpu::RasterizerSettings {
+                target_init: hayro::vello_cpu::TargetInit::Clear(settings.bg_color),
+                ..Default::default()
+            },
+        );
 
         let w = pixmap.width() as u32;
         let h = pixmap.height() as u32;
@@ -314,6 +333,14 @@ fn resolve_page_indices(
     }
 }
 
+struct PageSettings {
+    x_scale: f32,
+    y_scale: f32,
+    width: u16,
+    height: u16,
+    bg_color: AlphaColor<Srgb>,
+}
+
 /// The render settings for one page, after the checks that reject it.
 fn page_settings(
     bounds: &RenderBounds,
@@ -322,7 +349,7 @@ fn page_settings(
     page_idx: u32,
     bg: AlphaColor<Srgb>,
     max_pixels: u64,
-) -> Result<hayro::RenderSettings> {
+) -> Result<PageSettings> {
     // Reject zero-area or non-finite page dimensions early, before any
     // scale computation that could produce NaN or Inf. This is the PDF's
     // own declared page (MediaBox) geometry — an image-bytes fault, not a
@@ -363,7 +390,7 @@ fn compute_render_settings(
     page_idx: u32,
     bg: AlphaColor<Srgb>,
     max_pixels: u64,
-) -> Result<hayro::RenderSettings> {
+) -> Result<PageSettings> {
     let (x_scale, y_scale, width, height) = match *bounds {
         RenderBounds::Scale(s) => (s, s, None, None),
         RenderBounds::Dpi(dpi) => {
@@ -427,11 +454,11 @@ fn compute_render_settings(
         });
     }
 
-    Ok(hayro::RenderSettings {
+    Ok(PageSettings {
         x_scale,
         y_scale,
-        width: width.map(|w| w as u16),
-        height: height.map(|h| h as u16),
+        width: final_w as u16,
+        height: final_h as u16,
         bg_color: bg,
     })
 }
@@ -441,21 +468,12 @@ fn pixmap_to_buffer(
     w: u32,
     h: u32,
 ) -> Result<PixelBuffer<Rgba<u8>>> {
-    // take_unpremultiplied() returns Vec<color::Rgba8> which is layout-identical
-    // to rgb::Rgba<u8> (both #[repr(C)], same field order r/g/b/a as u8).
-    // into_iter().map().collect() allows the compiler to reuse the allocation
-    // when source and target have the same size (4 bytes each).
-    let pixels: Vec<Rgba<u8>> = pixmap
-        .take_unpremultiplied()
-        .into_iter()
-        .map(|p| Rgba {
-            r: p.r,
-            g: p.g,
-            b: p.b,
-            a: p.a,
-        })
-        .collect();
-    Ok(PixelBuffer::from_pixels(pixels, w, h)?)
+    let bytes = pixmap.take_rgba8(hayro::vello_cpu::peniko::ImageAlphaType::Alpha);
+    Ok(
+        PixelBuffer::from_vec(bytes, w, h, <Rgba<u8> as zenpixels::Pixel>::DESCRIPTOR)?
+            .try_typed::<Rgba<u8>>()
+            .expect("RGBA8 descriptor matches Rgba<u8>"),
+    )
 }
 
 #[cfg(test)]
