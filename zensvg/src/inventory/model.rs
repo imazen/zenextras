@@ -1,4 +1,4 @@
-//! What usvg 0.48.1 draws from a document it accepts.
+//! What usvg 0.49.0 draws from a document it accepts.
 //!
 //! A replica, on the roxmltree document the decode path parses, of the two
 //! passes `usvg::Tree::from_data` runs:
@@ -20,6 +20,8 @@
 //! that depends on numbers (object bounding boxes, path lengths, filter
 //! regions) is not evaluated: such an element counts as drawn, and the
 //! walker's detail says so ([`GEOMETRY_NOTE`]).
+
+#![cfg_attr(not(feature = "inventory"), allow(dead_code))]
 
 use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
@@ -415,6 +417,49 @@ pub(crate) fn build(doc: &rx::Document, env: &Env) -> Option<Model> {
     b.convert_doc();
     b.finish();
     Some(b.out)
+}
+
+/// Check `doc` for resource cycles of length >= 3 (zenextras#41) and `href`
+/// lasso loops (zenextras#42) before running `usvg`'s converter.
+pub(crate) fn check_cycles_and_loops(doc: &rx::Document) -> Result<(), crate::error::SvgError> {
+    struct AnyFonts;
+    impl Fonts for AnyFonts {
+        fn resolves(&self, _families: &[svgtypes::FontFamily]) -> bool {
+            true
+        }
+        fn default_family(&self) -> &str {
+            "Times New Roman"
+        }
+    }
+    let languages = [String::from("en")];
+    let env = Env {
+        languages: &languages,
+        fonts: &AnyFonts,
+        resolve_data: &|_, _| None,
+    };
+    let Some(m) = build(doc, &env) else {
+        return Err(crate::error::SvgError::TooManyElements);
+    };
+    if let Some(ring) = m.cycle {
+        return Err(crate::error::SvgError::Parse(format!(
+            "resource cycle: {}",
+            ring.iter()
+                .map(|i| format!("#{i}"))
+                .collect::<Vec<_>>()
+                .join(" -> ")
+        )));
+    }
+    if let Some(chain) = m.href_loop {
+        return Err(crate::error::SvgError::Parse(format!(
+            "href loop: {}",
+            chain
+                .iter()
+                .map(|i| format!("#{i}"))
+                .collect::<Vec<_>>()
+                .join(" -> ")
+        )));
+    }
+    Ok(())
 }
 
 /// Where `text` sits in the document, when it is a slice of it.
@@ -1886,12 +1931,22 @@ impl<'a, 'i: 'a> Builder<'a, 'i> {
             Src::Xml(at) => (self.env.resolve_data)(at, &href.value),
             _ => None,
         };
-        if resolves == Some(false) {
-            self.why(
-                n,
-                "its data URI does not decode to an image usvg's resolver accepts",
-            );
-            return;
+        match resolves {
+            Some(true) => {}
+            Some(false) => {
+                self.why(
+                    n,
+                    "its data URI does not decode to an image usvg's resolver accepts",
+                );
+                return;
+            }
+            None => {
+                self.why(
+                    n,
+                    "external image reference; zensvg disables local file system loading",
+                );
+                return;
+            }
         }
         if !size_ok("width") || !size_ok("height") {
             self.why(n, "its width or height is not positive");

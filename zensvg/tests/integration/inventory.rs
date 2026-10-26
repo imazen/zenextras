@@ -202,7 +202,7 @@ fn inkscape_leak_carriers_are_labelled_and_unconsumed() {
     }
 
     // href handling: data URI decoded into the image; an external image path
-    // is read by usvg's default resolver; external `use` is not followed;
+    // is rejected (local file loading disabled); external `use` is not followed;
     // link targets are kept but drawn from nothing; xlink:href loses to href.
     let hrefs = named(&inv, "href");
     let xlinks = named(&inv, "xlink:href");
@@ -210,7 +210,7 @@ fn inkscape_leak_carriers_are_labelled_and_unconsumed() {
     assert_eq!(xlinks.len(), 2, "{inv}");
     assert_eq!(xlinks[0].disposition(), Disposition::ImageData);
     assert!(detail(xlinks[0]).contains("data URI: image/png"), "{inv}");
-    assert_eq!(hrefs[0].disposition(), Disposition::Structure);
+    assert_eq!(hrefs[0].disposition(), Disposition::Dropped);
     assert!(
         detail(hrefs[0]).contains("file:///home/alice/photo.png"),
         "{inv}"
@@ -680,7 +680,7 @@ fn a_pattern_cycle_of_three_does_not_abort() {
         "{inv}"
     );
     let rect = leaf_at(&inv, find(d, br#"<rect width="20" height="20""#) as u64);
-    assert_eq!(rect.disposition(), Disposition::Unknown, "{inv}");
+    assert_eq!(rect.disposition(), Disposition::Dropped, "{inv}");
     assert!(detail(rect).contains("#p1 → #p2 → #p3 → #p1"), "{rect:?}");
     assert!(detail(rect).contains("zenextras#41"), "{rect:?}");
     // A cycle of two is broken by usvg (fix_recursive_patterns) and drawn
@@ -740,7 +740,7 @@ fn an_href_chain_looping_past_its_origin_does_not_hang() {
             "{name}\n{inv}"
         );
         let rect = leaf_at(&inv, find(&d, br#"<rect width="20" height="20""#) as u64);
-        assert_eq!(rect.disposition(), Disposition::Unknown, "{name}\n{inv}");
+        assert_eq!(rect.disposition(), Disposition::Dropped, "{name}\n{inv}");
         assert!(detail(rect).contains(chain), "{name}: {rect:?}");
         assert!(detail(rect).contains("zenextras#42"), "{name}: {rect:?}");
     }
@@ -911,8 +911,8 @@ const PINNED_INKSCAPE: &[&str] = &[
     "    chunk 1629..1790 image image-data",
     "      attribute 1657..1788 xlink:href image-data \"xlink:href\"",
     "    gap 1790..1795 - padding",
-    "    chunk 1795..1866 image image-data",
-    "      attribute 1829..1864 href structure \"href\"",
+    "    chunk 1795..1866 image dropped",
+    "      attribute 1829..1864 href dropped \"href\"",
     "    gap 1866..1871 - padding",
     "    chunk 1871..1896 use dropped",
     "      attribute 1876..1894 href dropped \"href\"",

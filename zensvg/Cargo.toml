@@ -18,8 +18,8 @@ include = ["/src/**", "/README.md", "/README.crates.md", "/CHANGELOG.md", "/LICE
 name = "zensvg"
 
 [dependencies]
-resvg = "0.48.1"
-usvg = "0.48.1"
+resvg = "0.49.0"
+usvg = "0.49.0"
 tiny-skia = "0.12.0"
 
 # zencodec integration
@@ -28,22 +28,24 @@ zenpixels = ">=0.2.10, <0.4.0"
 enough = "0.4.4"
 whereat = "0.1.5"
 
-# Match the renderer's parsers when inventory is explicitly requested.
-simplecss = { version = "0.2.2", optional = true }
-svgtypes = { version = "0.16.1", optional = true }
+# Shared by pre-parse validation and the structural inventory.
+simplecss = "0.2.2"
+svgtypes = "0.16.1"
+flate2 = "1.1.10"
+
+# Match the renderer's data-URI parsers when inventory is explicitly requested.
 data-url = { version = "0.3.2", optional = true }
 imagesize = { version = "0.15.0", optional = true }
 
 # SVG optimization (optional)
-flate2 = { version = "1.1.10", optional = true }
 quick-xml = { version = "0.42.0", optional = true }
 
 [features]
 default = ["std", "text"]
 std = []
 text = []
-optimize = ["dep:flate2", "dep:quick-xml"]
-inventory = ["dep:flate2", "dep:simplecss", "dep:svgtypes", "dep:data-url", "dep:imagesize"]
+optimize = ["dep:quick-xml"]
+inventory = ["dep:data-url", "dep:imagesize"]
 
 [dev-dependencies]
 zenbench = "0.1.10"

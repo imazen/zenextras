@@ -76,10 +76,16 @@ pub struct RenderOutput {
     pub height: u32,
 }
 
+/// Maximum decompressed size of an SVGZ stream accepted by [`parse_svg`]
+/// (128 MiB, matching the structural inventory's inner-document budget;
+/// zenextras#32).
+const MAX_SVGZ_DECOMPRESSED_BYTES: u64 = crate::inventory::MAX_INNER as u64;
+
 /// Parse an SVG from bytes, returning the usvg tree and the font database used.
 pub fn parse_svg(data: &[u8], options: &RenderOptions) -> Result<usvg::Tree, SvgError> {
     let mut usvg_options = usvg::Options {
         dpi: options.dpi,
+        image_href_resolver: safe_image_href_resolver(),
         ..usvg::Options::default()
     };
 
@@ -92,7 +98,111 @@ pub fn parse_svg(data: &[u8], options: &RenderOptions) -> Result<usvg::Tree, Svg
         .expect("fontdb Arc should be uniquely owned at this point");
     load_fonts(fontdb, options);
 
-    guard_panic(|| usvg::Tree::from_data(data, &usvg_options).map_err(SvgError::from))
+    parse_tree_safe(data, &usvg_options)
+}
+
+/// Decompress (if SVGZ, capped at [`MAX_SVGZ_DECOMPRESSED_BYTES`]) and
+/// validate XML nesting, DTD entity expansion, resource cycles, and `href`
+/// chains before running `usvg::Tree::from_xmltree`.
+fn parse_tree_safe(data: &[u8], usvg_options: &usvg::Options) -> Result<usvg::Tree, SvgError> {
+    let xml_bytes: std::borrow::Cow<'_, [u8]> = if data.starts_with(&[0x1f, 0x8b]) {
+        use std::io::Read as _;
+        let mut decoder = flate2::read::GzDecoder::new(data).take(MAX_SVGZ_DECOMPRESSED_BYTES + 1);
+        let mut decoded = Vec::with_capacity(data.len().min(64 << 10));
+        decoder
+            .read_to_end(&mut decoded)
+            .map_err(|_| SvgError::from(usvg::Error::MalformedGZip))?;
+        if decoded.len() as u64 > MAX_SVGZ_DECOMPRESSED_BYTES {
+            return Err(SvgError::DecompressionBomb {
+                actual: decoded.len() as u64,
+                max: MAX_SVGZ_DECOMPRESSED_BYTES,
+            });
+        }
+        std::borrow::Cow::Owned(decoded)
+    } else {
+        std::borrow::Cow::Borrowed(data)
+    };
+
+    let text = std::str::from_utf8(&xml_bytes).map_err(|_| SvgError::NotSvg)?;
+    let tree = crate::inventory::xml::lex(&xml_bytes);
+    let Some(bound) = crate::inventory::xml::nesting_bound(&xml_bytes, &tree) else {
+        return Err(SvgError::Parse(
+            "entity reference loop, nesting depth, or expansion size limit exceeded".into(),
+        ));
+    };
+    if bound > crate::inventory::MAX_PARSE_NESTING {
+        return Err(SvgError::TooManyElements);
+    }
+
+    let deep = bound > crate::inventory::SHALLOW;
+    crate::inventory::deep_stack(deep, || {
+        guard_panic(|| {
+            let xml_opt = usvg::roxmltree::ParsingOptions {
+                allow_dtd: true,
+                ..Default::default()
+            };
+            let doc = usvg::roxmltree::Document::parse_with_options(text, xml_opt)
+                .map_err(usvg::Error::ParsingFailed)?;
+            crate::inventory::model::check_cycles_and_loops(&doc)?;
+            usvg::Tree::from_xmltree(&doc, usvg_options).map_err(SvgError::from)
+        })
+    })
+    .unwrap_or(Err(SvgError::TooManyElements))
+}
+
+/// Whether `data` starts with PNG, JPEG, GIF, or WebP magic bytes.
+fn has_raster_magic(data: &[u8]) -> bool {
+    data.starts_with(b"\x89PNG\r\n\x1a\n")
+        || data.starts_with(b"\xff\xd8\xff")
+        || data.starts_with(b"GIF87a")
+        || data.starts_with(b"GIF89a")
+        || (data.len() >= 12 && &data[0..4] == b"RIFF" && &data[8..12] == b"WEBP")
+}
+
+/// Build an [`usvg::ImageHrefResolver`] that disables local file loading
+/// (zenextras#31) and routes nested `data:image/svg+xml` payloads through
+/// [`parse_tree_safe`].
+fn safe_image_href_resolver() -> usvg::ImageHrefResolver<'static> {
+    let default_data = usvg::ImageHrefResolver::default_data_resolver();
+    usvg::ImageHrefResolver {
+        resolve_data: Box::new(move |mime, data, opts| {
+            if mime == "image/svg+xml" || (mime == "text/plain" && !has_raster_magic(&data)) {
+                let nested_opt = usvg::Options {
+                    resources_dir: None,
+                    dpi: opts.dpi,
+                    font_size: opts.font_size,
+                    languages: opts.languages.clone(),
+                    shape_rendering: opts.shape_rendering,
+                    text_rendering: opts.text_rendering,
+                    image_rendering: opts.image_rendering,
+                    default_size: opts.default_size,
+                    image_href_resolver: usvg::ImageHrefResolver {
+                        resolve_data: Box::new(|a, b, c| {
+                            (opts.image_href_resolver.resolve_data)(a, b, c)
+                        }),
+                        resolve_string: Box::new(|_, _| None),
+                    },
+                    #[cfg(feature = "text")]
+                    fontdb: opts.fontdb.clone(),
+                    #[cfg(feature = "text")]
+                    font_resolver: usvg::FontResolver {
+                        select_font: Box::new(|font, db| {
+                            (opts.font_resolver.select_font)(font, db)
+                        }),
+                        select_fallback: Box::new(|c, used_fonts, db| {
+                            (opts.font_resolver.select_fallback)(c, used_fonts, db)
+                        }),
+                    },
+                    ..usvg::Options::default()
+                };
+                return parse_tree_safe(&data, &nested_opt)
+                    .ok()
+                    .map(usvg::ImageKind::SVG);
+            }
+            default_data(mime, data, opts)
+        }),
+        resolve_string: Box::new(|_, _| None),
+    }
 }
 
 /// Load the fonts `options` ask for: the system's, then the font files.
@@ -481,5 +591,114 @@ mod tests {
     fn dimensions_query() {
         let (w, h) = svg_dimensions(SIMPLE_SVG, &RenderOptions::default()).unwrap();
         assert_eq!((w, h), (100, 50));
+    }
+
+    #[test]
+    fn issue31_external_image_href_is_not_loaded() {
+        let dir = std::env::temp_dir();
+        let path = dir.join(format!("zensvg_issue31_{}.svg", std::process::id()));
+        std::fs::write(&path, SIMPLE_SVG).unwrap();
+        let svg = format!(
+            r#"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><image width="10" height="10" href="{}"/></svg>"#,
+            path.display()
+        );
+        let out = render(svg.as_bytes(), &RenderOptions::default()).unwrap();
+        let _ = std::fs::remove_file(&path);
+        // External file must not be loaded; all pixels remain transparent.
+        assert!(out.data.iter().all(|&b| b == 0));
+    }
+
+    #[test]
+    fn issue32_svgz_decompression_bomb_is_rejected() {
+        use std::io::Write as _;
+        let mut enc = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::best());
+        enc.write_all(br#"<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4">"#)
+            .unwrap();
+        let spaces = vec![b' '; 1 << 20];
+        for _ in 0..129 {
+            enc.write_all(&spaces).unwrap();
+        }
+        enc.write_all(b"</svg>").unwrap();
+        let svgz = enc.finish().unwrap();
+        let err = parse_svg(&svgz, &RenderOptions::default()).unwrap_err();
+        assert!(
+            matches!(err, SvgError::DecompressionBomb { .. }),
+            "expected DecompressionBomb, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn issue39_deep_xml_nesting_is_rejected_without_stack_overflow() {
+        let depth = 20_000;
+        let svg = format!(
+            r#"<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4">{}{}</svg>"#,
+            "<g>".repeat(depth),
+            "</g>".repeat(depth)
+        );
+        let err = parse_svg(svg.as_bytes(), &RenderOptions::default()).unwrap_err();
+        assert!(
+            matches!(err, SvgError::TooManyElements),
+            "expected TooManyElements, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn issue40_billion_laughs_entity_bomb_is_rejected() {
+        let mut dtd = String::from(r#"<!ENTITY e0 "xxxxxxxxxx">"#);
+        for lvl in 1..=7 {
+            dtd.push_str(&format!(
+                r#"<!ENTITY e{lvl} "{}">"#,
+                format!("&e{};", lvl - 1).repeat(10)
+            ));
+        }
+        let svg = format!(
+            r#"<!DOCTYPE svg [{dtd}]><svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"><desc>&e7;</desc><rect width="4" height="4" fill="red"/></svg>"#
+        );
+        let err = parse_svg(svg.as_bytes(), &RenderOptions::default()).unwrap_err();
+        assert!(
+            matches!(err, SvgError::Parse(_)),
+            "expected Parse error, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn issue41_pattern_cycle_of_three_is_rejected() {
+        let svg = br##"<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20"><pattern id="p1" width="4" height="4" patternUnits="userSpaceOnUse"><rect width="4" height="4" fill="url(#p2)"/></pattern><pattern id="p2" width="4" height="4" patternUnits="userSpaceOnUse"><rect width="4" height="4" fill="url(#p3)"/></pattern><pattern id="p3" width="4" height="4" patternUnits="userSpaceOnUse"><rect width="4" height="4" fill="url(#p1)"/></pattern><rect width="20" height="20" fill="url(#p1)"/></svg>"##;
+        let err = parse_svg(svg, &RenderOptions::default()).unwrap_err();
+        assert!(
+            matches!(err, SvgError::Parse(_)),
+            "expected Parse error, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn issue42_href_lasso_loop_is_rejected() {
+        let svg = br##"<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20"><pattern id="q1" width="4" height="4" patternUnits="userSpaceOnUse" href="#q2"/><pattern id="q2" width="4" height="4" patternUnits="userSpaceOnUse" href="#q3"/><pattern id="q3" width="4" height="4" patternUnits="userSpaceOnUse" href="#q2"><rect width="4" height="4" fill="#00f"/></pattern><rect width="20" height="20" fill="url(#q1)"/></svg>"##;
+        let err = parse_svg(svg, &RenderOptions::default()).unwrap_err();
+        assert!(
+            matches!(err, SvgError::Parse(_)),
+            "expected Parse error, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn usvg_0_49_root_transform_and_fe_composite_lighter() {
+        let svg = br##"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" transform="translate(5, 0)">
+            <filter id="f" x="0" y="0" width="1" height="1">
+                <feFlood flood-color="#800000" result="a"/>
+                <feFlood flood-color="#800000" result="b"/>
+                <feComposite in="a" in2="b" operator="lighter"/>
+            </filter>
+            <rect width="5" height="10" fill="red" filter="url(#f)"/>
+        </svg>"##;
+        let out = render(svg, &RenderOptions::default()).unwrap();
+        // Left half (x=2, y=5) was shifted right by root transform="translate(5, 0)".
+        assert_eq!(
+            &out.data[(5 * 10 + 2) * 4..(5 * 10 + 2) * 4 + 4],
+            &[0, 0, 0, 0]
+        );
+        // Right half (x=7, y=5) has the lighter-composited red (linearRGB #80 + #80 -> ~175 sRGB).
+        let px = &out.data[(5 * 10 + 7) * 4..(5 * 10 + 7) * 4 + 4];
+        assert!(px[0] > 160 && px[3] == 255, "unexpected pixel: {px:?}");
     }
 }

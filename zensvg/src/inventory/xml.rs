@@ -4,6 +4,8 @@
 //! tile the input. It never fails: bytes it cannot place become
 //! [`XKind::Malformed`] nodes. Work is linear in the input.
 
+#![cfg_attr(not(feature = "inventory"), allow(dead_code))]
+
 use std::ops::Range;
 
 #[derive(Clone, Debug)]
@@ -481,12 +483,16 @@ impl Lexer<'_> {
 /// `EntityReferenceLoop`).
 const MAX_ENTITY_CHAIN: usize = 10;
 
+/// Maximum total expanded entity bytes / expansion steps allowed in a document
+/// before rejecting DTD entity amplification bombs (zenextras#40).
+const MAX_ENTITY_EXPANSION_BYTES: u64 = 16 << 20;
+
 /// An upper bound on how deep roxmltree nests elements when it parses `d`:
 /// the lexer's element nesting, plus, at every entity reference in
 /// character data, the nesting the referenced internal entity expands into
 /// (its literal's own elements and the entities it references in turn).
-/// `None` when a referenced entity chains deeper than roxmltree allows or
-/// loops (roxmltree rejects the document).
+/// `None` when a referenced entity chains deeper than roxmltree allows,
+/// loops, or expands past [`MAX_ENTITY_EXPANSION_BYTES`] (zenextras#40).
 ///
 /// roxmltree recurses once per nested element (`parse_element` ↔
 /// `parse_content`), so this is checked before roxmltree runs: a deep
@@ -511,24 +517,45 @@ pub(crate) fn nesting_bound(d: &[u8], tree: &XTree) -> Option<usize> {
         }
     }
     let depths = entity_depths(&entities);
-    let lookup = |name: &[u8]| -> Option<Option<usize>> {
+    let lookup = |name: &[u8]| -> Option<Option<(usize, u64)>> {
         entities
             .iter()
             .position(|(n, _)| *n == name)
             .map(|i| depths[i])
     };
     let mut best = 0usize;
+    let mut total_expansion = 0u64;
     let mut stack: Vec<(usize, usize)> = tree.roots.iter().map(|&r| (r, 0)).collect();
     while let Some((n, depth)) = stack.pop() {
         match &tree.nodes[n].kind {
-            XKind::Element { .. } => {
+            XKind::Element { attrs, .. } => {
                 best = best.max(depth + 1);
+                for a in attrs {
+                    for name in references(&d[a.value.clone()]) {
+                        match lookup(name) {
+                            Some(Some((_, cost))) => {
+                                total_expansion = total_expansion.saturating_add(cost);
+                                if total_expansion > MAX_ENTITY_EXPANSION_BYTES {
+                                    return None;
+                                }
+                            }
+                            Some(None) => return None,
+                            None => {}
+                        }
+                    }
+                }
                 stack.extend(tree.nodes[n].children.iter().map(|&c| (c, depth + 1)));
             }
             XKind::Text if depth > 0 => {
                 for name in references(&d[tree.nodes[n].range.clone()]) {
                     match lookup(name) {
-                        Some(Some(e)) => best = best.max(depth + e),
+                        Some(Some((e, cost))) => {
+                            best = best.max(depth + e);
+                            total_expansion = total_expansion.saturating_add(cost);
+                            if total_expansion > MAX_ENTITY_EXPANSION_BYTES {
+                                return None;
+                            }
+                        }
                         Some(None) => return None,
                         None => {}
                     }
@@ -562,14 +589,16 @@ fn references(v: &[u8]) -> impl Iterator<Item = &[u8]> {
     })
 }
 
-/// For each entity, the element nesting its replacement text expands into,
-/// or `None` when it chains deeper than roxmltree allows or loops. Iterative
-/// (the chain length is not bounded by anything but the input).
-fn entity_depths(entities: &[(&[u8], &[u8])]) -> Vec<Option<usize>> {
+/// For each entity, `(element_nesting, expanded_cost)` of its replacement
+/// text, or `None` when it chains deeper than roxmltree allows, loops, or
+/// expands past [`MAX_ENTITY_EXPANSION_BYTES`]. Iterative (the chain length
+/// is not bounded by anything but the input).
+fn entity_depths(entities: &[(&[u8], &[u8])]) -> Vec<Option<(usize, u64)>> {
     // Per entity: (references with the element depth they sit at, own
-    // element nesting).
+    // element nesting, own byte cost).
+    type EntityShape = (Vec<(usize, usize)>, usize, u64);
     let index = |name: &[u8]| entities.iter().position(|(n, _)| *n == name);
-    let shape: Vec<(Vec<(usize, usize)>, usize)> = entities
+    let shape: Vec<EntityShape> = entities
         .iter()
         .map(|(_, v)| {
             let (mut depth, mut own, mut refs) = (0usize, 0usize, Vec::new());
@@ -609,11 +638,11 @@ fn entity_depths(entities: &[(&[u8], &[u8])]) -> Vec<Option<usize>> {
                 }
                 i += 1;
             }
-            (refs, own)
+            (refs, own, v.len().max(1) as u64)
         })
         .collect();
-    // (depth, chain height) once known; `None` = rejected.
-    let mut done: Vec<Option<Option<(usize, usize)>>> = vec![None; entities.len()];
+    // (depth, chain height, expanded cost) once known; `None` = rejected.
+    let mut done: Vec<Option<Option<(usize, usize, u64)>>> = vec![None; entities.len()];
     let mut on_path = vec![false; entities.len()];
     for start in 0..entities.len() {
         if done[start].is_some() {
@@ -634,14 +663,23 @@ fn entity_depths(entities: &[(&[u8], &[u8])]) -> Vec<Option<usize>> {
                 continue;
             }
             // All references of `e` are resolved.
-            let mut result = Some((shape[e].1, 1usize));
+            let mut result = Some((shape[e].1, 1usize, shape[e].2));
             for &(child, at) in &shape[e].0 {
                 result = match (result, done[child].flatten()) {
-                    (Some((d, h)), Some((cd, ch))) => Some((d.max(at + cd), h.max(ch + 1))),
+                    (Some((d, h, cost)), Some((cd, ch, ccost))) => {
+                        let next_cost = cost.saturating_add(ccost);
+                        if next_cost > MAX_ENTITY_EXPANSION_BYTES {
+                            None
+                        } else {
+                            Some((d.max(at + cd), h.max(ch + 1), next_cost))
+                        }
+                    }
                     _ => None,
                 };
             }
-            if result.is_some_and(|(_, h)| h > MAX_ENTITY_CHAIN) {
+            if result.is_some_and(|(_, h, cost)| {
+                h > MAX_ENTITY_CHAIN || cost > MAX_ENTITY_EXPANSION_BYTES
+            }) {
                 result = None;
             }
             if done[e] != Some(None) {
@@ -652,7 +690,7 @@ fn entity_depths(entities: &[(&[u8], &[u8])]) -> Vec<Option<usize>> {
         }
     }
     done.into_iter()
-        .map(|r| r.flatten().map(|(d, _)| d))
+        .map(|r| r.flatten().map(|(d, _, cost)| (d, cost)))
         .collect()
 }
 

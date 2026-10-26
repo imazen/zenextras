@@ -28,7 +28,7 @@
 ## items (29 lines)
 
 pub fn codec::SvgDecodeJob::inventory(&self, &[u8]) -> core::result::Result<zencodec::inventory::Inventory, whereat::at::At<zencodec::error::CodecError>>
-pub error::SvgError::Io(std::io::error::Error)
+pub error::SvgError::Io(core::io::error::Error)
 pub error::SvgError::XmlWrite(alloc::string::String)
 pub mod optimize
 pub optimize::OptimizeOptions::compression_level: u32
@@ -41,7 +41,7 @@ pub optimize::OptimizeOptions::svgz: bool
 pub fn optimize::OptimizeOptions::max_compression() -> Self
 pub fn optimize::OptimizeOptions::minify() -> Self
 pub fn optimize::OptimizeOptions::with_max_input_bytes(self, u64) -> Self
-pub SvgError::Io(std::io::error::Error)
+pub SvgError::Io(core::io::error::Error)
 pub SvgError::XmlWrite(alloc::string::String)
 pub struct OptimizeOptions [also: optimize]
 pub OptimizeOptions::compression_level: u32
@@ -59,7 +59,7 @@ pub fn optimize(&[u8], &optimize::OptimizeOptions) -> core::result::Result<alloc
 
 ## trait impls (2 types)
 
-error::SvgError: From<std::io::error::Error>
+error::SvgError: From<core::io::error::Error>
 optimize::OptimizeOptions: Clone, Debug, Default
 
 ## auto traits
