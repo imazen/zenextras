@@ -1356,6 +1356,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5b3dc8af474f516a851ff4bd12db780f948b9250ad37211e4eec0bccea54e01b"
 
 [[package]]
+name = "spin"
+version = "0.12.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0134f9043ed38b087ac4f7d4af44c79e2c9e5094421fe3164f435ce585953b10"
+
+[[package]]
 name = "stable_deref_trait"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1521,7 +1527,7 @@ dependencies = [
  "linear-srgb",
  "thiserror",
  "whereat",
- "zencodec",
+ "zencodec 0.1.27 (git+https://github.com/imazen/zencodec?rev=d327434b0826a3e39633665c76f5081c0ceb34cc)",
  "zenpixels",
 ]
 
@@ -1932,35 +1938,59 @@ dependencies = [
 ]
 
 [[package]]
+name = "zencodec"
+version = "0.1.27"
+source = "git+https://github.com/imazen/zencodec?rev=f73a7e0e01c6d6eefb9f08c61f2bb71100e25f54#f73a7e0e01c6d6eefb9f08c61f2bb71100e25f54"
+dependencies = [
+ "almost-enough",
+ "enough",
+ "how-far",
+ "spin",
+ "whereat",
+ "zenpixels",
+]
+
+[[package]]
 name = "zencodec-io"
 version = "0.1.0"
 source = "git+https://github.com/imazen/zencodec?rev=d327434b0826a3e39633665c76f5081c0ceb34cc#d327434b0826a3e39633665c76f5081c0ceb34cc"
 dependencies = [
  "enough",
  "how-far",
- "zencodec",
+ "zencodec 0.1.27 (git+https://github.com/imazen/zencodec?rev=d327434b0826a3e39633665c76f5081c0ceb34cc)",
+ "zenpixels",
+]
+
+[[package]]
+name = "zencodec-io"
+version = "0.1.0"
+source = "git+https://github.com/imazen/zencodec?rev=f73a7e0e01c6d6eefb9f08c61f2bb71100e25f54#f73a7e0e01c6d6eefb9f08c61f2bb71100e25f54"
+dependencies = [
+ "enough",
+ "how-far",
+ "zencodec 0.1.27 (git+https://github.com/imazen/zencodec?rev=f73a7e0e01c6d6eefb9f08c61f2bb71100e25f54)",
  "zenpixels",
 ]
 
 [[package]]
 name = "zencodec-media"
 version = "0.1.0"
-source = "git+https://github.com/imazen/zencodec?rev=d327434b0826a3e39633665c76f5081c0ceb34cc#d327434b0826a3e39633665c76f5081c0ceb34cc"
+source = "git+https://github.com/imazen/zencodec?rev=f73a7e0e01c6d6eefb9f08c61f2bb71100e25f54#f73a7e0e01c6d6eefb9f08c61f2bb71100e25f54"
 dependencies = [
  "enough",
- "zencodec",
- "zencodec-io",
+ "zencodec 0.1.27 (git+https://github.com/imazen/zencodec?rev=f73a7e0e01c6d6eefb9f08c61f2bb71100e25f54)",
+ "zencodec-io 0.1.0 (git+https://github.com/imazen/zencodec?rev=f73a7e0e01c6d6eefb9f08c61f2bb71100e25f54)",
  "zenpixels",
 ]
 
 [[package]]
 name = "zencodec-media-testkit"
 version = "0.1.0"
-source = "git+https://github.com/imazen/zencodec?rev=d327434b0826a3e39633665c76f5081c0ceb34cc#d327434b0826a3e39633665c76f5081c0ceb34cc"
+source = "git+https://github.com/imazen/zencodec?rev=f73a7e0e01c6d6eefb9f08c61f2bb71100e25f54#f73a7e0e01c6d6eefb9f08c61f2bb71100e25f54"
 dependencies = [
  "enough",
- "zencodec",
- "zencodec-io",
+ "zencodec 0.1.27 (git+https://github.com/imazen/zencodec?rev=f73a7e0e01c6d6eefb9f08c61f2bb71100e25f54)",
+ "zencodec-io 0.1.0 (git+https://github.com/imazen/zencodec?rev=f73a7e0e01c6d6eefb9f08c61f2bb71100e25f54)",
  "zencodec-media",
  "zenpixels",
 ]
@@ -1972,8 +2002,8 @@ source = "git+https://github.com/imazen/zencodec?rev=d327434b0826a3e39633665c76f
 dependencies = [
  "enough",
  "whereat",
- "zencodec",
- "zencodec-io",
+ "zencodec 0.1.27 (git+https://github.com/imazen/zencodec?rev=d327434b0826a3e39633665c76f5081c0ceb34cc)",
+ "zencodec-io 0.1.0 (git+https://github.com/imazen/zencodec?rev=d327434b0826a3e39633665c76f5081c0ceb34cc)",
  "zenpixels",
 ]
 
@@ -1986,7 +2016,7 @@ dependencies = [
  "miniz_oxide 0.8.9",
  "thiserror",
  "whereat",
- "zencodec",
+ "zencodec 0.1.27 (git+https://github.com/imazen/zencodec?rev=d327434b0826a3e39633665c76f5081c0ceb34cc)",
  "zenpixels",
 ]
 
@@ -1994,9 +2024,8 @@ dependencies = [
 name = "zenivf"
 version = "0.1.0"
 dependencies = [
- "enough",
- "zencodec",
- "zencodec-io",
+ "zencodec 0.1.27 (git+https://github.com/imazen/zencodec?rev=f73a7e0e01c6d6eefb9f08c61f2bb71100e25f54)",
+ "zencodec-io 0.1.0 (git+https://github.com/imazen/zencodec?rev=f73a7e0e01c6d6eefb9f08c61f2bb71100e25f54)",
  "zencodec-media",
  "zencodec-media-testkit",
 ]
@@ -2011,7 +2040,7 @@ dependencies = [
  "thiserror",
  "whereat",
  "zenbench",
- "zencodec",
+ "zencodec 0.1.27 (git+https://github.com/imazen/zencodec?rev=d327434b0826a3e39633665c76f5081c0ceb34cc)",
  "zencodec-testkit",
  "zenpixels",
 ]
@@ -2037,7 +2066,7 @@ dependencies = [
  "ultrahdr-core",
  "whereat",
  "zenanalyze",
- "zencodec",
+ "zencodec 0.1.27 (git+https://github.com/imazen/zencodec?rev=d327434b0826a3e39633665c76f5081c0ceb34cc)",
  "zenmeta",
  "zenpixels",
  "zenyuv",
@@ -2049,7 +2078,7 @@ version = "0.1.0"
 source = "git+https://github.com/imazen/zencodec?rev=d327434b0826a3e39633665c76f5081c0ceb34cc#d327434b0826a3e39633665c76f5081c0ceb34cc"
 dependencies = [
  "roxmltree 0.21.1",
- "zencodec",
+ "zencodec 0.1.27 (git+https://github.com/imazen/zencodec?rev=d327434b0826a3e39633665c76f5081c0ceb34cc)",
  "zenpixels",
 ]
 
@@ -2065,7 +2094,7 @@ dependencies = [
  "thiserror",
  "whereat",
  "zenbench",
- "zencodec",
+ "zencodec 0.1.27 (git+https://github.com/imazen/zencodec?rev=d327434b0826a3e39633665c76f5081c0ceb34cc)",
  "zencodec-testkit",
  "zenpixels",
 ]
@@ -2110,7 +2139,7 @@ dependencies = [
  "thiserror",
  "whereat",
  "zenbench",
- "zencodec",
+ "zencodec 0.1.27 (git+https://github.com/imazen/zencodec?rev=d327434b0826a3e39633665c76f5081c0ceb34cc)",
  "zencodec-testkit",
  "zenpixels",
 ]
@@ -2131,7 +2160,7 @@ dependencies = [
  "usvg",
  "whereat",
  "zenbench",
- "zencodec",
+ "zencodec 0.1.27 (git+https://github.com/imazen/zencodec?rev=d327434b0826a3e39633665c76f5081c0ceb34cc)",
  "zencodec-testkit",
  "zenpixels",
 ]
@@ -2147,7 +2176,7 @@ dependencies = [
  "tiff",
  "whereat",
  "zenbench",
- "zencodec",
+ "zencodec 0.1.27 (git+https://github.com/imazen/zencodec?rev=d327434b0826a3e39633665c76f5081c0ceb34cc)",
  "zencodec-testkit",
  "zenjpeg",
  "zenmeta",
@@ -2159,9 +2188,8 @@ dependencies = [
 name = "zenwebm"
 version = "0.1.0"
 dependencies = [
- "enough",
- "zencodec",
- "zencodec-io",
+ "zencodec 0.1.27 (git+https://github.com/imazen/zencodec?rev=f73a7e0e01c6d6eefb9f08c61f2bb71100e25f54)",
+ "zencodec-io 0.1.0 (git+https://github.com/imazen/zencodec?rev=f73a7e0e01c6d6eefb9f08c61f2bb71100e25f54)",
  "zencodec-media",
  "zencodec-media-testkit",
 ]

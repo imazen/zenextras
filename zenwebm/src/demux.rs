@@ -6,11 +6,10 @@ use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
 
-use enough::Stop;
 use zencodec::Cicp;
 use zencodec::time::{FrameDuration, TimeBase, Timestamp};
 use zencodec_media::container::{
-    AccessPattern, DemuxEvent, DemuxProgress, Demuxer, Input, Request, SeekMode, SeekResult,
+    AccessPattern, DemuxEvent, DemuxProgress, Demuxer, Input, InputRequest, SeekMode, SeekResult,
     SeekStatus, SeekTarget,
 };
 use zencodec_media::limits::{MediaLimitExceeded, MediaLimits};
@@ -110,7 +109,7 @@ struct GroupExtras {
 pub struct WebmDemuxer {
     limits: MediaLimits,
     state: State,
-    requests: Vec<Request>,
+    requests: Vec<InputRequest>,
     /// Offset of the next element header.
     pos: u64,
     segment_end: Option<u64>,
@@ -180,7 +179,7 @@ impl WebmDemuxer {
             return err(WebmError::Truncated);
         }
         self.requests
-            .push(Request::at_least(self.pos, MAX_HEADER_LEN));
+            .push(InputRequest::at_least(self.pos, MAX_HEADER_LEN));
         Ok(DemuxProgress::need(consumed))
     }
 
@@ -208,7 +207,7 @@ impl WebmDemuxer {
         if input.reaches_end() {
             return err(WebmError::Truncated);
         }
-        self.requests.push(Request::at_least(self.pos, total));
+        self.requests.push(InputRequest::at_least(self.pos, total));
         Ok(Err(DemuxProgress::need(0)))
     }
 
@@ -376,7 +375,7 @@ impl WebmDemuxer {
                 if !self.headers_sent {
                     self.send_headers()?;
                     self.requests
-                        .push(Request::at_least(self.pos, MAX_HEADER_LEN));
+                        .push(InputRequest::at_least(self.pos, MAX_HEADER_LEN));
                     return Ok(DemuxProgress::new(h.len, DemuxEvent::Headers));
                 }
                 self.need(h.len)
@@ -429,7 +428,7 @@ impl WebmDemuxer {
         if self.total.is_some_and(|t| pos > t) {
             return err(WebmError::Truncated);
         }
-        self.requests.push(Request::at_least(pos, len));
+        self.requests.push(InputRequest::at_least(pos, len));
         Ok(DemuxProgress::need(0))
     }
 
@@ -1073,8 +1072,8 @@ fn build_track(index: u32, t: &RawTrack, tb: TimeBase) -> Res<TrackInfo> {
 impl Demuxer for WebmDemuxer {
     type Error = WebmError;
 
-    fn step(&mut self, input: Input<'_>, stop: &dyn Stop) -> Res<DemuxProgress> {
-        stop.check()?;
+    fn step(&mut self, input: Input<'_>, pulse: &dyn zencodec::Pulse) -> Res<DemuxProgress> {
+        pulse.check()?;
         self.requests.clear();
         if input.total_len.is_some() {
             self.total = input.total_len;
@@ -1091,7 +1090,7 @@ impl Demuxer for WebmDemuxer {
         }
     }
 
-    fn requested(&self) -> &[Request] {
+    fn requested(&self) -> &[InputRequest] {
         &self.requests
     }
 

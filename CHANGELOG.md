@@ -14,6 +14,7 @@ member entries here reference those files.
 
 ### Dependency integration
 
+- Move `zenivf` and `zenwebm` to zencodec review revision `f73a7e0e`: their demuxers and muxers take `&dyn zencodec::Pulse` and name `InputRequest`; tests and examples use `NoPulse` and `MuxFinish::apply_to` (`apply_finish` is deprecated there), and neither crate depends on `enough` directly. The other members stay on `d327434b` until they migrate.
 - zenjpeg 0.9.0 (git `a2a128ab`) and zenanalyze 0.2.0 (git `8ca647c5`) patched in for zentiff's new `zenjpeg` feature; drop the patches once both are on crates.io.
 - tiff (lilith/image-tiff fork) `da9f8647` → `0219e709` in the workspace and zentiff fuzz manifests: CCITT, YCbCr, tiled-planar and predictor fixes from an inventory of open upstream issues (fork `docs/UPSTREAM_GAPS.md`), fax 0.3.0. The fuzz manifest drops its local `fax` path patch. zentiff changes in [`zentiff/CHANGELOG.md`](zentiff/CHANGELOG.md).
 - tiff (lilith/image-tiff fork) `ad468f42` → `da9f8647` in the workspace and zentiff fuzz manifests: upstream image-rs/image-tiff through PR 415, kept at the 0.11.3 public API. zentiff changes in [`zentiff/CHANGELOG.md`](zentiff/CHANGELOG.md).

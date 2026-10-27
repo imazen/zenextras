@@ -13,13 +13,12 @@ include = ["/src/**", "/README.md", "/CHANGELOG.md", "/LICENSE*"]
 publish = false
 
 [dependencies]
-zencodec = { git = "https://github.com/imazen/zencodec", rev = "d327434b0826a3e39633665c76f5081c0ceb34cc", version = ">=0.1.27, <0.3.0", default-features = false }
-zencodec-media = { git = "https://github.com/imazen/zencodec", rev = "d327434b0826a3e39633665c76f5081c0ceb34cc", version = "0.1.0" }
-enough = { version = "0.4.4", default-features = false }
+zencodec = { git = "https://github.com/imazen/zencodec", rev = "f73a7e0e01c6d6eefb9f08c61f2bb71100e25f54", version = ">=0.1.27, <0.3.0", default-features = false }
+zencodec-media = { git = "https://github.com/imazen/zencodec", rev = "f73a7e0e01c6d6eefb9f08c61f2bb71100e25f54", version = "0.1.0" }
 
 [dev-dependencies]
-zencodec-media-testkit = { git = "https://github.com/imazen/zencodec", rev = "d327434b0826a3e39633665c76f5081c0ceb34cc", version = "0.1.0" }
-zencodec-io = { git = "https://github.com/imazen/zencodec", rev = "d327434b0826a3e39633665c76f5081c0ceb34cc", version = "0.1.0" }
+zencodec-media-testkit = { git = "https://github.com/imazen/zencodec", rev = "f73a7e0e01c6d6eefb9f08c61f2bb71100e25f54", version = "0.1.0" }
+zencodec-io = { git = "https://github.com/imazen/zencodec", rev = "f73a7e0e01c6d6eefb9f08c61f2bb71100e25f54", version = "0.1.0" }
 
 [lints.rust]
 unsafe_code = "forbid"
