@@ -1,11 +1,11 @@
 //! IVF against the zencodec-media contracts, and its own format rules.
 
-use enough::Unstoppable;
+use zencodec::NoPulse;
 use zencodec::time::{Rounding, TimeBase, Timestamp};
 use zencodec_io::SliceCursor;
 use zencodec_media::container::{
     DemuxEvent, DemuxStage, Demuxer, MuxHint, MuxTiming, Muxer, SeekMode, SeekScope, SeekStatus,
-    SeekTarget, apply_finish,
+    SeekTarget,
 };
 use zencodec_media::limits::MediaLimits;
 use zencodec_media::packet::{Packet, RandomAccess};
@@ -50,10 +50,10 @@ fn file(n: usize, patch: bool) -> Vec<u8> {
     m.begin(&[track(CodecId::Av1)], MuxHint::default()).unwrap();
     let mut out = Vec::new();
     for p in packets(n) {
-        m.write_packet(p, &Unstoppable).unwrap();
+        m.write_packet(p, &NoPulse).unwrap();
         m.take_output(&mut out);
     }
-    apply_finish(&mut out, m.finish(&Unstoppable).unwrap()).unwrap();
+    m.finish(&NoPulse).unwrap().apply_to(&mut out).unwrap();
     out
 }
 
@@ -63,7 +63,7 @@ fn demux(bytes: &[u8]) -> Result<(Vec<TrackInfo>, Vec<Packet>), String> {
     let mut out = Vec::new();
     loop {
         let y = cursor
-            .next(bytes, &mut DemuxStage(&mut dem), &Unstoppable)
+            .next(bytes, &mut DemuxStage(&mut dem), &NoPulse)
             .map_err(|e| format!("{e:?}"))?;
         let done = y.is_finished();
         if let DemuxEvent::Packet(p) = y.into_inner() {
@@ -145,7 +145,7 @@ fn seeks_by_time_report_the_actual_packet() {
     let mut dem = IvfDemuxer::new(MediaLimits::default());
     let mut cursor = SliceCursor::new(64);
     cursor
-        .next(&bytes, &mut DemuxStage(&mut dem), &Unstoppable)
+        .next(&bytes, &mut DemuxStage(&mut dem), &NoPulse)
         .unwrap();
     let t = SeekTarget::new(
         0,
@@ -162,7 +162,7 @@ fn seeks_by_time_report_the_actual_packet() {
     assert!(matches!(dem.seek(&t).unwrap(), SeekStatus::Scanning));
     loop {
         if let DemuxEvent::Seeked(_) = cursor
-            .next(&bytes, &mut DemuxStage(&mut dem), &Unstoppable)
+            .next(&bytes, &mut DemuxStage(&mut dem), &NoPulse)
             .unwrap()
             .into_inner()
         {
@@ -246,7 +246,7 @@ fn format_rules() {
     let mut dem = IvfDemuxer::new(MediaLimits::default().with_max_packet_bytes(39));
     let mut cursor = SliceCursor::new(64);
     let e = loop {
-        match cursor.next(&big, &mut DemuxStage(&mut dem), &Unstoppable) {
+        match cursor.next(&big, &mut DemuxStage(&mut dem), &NoPulse) {
             Ok(y) if y.is_finished() => panic!("over-limit packet accepted"),
             Ok(_) => {}
             Err(e) => break e,

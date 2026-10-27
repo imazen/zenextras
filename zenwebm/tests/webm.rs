@@ -2,13 +2,11 @@
 
 use std::sync::Arc;
 
-use enough::Unstoppable;
 use zencodec::Cicp;
+use zencodec::NoPulse;
 use zencodec::time::{FrameDuration, TimeBase, Timestamp};
 use zencodec_io::SliceCursor;
-use zencodec_media::container::{
-    DemuxEvent, DemuxStage, Demuxer, MuxHint, MuxTiming, Muxer, apply_finish,
-};
+use zencodec_media::container::{DemuxEvent, DemuxStage, Demuxer, MuxHint, MuxTiming, Muxer};
 use zencodec_media::limits::MediaLimits;
 use zencodec_media::packet::{Discard, Packet, PacketAddition, PacketPayload, RandomAccess};
 use zencodec_media::session::SessionError;
@@ -95,10 +93,10 @@ fn mux(m: WebmMuxer, tracks: &[TrackInfo], packets: &[Packet]) -> Vec<u8> {
     m.begin(tracks, MuxHint::default()).unwrap();
     let mut out = Vec::new();
     for p in packets {
-        m.write_packet(p.clone(), &Unstoppable).unwrap();
+        m.write_packet(p.clone(), &NoPulse).unwrap();
         m.take_output(&mut out);
     }
-    apply_finish(&mut out, m.finish(&Unstoppable).unwrap()).unwrap();
+    m.finish(&NoPulse).unwrap().apply_to(&mut out).unwrap();
     out
 }
 
@@ -110,7 +108,7 @@ fn demux_with(bytes: &[u8], limits: MediaLimits, window: usize) -> Result<Demuxe
     let mut out = Vec::new();
     loop {
         let y = cursor
-            .next(bytes, &mut DemuxStage(&mut dem), &Unstoppable)
+            .next(bytes, &mut DemuxStage(&mut dem), &NoPulse)
             .map_err(|e| format!("{e:?}"))?;
         let done = y.is_finished();
         if let DemuxEvent::Packet(p) = y.into_inner() {
@@ -245,7 +243,7 @@ fn clusters_start_at_video_random_access_points() {
     for p in packets(11) {
         let ra = p.track() == 0 && p.random_access() == RandomAccess::Yes;
         let pts = p.pts().unwrap().ticks();
-        m.write_packet(p, &Unstoppable).unwrap();
+        m.write_packet(p, &NoPulse).unwrap();
         let now = m.pending_output().len();
         // The cluster before a keyframe closes when the keyframe arrives.
         assert_eq!(now > sent, ra && pts > 0, "pts {pts}");
@@ -597,7 +595,7 @@ fn frame(ticks: i64, tb: TimeBase) -> Packet {
 }
 
 fn write_err(m: &mut WebmMuxer, p: Packet) -> WebmError {
-    match m.write_packet(p, &Unstoppable) {
+    match m.write_packet(p, &NoPulse) {
         Err(SessionError::Codec(e)) => e,
         other => panic!("{other:?}"),
     }
@@ -609,8 +607,8 @@ fn the_tick_length_divides_every_clock_or_rounds_and_reports() {
     let tb = TimeBase::hz(90_000).unwrap();
     let mut m = WebmMuxer::new();
     m.begin(&one_video(tb), MuxHint::default()).unwrap();
-    m.write_packet(frame(0, tb), &Unstoppable).unwrap();
-    m.write_packet(frame(3003, tb), &Unstoppable).unwrap();
+    m.write_packet(frame(0, tb), &NoPulse).unwrap();
+    m.write_packet(frame(3003, tb), &NoPulse).unwrap();
     let r = m.report();
     assert_eq!(r.quantized, 1);
     assert_eq!(r.max_quantization_ns, 366_667 - 1, "33.366667 ms to 33 ms");
@@ -633,7 +631,7 @@ fn the_tick_length_divides_every_clock_or_rounds_and_reports() {
     let mut dem = WebmDemuxer::new(MediaLimits::default());
     let mut cursor = SliceCursor::new(1 << 16);
     while !cursor
-        .next(&bytes, &mut DemuxStage(&mut dem), &Unstoppable)
+        .next(&bytes, &mut DemuxStage(&mut dem), &NoPulse)
         .unwrap()
         .is_finished()
     {}
@@ -659,9 +657,9 @@ fn the_muxer_refuses_what_webm_cannot_carry() {
         write_err(&mut m, frame(-40_000, tb)),
         WebmError::NegativeTimestamp
     );
-    m.write_packet(frame(-5, tb), &Unstoppable).unwrap();
+    m.write_packet(frame(-5, tb), &NoPulse).unwrap();
     assert!(matches!(
-        m.write_packet(frame(0, TimeBase::hz(30).unwrap()), &Unstoppable),
+        m.write_packet(frame(0, TimeBase::hz(30).unwrap()), &NoPulse),
         Err(SessionError::Protocol(_))
     ));
     // Non-WebM codecs make a Matroska file.
@@ -674,7 +672,7 @@ fn the_muxer_refuses_what_webm_cannot_carry() {
     let mut dem = WebmDemuxer::new(MediaLimits::default());
     let mut cursor = SliceCursor::new(1 << 16);
     cursor
-        .next(&bytes, &mut DemuxStage(&mut dem), &Unstoppable)
+        .next(&bytes, &mut DemuxStage(&mut dem), &NoPulse)
         .unwrap();
     assert!(dem.is_matroska());
     let mut m = WebmMuxer::new();
@@ -761,7 +759,7 @@ mod seeking {
         let mut cursor = SliceCursor::new(64);
         while !matches!(
             cursor
-                .next(&f, &mut DemuxStage(&mut dem), &Unstoppable)
+                .next(&f, &mut DemuxStage(&mut dem), &NoPulse)
                 .unwrap()
                 .into_inner(),
             DemuxEvent::Headers
@@ -774,7 +772,7 @@ mod seeking {
         ))
         .unwrap();
         let e = loop {
-            match cursor.next(&f, &mut DemuxStage(&mut dem), &Unstoppable) {
+            match cursor.next(&f, &mut DemuxStage(&mut dem), &NoPulse) {
                 Ok(y) if y.is_finished() => panic!("scan ended without an answer"),
                 Ok(_) => {}
                 Err(e) => break format!("{e:?}"),
@@ -791,7 +789,7 @@ mod seeking {
         let mut cursor = SliceCursor::new(11);
         loop {
             if let DemuxEvent::Headers = cursor
-                .next(&f, &mut DemuxStage(&mut dem), &Unstoppable)
+                .next(&f, &mut DemuxStage(&mut dem), &NoPulse)
                 .unwrap()
                 .into_inner()
             {
@@ -808,7 +806,7 @@ mod seeking {
                 SeekStatus::Positioned(r) => r,
                 _ => loop {
                     if let DemuxEvent::Seeked(r) = cursor
-                        .next(&f, &mut DemuxStage(&mut dem), &Unstoppable)
+                        .next(&f, &mut DemuxStage(&mut dem), &NoPulse)
                         .unwrap()
                         .into_inner()
                     {
@@ -819,7 +817,7 @@ mod seeking {
             let mut after = Vec::new();
             loop {
                 let y = cursor
-                    .next(&f, &mut DemuxStage(&mut dem), &Unstoppable)
+                    .next(&f, &mut DemuxStage(&mut dem), &NoPulse)
                     .unwrap();
                 let done = y.is_finished();
                 if let DemuxEvent::Packet(p) = y.into_inner() {

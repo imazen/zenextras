@@ -2,7 +2,6 @@
 
 use alloc::vec::Vec;
 
-use enough::Stop;
 use zencodec::encode::OutputBuffer;
 use zencodec::time::{FrameDuration, Rounding, TimeBase, Timestamp};
 use zencodec_media::container::{MuxFinish, MuxHint, MuxTiming, Muxer};
@@ -400,8 +399,8 @@ impl Muxer for WebmMuxer {
         Ok(MuxTiming::streaming())
     }
 
-    fn write_packet(&mut self, mut packet: Packet, stop: &dyn Stop) -> Res<()> {
-        stop.check()?;
+    fn write_packet(&mut self, mut packet: Packet, pulse: &dyn zencodec::Pulse) -> Res<()> {
+        pulse.check()?;
         if !self.begun {
             return Err(SessionError::Protocol(ProtocolViolation::NoBegin));
         }
@@ -551,8 +550,8 @@ impl Muxer for WebmMuxer {
         self.out.take_into(into);
     }
 
-    fn finish(mut self, stop: &dyn Stop) -> Res<MuxFinish> {
-        stop.check()?;
+    fn finish(mut self, pulse: &dyn zencodec::Pulse) -> Res<MuxFinish> {
+        pulse.check()?;
         if !self.begun {
             return Err(SessionError::Protocol(ProtocolViolation::NoBegin));
         }

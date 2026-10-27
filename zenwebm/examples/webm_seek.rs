@@ -8,7 +8,7 @@
 //! point (or any packet with `any`), and prints `pts ordinal key` of the
 //! position and of the next packet of that track.
 
-use enough::Unstoppable;
+use zencodec::NoPulse;
 use zencodec::time::{TimeBase, Timestamp};
 use zencodec_io::SliceCursor;
 use zencodec_media::container::{
@@ -28,7 +28,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut cursor = SliceCursor::new(1 << 12);
     while !matches!(
         cursor
-            .next(&bytes, &mut DemuxStage(&mut dem), &Unstoppable)
+            .next(&bytes, &mut DemuxStage(&mut dem), &NoPulse)
             .map_err(|e| format!("{e:?}"))?
             .into_inner(),
         DemuxEvent::Headers
@@ -49,7 +49,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         SeekStatus::Positioned(r) => r,
         _ => loop {
             if let DemuxEvent::Seeked(r) = cursor
-                .next(&bytes, &mut DemuxStage(&mut dem), &Unstoppable)
+                .next(&bytes, &mut DemuxStage(&mut dem), &NoPulse)
                 .map_err(|e| format!("{e:?}"))?
                 .into_inner()
             {
@@ -59,7 +59,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let next = loop {
         match cursor
-            .next(&bytes, &mut DemuxStage(&mut dem), &Unstoppable)
+            .next(&bytes, &mut DemuxStage(&mut dem), &NoPulse)
             .map_err(|e| format!("{e:?}"))?
             .into_inner()
         {

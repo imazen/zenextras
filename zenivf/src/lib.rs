@@ -27,12 +27,11 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::fmt;
 
-use enough::Stop;
 use zencodec::encode::OutputBuffer;
 use zencodec::time::{TimeBase, Timestamp};
 use zencodec_media::container::{
-    AccessPattern, DemuxEvent, DemuxProgress, Demuxer, Input, MuxFinish, MuxHint, MuxTiming, Muxer,
-    Patch, Request, SeekMode, SeekResult, SeekScope, SeekStatus, SeekTarget,
+    AccessPattern, DemuxEvent, DemuxProgress, Demuxer, Input, InputRequest, MuxFinish, MuxHint,
+    MuxTiming, Muxer, Patch, SeekMode, SeekResult, SeekScope, SeekStatus, SeekTarget,
 };
 use zencodec_media::limits::MediaLimits;
 use zencodec_media::packet::{Packet, RandomAccess};
@@ -187,7 +186,7 @@ pub struct IvfDemuxer {
     limits: MediaLimits,
     state: State,
     tracks: Vec<TrackInfo>,
-    requests: Vec<Request>,
+    requests: Vec<InputRequest>,
     time_base: Option<TimeBase>,
     header_len: u64,
     pos: u64,
@@ -226,7 +225,7 @@ impl IvfDemuxer {
         self.declared
     }
 
-    fn need(&mut self, r: Request) -> Result<DemuxProgress, SessionError<IvfError>> {
+    fn need(&mut self, r: InputRequest) -> Result<DemuxProgress, SessionError<IvfError>> {
         self.requests.push(r);
         Ok(DemuxProgress::need(0))
     }
@@ -286,14 +285,14 @@ impl IvfDemuxer {
 
     fn header(&mut self, input: Input<'_>) -> Result<DemuxProgress, SessionError<IvfError>> {
         if input.offset != 0 {
-            return self.need(Request::at_least(0, HEADER_LEN));
+            return self.need(InputRequest::at_least(0, HEADER_LEN));
         }
         let b = input.bytes;
         if b.len() < HEADER_LEN {
             if input.reaches_end() {
                 return Err(codec(IvfError::Truncated));
             }
-            return self.need(Request::at_least(0, HEADER_LEN));
+            return self.need(InputRequest::at_least(0, HEADER_LEN));
         }
         if &b[0..4] != SIGNATURE {
             return Err(codec(IvfError::BadSignature));
@@ -340,7 +339,7 @@ impl IvfDemuxer {
 
     fn packet(&mut self, input: Input<'_>) -> Result<DemuxProgress, SessionError<IvfError>> {
         if input.offset != self.pos {
-            return self.need(Request::at_least(self.pos, PACKET_HEADER_LEN));
+            return self.need(InputRequest::at_least(self.pos, PACKET_HEADER_LEN));
         }
         let b = input.bytes;
         if b.is_empty() && input.reaches_end() {
@@ -360,7 +359,7 @@ impl IvfDemuxer {
             if input.reaches_end() {
                 return Err(codec(IvfError::Truncated));
             }
-            return self.need(Request::at_least(self.pos, PACKET_HEADER_LEN));
+            return self.need(InputRequest::at_least(self.pos, PACKET_HEADER_LEN));
         }
         if let Some(declared) = self.declared
             && self.ordinal >= u64::from(declared)
@@ -382,7 +381,7 @@ impl IvfDemuxer {
             if input.reaches_end() {
                 return Err(codec(IvfError::Truncated));
             }
-            return self.need(Request::at_least(self.pos, total));
+            return self.need(InputRequest::at_least(self.pos, total));
         }
         let pts = i64_at(b, 4);
         let tb = self.time_base.expect("header read");
@@ -412,7 +411,7 @@ impl IvfDemuxer {
 
     fn scan(&mut self, input: Input<'_>) -> Result<DemuxProgress, SessionError<IvfError>> {
         let Some(total) = input.total_len else {
-            return self.need(Request::Len);
+            return self.need(InputRequest::Len);
         };
         if self.scan_pos >= total {
             return self.finish_scan(0);
@@ -421,7 +420,7 @@ impl IvfDemuxer {
             if input.offset == self.scan_pos && input.reaches_end() {
                 return Err(codec(IvfError::Truncated));
             }
-            return self.need(Request::range(self.scan_pos, PACKET_HEADER_LEN as u64));
+            return self.need(InputRequest::range(self.scan_pos, PACKET_HEADER_LEN as u64));
         }
         let b = input.bytes;
         let len = u64::from(u32_at(b, 0));
@@ -443,7 +442,7 @@ impl IvfDemuxer {
             return self.finish_scan(PACKET_HEADER_LEN);
         }
         self.requests
-            .push(Request::range(self.scan_pos, PACKET_HEADER_LEN as u64));
+            .push(InputRequest::range(self.scan_pos, PACKET_HEADER_LEN as u64));
         Ok(DemuxProgress::need(PACKET_HEADER_LEN))
     }
 }
@@ -459,9 +458,9 @@ impl Demuxer for IvfDemuxer {
     fn step(
         &mut self,
         input: Input<'_>,
-        stop: &dyn Stop,
+        pulse: &dyn zencodec::Pulse,
     ) -> Result<DemuxProgress, SessionError<IvfError>> {
-        stop.check()?;
+        pulse.check()?;
         self.requests.clear();
         match self.state {
             State::Header => self.header(input),
@@ -471,7 +470,7 @@ impl Demuxer for IvfDemuxer {
         }
     }
 
-    fn requested(&self) -> &[Request] {
+    fn requested(&self) -> &[InputRequest] {
         &self.requests
     }
 
@@ -586,9 +585,9 @@ impl Muxer for IvfMuxer {
     fn write_packet(
         &mut self,
         mut packet: Packet,
-        stop: &dyn Stop,
+        pulse: &dyn zencodec::Pulse,
     ) -> Result<(), SessionError<IvfError>> {
-        stop.check()?;
+        pulse.check()?;
         if !self.begun {
             return Err(SessionError::Protocol(ProtocolViolation::NoBegin));
         }
@@ -637,8 +636,8 @@ impl Muxer for IvfMuxer {
         self.out.take_into(into);
     }
 
-    fn finish(self, stop: &dyn Stop) -> Result<MuxFinish, SessionError<IvfError>> {
-        stop.check()?;
+    fn finish(self, pulse: &dyn zencodec::Pulse) -> Result<MuxFinish, SessionError<IvfError>> {
+        pulse.check()?;
         if !self.begun {
             return Err(SessionError::Protocol(ProtocolViolation::NoBegin));
         }
