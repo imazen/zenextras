@@ -94,10 +94,10 @@ fn corpus_conformance() {
         }
         if decodes {
             decodable += 1;
-            if data.len() <= 6_000_000 {
-                if let Err(e) = zencodec_testkit::check_inventory(Jp2DecoderConfig::new(), &data) {
-                    failures.push(format!("{}: {e:?}", f.display()));
-                }
+            if data.len() <= 6_000_000
+                && let Err(e) = zencodec_testkit::check_inventory(Jp2DecoderConfig::new(), &data)
+            {
+                failures.push(format!("{}: {e:?}", f.display()));
             }
         } else {
             other += 1;

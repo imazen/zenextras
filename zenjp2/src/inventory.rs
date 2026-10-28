@@ -265,7 +265,7 @@ fn parse_cdef(b: &[u8]) -> Option<(bool, u64)> {
     let mut idx: Vec<u16> = Vec::new();
     idx.try_reserve_exact(count).ok()?;
     let mut alpha_idx = None;
-    for e in body.chunks_exact(6) {
+    for e in body.as_chunks::<6>().0 {
         let i = u16::from_be_bytes([e[0], e[1]]);
         let ty = u16::from_be_bytes([e[2], e[3]]);
         let assoc = u16::from_be_bytes([e[4], e[5]]);
@@ -282,7 +282,7 @@ fn parse_cdef(b: &[u8]) -> Option<(bool, u64)> {
         return None;
     }
     // `last` after sorting by channel index is channel `count - 1`.
-    let last_is_opacity = body.chunks_exact(6).any(|e| {
+    let last_is_opacity = body.as_chunks::<6>().0.iter().any(|e| {
         usize::from(u16::from_be_bytes([e[0], e[1]])) == count - 1
             && u16::from_be_bytes([e[2], e[3]]) == 1
     });
@@ -292,7 +292,7 @@ fn parse_cdef(b: &[u8]) -> Option<(bool, u64)> {
 
 /// `cmap::parse`: every 4-byte entry has a mapping type of 0 or 1.
 fn parse_cmap(b: &[u8]) -> bool {
-    b.len() % 4 == 0 && b.chunks_exact(4).all(|e| e[2] <= 1)
+    b.len().is_multiple_of(4) && b.as_chunks::<4>().0.iter().all(|e| e[2] <= 1)
 }
 
 /// What the first pass over a `jp2h` found (the second pass classifies the

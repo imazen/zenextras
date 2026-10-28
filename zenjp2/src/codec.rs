@@ -261,16 +261,16 @@ impl<'a> DecodeJob<'a> for Jp2DecodeJob {
         _preferred: &[PixelDescriptor],
     ) -> core::result::Result<Self::Dec, Self::Error> {
         // Pre-flight limit checks on input size
-        if let Some(ref limits) = self.limits {
-            if let Some(max_input) = limits.max_input_bytes {
-                let actual = data.len() as u64;
-                if actual > max_input {
-                    return Err(Jp2Error::Limit(zencodec::LimitExceeded::InputSize {
-                        actual,
-                        max: max_input,
-                    })
-                    .into());
-                }
+        if let Some(ref limits) = self.limits
+            && let Some(max_input) = limits.max_input_bytes
+        {
+            let actual = data.len() as u64;
+            if actual > max_input {
+                return Err(Jp2Error::Limit(zencodec::LimitExceeded::InputSize {
+                    actual,
+                    max: max_input,
+                })
+                .into());
             }
         }
 
@@ -394,11 +394,13 @@ impl Decode for Jp2Decoder<'_> {
             })?;
             let mut rgba = crate::alloc_util::alloc_zeroed(self.alloc_pref, true, out_len)
                 .map_err(CodecError::of)?;
-            for (ga, out) in raw_u8.chunks_exact(2).zip(rgba.chunks_exact_mut(4)) {
-                out[0] = ga[0];
-                out[1] = ga[0];
-                out[2] = ga[0];
-                out[3] = ga[1];
+            for (&[g, a], out) in raw_u8
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .zip(rgba.as_chunks_mut::<4>().0)
+            {
+                *out = [g, g, g, a];
             }
             rgba
         } else {
@@ -518,32 +520,32 @@ fn check_limits(
     let height = image.height();
     let pixels = (width as u64).saturating_mul(height as u64);
 
-    if let Some(max_w) = limits.max_width {
-        if width > max_w {
-            return Err(Jp2Error::Limit(zencodec::LimitExceeded::Width {
-                actual: width,
-                max: max_w,
-            })
-            .into());
-        }
+    if let Some(max_w) = limits.max_width
+        && width > max_w
+    {
+        return Err(Jp2Error::Limit(zencodec::LimitExceeded::Width {
+            actual: width,
+            max: max_w,
+        })
+        .into());
     }
-    if let Some(max_h) = limits.max_height {
-        if height > max_h {
-            return Err(Jp2Error::Limit(zencodec::LimitExceeded::Height {
-                actual: height,
-                max: max_h,
-            })
-            .into());
-        }
+    if let Some(max_h) = limits.max_height
+        && height > max_h
+    {
+        return Err(Jp2Error::Limit(zencodec::LimitExceeded::Height {
+            actual: height,
+            max: max_h,
+        })
+        .into());
     }
-    if let Some(max_px) = limits.max_pixels {
-        if pixels > max_px {
-            return Err(Jp2Error::Limit(zencodec::LimitExceeded::Pixels {
-                actual: pixels,
-                max: max_px,
-            })
-            .into());
-        }
+    if let Some(max_px) = limits.max_pixels
+        && pixels > max_px
+    {
+        return Err(Jp2Error::Limit(zencodec::LimitExceeded::Pixels {
+            actual: pixels,
+            max: max_px,
+        })
+        .into());
     }
     if let Some(max_mem) = limits.max_memory_bytes {
         // Conservative estimate: 4 bytes per pixel (RGBA worst case)

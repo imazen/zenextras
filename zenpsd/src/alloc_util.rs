@@ -122,7 +122,9 @@ mod tests {
 
     #[test]
     fn alloc_zeroed_fallible_oom_returns_err() {
-        let res = alloc_zeroed(AllocPref::Fallible, false, usize::MAX / 2);
+        // usize::MAX exceeds isize::MAX on every target, so the reservation always fails;
+        // usize::MAX / 2 (2 GiB on 32-bit) could be granted under i686 QEMU.
+        let res = alloc_zeroed(AllocPref::Fallible, false, usize::MAX);
         assert!(matches!(
             res.as_ref().map_err(|e| e.error()),
             Err(PsdError::OutOfMemory(_))

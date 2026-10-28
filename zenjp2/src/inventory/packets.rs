@@ -855,10 +855,10 @@ impl Ctx<'_> {
         let mut r_x = self.tile.x0;
         let mut r_y = self.tile.y0;
         let sc = 1u64 << nl_minus_r;
-        if r_x % step_x != 0 && (ri.rect.x0 * sc) % step_x == 0 {
+        if !r_x.is_multiple_of(step_x) && (ri.rect.x0 * sc).is_multiple_of(step_x) {
             r_x = next_mult(r_x, step_x)?;
         }
-        if r_y % step_y != 0 && (ri.rect.y0 * sc) % step_y == 0 {
+        if !r_y.is_multiple_of(step_y) && (ri.rect.y0 * sc).is_multiple_of(step_y) {
             r_y = next_mult(r_y, step_y)?;
         }
         out.try_reserve(n as usize)

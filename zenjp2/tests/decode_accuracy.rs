@@ -99,7 +99,12 @@ fn cdef_reorders_channels_accurately() {
 
     let (w, h, desc, swapped_rgb) = decode_bytes(&f);
     assert_eq!((w, h, desc), (16, 16, PixelDescriptor::RGB8_SRGB));
-    for (base_px, swap_px) in base_rgb.chunks_exact(3).zip(swapped_rgb.chunks_exact(3)) {
+    for (base_px, swap_px) in base_rgb
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .zip(swapped_rgb.as_chunks::<3>().0)
+    {
         assert_eq!(swap_px[0], base_px[2], "R should come from channel 2");
         assert_eq!(swap_px[1], base_px[1], "G should come from channel 1");
         assert_eq!(swap_px[2], base_px[0], "B should come from channel 0");
@@ -151,7 +156,12 @@ fn pclr_and_cmap_12bit_palette_scales_to_8bit() {
     let (w, h, desc, pal_rgb) = decode_bytes(&f);
     assert_eq!((w, h, desc), (16, 16, PixelDescriptor::RGB8_SRGB));
 
-    for (base_px, pal_px) in base_rgb.chunks_exact(3).zip(pal_rgb.chunks_exact(3)) {
+    for (base_px, pal_px) in base_rgb
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .zip(pal_rgb.as_chunks::<3>().0)
+    {
         let idx = base_px[0] as u16;
         let want_r = (((idx * 16) as f32 / 4095.0) * 255.0).round() as u8;
         let want_g = ((((255 - idx) * 16) as f32 / 4095.0) * 255.0).round() as u8;
@@ -198,7 +208,12 @@ fn gray_plus_alpha_expands_to_rgba8() {
 
     let (w, h, desc, rgba) = decode_bytes(&f);
     assert_eq!((w, h, desc), (16, 16, PixelDescriptor::RGBA8_SRGB));
-    for (base_px, out_px) in base_rgb.chunks_exact(3).zip(rgba.chunks_exact(4)) {
+    for (base_px, out_px) in base_rgb
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .zip(rgba.as_chunks::<4>().0)
+    {
         let g = base_px[0];
         assert_eq!(out_px, &[g, g, g, 255 - g]);
     }
