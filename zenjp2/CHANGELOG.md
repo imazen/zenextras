@@ -4,6 +4,8 @@
 
 ### QUEUED BREAKING CHANGES
 
+- Requires zencodec `>=0.2.0`: `Jp2DecodeJob` implements `with_pulse`.
+- `Jp2Decoder` holds the job's pulse, so it is no longer `RefUnwindSafe` or `UnwindSafe` (`docs/public-api/zenjp2.txt`).
 - No published zenjp2 release exists as of the 2026-10-12 registry audit
   (crates.io API returns 404). The current version remains 0.1.0.
 
@@ -19,5 +21,6 @@
 
 ### Fixed
 
+- The zencodec decode ignored the job's stop (only `inventory` read it). It now polls when the decoder is built, when the decode starts, and between parsing the header and decoding the codestream (hayro-jpeg2000 decodes without polling), and `capabilities().stop()` is true. `tests/pulse.rs` fails on the previous code (run 53b, cell A).
 - Keep `LimitExceeded` in the error source chain so callers can inspect the
   actual input size and configured maximum after dynamic dispatch.

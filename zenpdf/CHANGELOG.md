@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- The zencodec decode ignored the job's stop: only `inventory` read it, so a stopped job still drew its page. The decode now polls when the decoder is built, when the decode starts, and between parsing and drawing (3 polls at any page size; hayro draws without polling), and `capabilities().stop()` is true. `tests/pulse.rs` fails on the previous code (run 53b, cell A).
 - `PageSelection::All` is bounded by `Limits::max_pages` before the page-index
   list is materialized (zenextras#2).
 - Stable fuzz replay gate `tests/fuzz_regression.rs` over
@@ -17,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### QUEUED BREAKING CHANGES
 <!-- Breaking changes that will ship together in the next minor (0.x) release.
      Do NOT ship these piecemeal — batch them. -->
+- Requires zencodec `>=0.2.0`: `PdfDecodeJob` implements `with_pulse`.
 - `PdfError::InvalidPdf(String)` removed, replaced by `PdfError::Malformed`
   (unit) and `PdfError::Encrypted(hayro::hayro_syntax::DecryptionError)` —
   de-stringifies the hayro error match instead of formatting `{e:?}` into one

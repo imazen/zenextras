@@ -33,3 +33,11 @@
   the last sample of 12-bit JPEG rows with an odd sample count (writes 0); that
   is libtiff's bug, not ours. Oracle: the fork's
   `parity/build-libtiff-jpeg12.sh` and `parity/gen_base12.c`.
+
+- Fixed (zencodec 0.2 Pulse migration, 2026-10-28): JPEG pages mapped every
+  zenjpeg error, a stop included, to `TiffError::Decode`, so a timeout inside a
+  JPEG page lost its reason. `jpeg.rs` maps `ErrorKind::Cancelled(reason)` to
+  `TiffError::Stopped(reason)`; `tests/pulse.rs` (`jpeg_pages`) is the
+  regression. zentiff polls between native calls (decode start, before each JPEG
+  chunk, after the page); zenjpeg polls inside each chunk (456 of 482 polls on
+  `quad-jpeg.tif`).
