@@ -21,7 +21,7 @@ use whereat::At;
 use zencodec::decode::{DecodeCapabilities, DecodeOutput, DecodePolicy, OutputInfo};
 use zencodec::{
     CodecError, ImageFormat, ImageFormatDefinition, ImageInfo, ImageSequence, ResourceLimits,
-    StopToken, Unsupported, UnsupportedOperation,
+    SharedPulse, Unsupported, UnsupportedOperation,
 };
 use zenpixels::{PixelBuffer, PixelDescriptor};
 
@@ -85,6 +85,7 @@ static PDF_DECODE_CAPS: DecodeCapabilities = DecodeCapabilities::new()
     .with_incremental(true)
     .with_cheap_probe(true)
     .with_native_alpha(true)
+    .with_stop(true) // polled before parsing and before drawing; hayro draws without polling
     .with_enforces_max_pixels(true)
     .with_enforces_max_input_bytes(true)
     .with_inventory(cfg!(feature = "inventory"));
@@ -204,7 +205,7 @@ impl zencodec::decode::DecoderConfig for PdfDecoderConfig {
     fn job<'a>(self) -> Self::Job<'a> {
         PdfDecodeJob {
             config: self,
-            stop: None,
+            pulse: SharedPulse::default(),
             limits: ResourceLimits::none(),
             start_frame: 0,
         }
@@ -218,7 +219,7 @@ impl zencodec::decode::DecoderConfig for PdfDecoderConfig {
 /// Per-operation PDF decode job.
 pub struct PdfDecodeJob {
     config: PdfDecoderConfig,
-    stop: Option<StopToken>,
+    pulse: SharedPulse,
     limits: ResourceLimits,
     start_frame: u32,
 }
@@ -295,8 +296,8 @@ impl<'a> zencodec::decode::DecodeJob<'a> for PdfDecodeJob {
     type StreamDec = Unsupported<At<CodecError>>;
     type AnimationFrameDec = Unsupported<At<CodecError>>;
 
-    fn with_stop(mut self, stop: StopToken) -> Self {
-        self.stop = Some(stop);
+    fn with_pulse(mut self, pulse: SharedPulse) -> Self {
+        self.pulse = pulse;
         self
     }
 
@@ -334,19 +335,15 @@ impl<'a> zencodec::decode::DecodeJob<'a> for PdfDecodeJob {
 
     /// Structural inventory: every indirect object, xref section, trailer,
     /// comment and revision marker, with what the render path does with it
-    /// (see `crate::inventory`). Honors `max_input_bytes`, the stop token and
+    /// (see `crate::inventory`). Honors `max_input_bytes`, the job's pulse and
     /// the start frame: only the page this job decodes has its content and
     /// annotations read.
     #[cfg(feature = "inventory")]
     fn inventory(&self, data: &[u8]) -> Result<zencodec::inventory::Inventory, At<CodecError>> {
         self.check_input_size(data)?;
         use whereat::ErrorAtExt;
-        let stop: &dyn zencodec::enough::Stop = match &self.stop {
-            Some(s) => s,
-            None => &zencodec::enough::Unstoppable,
-        };
-        stop.check()
-            .map_err(|reason| CodecError::new(Some("zenpdf"), reason.into()).start_at())?;
+        let stop: &dyn zencodec::enough::Stop = &self.pulse;
+        check_pulse(stop)?;
         // A job the decoder rejects before drawing draws no page.
         let rejected = self.draw_gate(data).err().map(|e| e.to_string());
         match crate::inventory::pdf_inventory(
@@ -382,6 +379,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for PdfDecodeJob {
         _preferred: &[PixelDescriptor],
     ) -> Result<PdfDecoder, At<CodecError>> {
         self.check_input_size(&data)?;
+        check_pulse(&self.pulse)?;
         let SelectedPage { page, count, .. } = self.selected_page(&data)?;
         // Lower the zencodec 3-mode allocation preference onto the crate-internal
         // decoder. zenpdf's raster is produced inside hayro (a transitive
@@ -399,6 +397,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for PdfDecodeJob {
             page,
             page_count: count,
             alloc_pref,
+            pulse: self.pulse,
         })
     }
 
@@ -462,12 +461,16 @@ pub struct PdfDecoder {
     /// hayro-owned), so this is currently a no-op carried for boundary parity;
     /// see [`crate::alloc_util`].
     alloc_pref: AllocPref,
+    /// The job's pulse, polled when the decode starts and again once the
+    /// document is parsed, before the page is drawn.
+    pulse: SharedPulse,
 }
 
 impl zencodec::decode::Decode for PdfDecoder {
     type Error = At<CodecError>;
 
     fn decode(self) -> Result<DecodeOutput, At<CodecError>> {
+        check_pulse(&self.pulse)?;
         // The output raster is produced inside hayro (`hayro::render`) below,
         // which this crate cannot route through a `try_reserve`, so the lowered
         // allocation preference has no zenpdf-owned site to apply to. Bind it
@@ -482,8 +485,10 @@ impl zencodec::decode::Decode for PdfDecoder {
             render_annotations: self.render_annotations,
             limits: crate::render::RenderLimits::default(),
         };
-        // Use render_pages_owned to avoid copying the already-owned Vec<u8>.
-        let mut pages = render::render_pages_owned(self.data, &config)?;
+        // Parse the already-owned bytes without copying them, then draw.
+        let pdf = render::open_pdf_owned(self.data)?;
+        check_pulse(&self.pulse)?;
+        let mut pages = render::render_pages_inner(&pdf, &config)?;
         let rendered = pages.remove(0);
         let w = rendered.buffer.width();
         let h = rendered.buffer.height();
@@ -503,6 +508,13 @@ impl zencodec::decode::Decode for PdfDecoder {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/// Poll the job's pulse; a stop keeps its reason.
+fn check_pulse(stop: &dyn zencodec::enough::Stop) -> Result<(), At<CodecError>> {
+    use whereat::ErrorAtExt;
+    stop.check()
+        .map_err(|reason| CodecError::new(Some("zenpdf"), reason.into()).start_at())
+}
 
 fn compute_output_dims(
     bounds: &RenderBounds,

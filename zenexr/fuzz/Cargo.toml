@@ -20,8 +20,8 @@ features = ["inventory"]
 members = ["."]
 
 [patch.crates-io]
-# zencodec PR imazen/zencodec#133 (`feat/inventory`); swap for the release before merge.
-zencodec = { git = "https://github.com/imazen/zencodec", rev = "d327434b0826a3e39633665c76f5081c0ceb34cc" }
+# The zencodec 0.2 core family of the parent workspace (zenpipe's 6214c93c).
+zencodec = { git = "https://github.com/imazen/zencodec", rev = "6214c93c24d35769a34a9561fe844c717e4d3a3a" }
 
 [[bin]]
 name = "inventory"

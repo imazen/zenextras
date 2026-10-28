@@ -223,7 +223,7 @@ impl zencodec::encode::EncoderConfig for TiffEncoderCodecConfig {
     fn job(self) -> TiffEncodeJob {
         TiffEncodeJob {
             config: self,
-            stop: None,
+            pulse: zencodec::SharedPulse::default(),
             limits: None,
             metadata: None,
             policy: EncodePolicy::none(),
@@ -236,7 +236,7 @@ impl zencodec::encode::EncoderConfig for TiffEncoderCodecConfig {
 /// Per-operation TIFF encode job.
 pub struct TiffEncodeJob {
     config: TiffEncoderCodecConfig,
-    stop: Option<zencodec::StopToken>,
+    pulse: zencodec::SharedPulse,
     limits: Option<ResourceLimits>,
     metadata: Option<Metadata>,
     policy: EncodePolicy,
@@ -247,8 +247,8 @@ impl zencodec::encode::EncodeJob for TiffEncodeJob {
     type Enc = TiffCodecEncoder;
     type AnimationFrameEnc = ();
 
-    fn with_stop(mut self, stop: zencodec::StopToken) -> Self {
-        self.stop = Some(stop);
+    fn with_pulse(mut self, pulse: zencodec::SharedPulse) -> Self {
+        self.pulse = pulse;
         self
     }
 
@@ -274,7 +274,7 @@ impl zencodec::encode::EncodeJob for TiffEncodeJob {
     fn encoder(self) -> Result<TiffCodecEncoder, At<CodecError>> {
         Ok(TiffCodecEncoder {
             config: self.config,
-            stop: self.stop,
+            pulse: self.pulse,
             limits: self.limits,
             metadata: self.metadata,
             policy: self.policy,
@@ -293,7 +293,7 @@ impl zencodec::encode::EncodeJob for TiffEncodeJob {
 /// Single-image TIFF encoder implementing [`zencodec::encode::Encoder`].
 pub struct TiffCodecEncoder {
     config: TiffEncoderCodecConfig,
-    stop: Option<zencodec::StopToken>,
+    pulse: zencodec::SharedPulse,
     limits: Option<ResourceLimits>,
     metadata: Option<Metadata>,
     policy: EncodePolicy,
@@ -355,10 +355,7 @@ impl TiffCodecEncoder {
     /// — returns the crate's own `At<TiffError>` so the trait method stays a thin
     /// `.map_err(CodecError::of)` wrapper (Pattern B envelope boundary).
     fn encode_inner(self, pixels: PixelSlice<'_>) -> crate::Result<EncodeOutput> {
-        let stop: &dyn Stop = match &self.stop {
-            Some(s) => s,
-            None => &enough::Unstoppable,
-        };
+        let stop: &dyn Stop = &self.pulse;
 
         self.check_limits(&pixels)?;
 
@@ -581,7 +578,7 @@ impl zencodec::decode::DecoderConfig for TiffDecoderCodecConfig {
     fn job<'a>(self) -> Self::Job<'a> {
         TiffDecodeJob {
             config: self,
-            stop: None,
+            pulse: zencodec::SharedPulse::default(),
             limits: None,
             max_input_bytes: None,
             policy: None,
@@ -595,7 +592,7 @@ impl zencodec::decode::DecoderConfig for TiffDecoderCodecConfig {
 /// Per-operation TIFF decode job.
 pub struct TiffDecodeJob {
     config: TiffDecoderCodecConfig,
-    stop: Option<zencodec::StopToken>,
+    pulse: zencodec::SharedPulse,
     limits: Option<ResourceLimits>,
     max_input_bytes: Option<u64>,
     policy: Option<DecodePolicy>,
@@ -649,8 +646,8 @@ impl<'a> zencodec::decode::DecodeJob<'a> for TiffDecodeJob {
     type StreamDec = zencodec::Unsupported<At<CodecError>>;
     type AnimationFrameDec = zencodec::Unsupported<At<CodecError>>;
 
-    fn with_stop(mut self, stop: zencodec::StopToken) -> Self {
-        self.stop = Some(stop);
+    fn with_pulse(mut self, pulse: zencodec::SharedPulse) -> Self {
+        self.pulse = pulse;
         self
     }
 
@@ -674,10 +671,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for TiffDecodeJob {
     /// [`crate::inventory`] for the walk and the dispositions.
     #[cfg(feature = "inventory")]
     fn inventory(&self, data: &[u8]) -> Result<zencodec::inventory::Inventory, At<CodecError>> {
-        let stop: &dyn Stop = match &self.stop {
-            Some(s) => s,
-            None => &enough::Unstoppable,
-        };
+        let stop: &dyn Stop = &self.pulse;
         stop.check()
             .map_err(|e| CodecError::of(at!(TiffError::from(e))))?;
         // The same input-size limit `decoder()` enforces.
@@ -769,7 +763,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for TiffDecodeJob {
             config: self.config,
             decode_config,
             data,
-            stop: self.stop,
+            pulse: self.pulse,
             policy: self.policy,
             orientation: self.orientation,
         })
@@ -831,7 +825,7 @@ pub struct TiffCodecDecoder<'a> {
     config: TiffDecoderCodecConfig,
     decode_config: TiffDecodeConfig,
     data: Cow<'a, [u8]>,
-    stop: Option<zencodec::StopToken>,
+    pulse: zencodec::SharedPulse,
     policy: Option<DecodePolicy>,
     /// Resolved from [`TiffDecodeJob::orientation`]; drives the bake path in
     /// [`Decode::decode`](zencodec::decode::Decode::decode).
@@ -861,10 +855,7 @@ impl TiffCodecDecoder<'_> {
     /// method stays a thin `.map_err(CodecError::of)` wrapper (Pattern B
     /// envelope boundary).
     fn decode_inner(self) -> crate::Result<DecodeOutput> {
-        let stop: &dyn Stop = match &self.stop {
-            Some(s) => s,
-            None => &enough::Unstoppable,
-        };
+        let stop: &dyn Stop = &self.pulse;
         let _ = self.config; // available for future config-level overrides
 
         let output = crate::decode(&self.data, &self.decode_config, stop)?;
@@ -1333,6 +1324,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)] // Exercises the legacy best-effort policy setter on purpose.
     fn decode_policy_suppresses_metadata() {
         // Encode a simple image
         let w = 2u32;

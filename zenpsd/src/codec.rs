@@ -13,7 +13,7 @@ use zencodec::decode::{
     Decode, DecodeCapabilities, DecodeJob, DecodeOutput, DecodePolicy, DecodeRowSink,
     DecoderConfig, OutputInfo,
 };
-use zencodec::{CodecError, ImageFormat, ImageInfo, ResourceLimits, StopToken, Unsupported};
+use zencodec::{CodecError, ImageFormat, ImageInfo, ResourceLimits, SharedPulse, Unsupported};
 use zenpixels::PixelDescriptor;
 
 use crate::alloc_util::AllocPref;
@@ -56,6 +56,7 @@ static PSD_DECODE_CAPS: DecodeCapabilities = DecodeCapabilities::new()
     .with_native_alpha(true)
     .with_native_16bit(true)
     .with_native_f32(true)
+    .with_stop(true) // polled when the decode starts, while planes unpack, and before interleaving
     .with_enforces_max_pixels(true)
     .with_enforces_max_memory(true)
     .with_enforces_max_input_bytes(true);
@@ -131,7 +132,7 @@ impl DecoderConfig for PsdDecoderConfig {
     fn job<'a>(self) -> Self::Job<'a> {
         PsdDecodeJob {
             config: self,
-            stop: None,
+            pulse: SharedPulse::default(),
             limits: None,
             policy: None,
         }
@@ -141,7 +142,7 @@ impl DecoderConfig for PsdDecoderConfig {
 /// Per-operation PSD/PSB decode job.
 pub struct PsdDecodeJob {
     config: PsdDecoderConfig,
-    stop: Option<StopToken>,
+    pulse: SharedPulse,
     limits: Option<ResourceLimits>,
     policy: Option<DecodePolicy>,
 }
@@ -152,8 +153,8 @@ impl<'a> DecodeJob<'a> for PsdDecodeJob {
     type StreamDec = Unsupported<At<CodecError>>;
     type AnimationFrameDec = Unsupported<At<CodecError>>;
 
-    fn with_stop(mut self, stop: StopToken) -> Self {
-        self.stop = Some(stop);
+    fn with_pulse(mut self, pulse: SharedPulse) -> Self {
+        self.pulse = pulse;
         self
     }
 
@@ -202,10 +203,7 @@ impl<'a> DecodeJob<'a> for PsdDecodeJob {
                 .check_input_size(data.len() as u64)
                 .map_err(PsdError::Limit)?;
         }
-        let stop: &dyn enough::Stop = self
-            .stop
-            .as_ref()
-            .map_or(&enough::Unstoppable as &dyn enough::Stop, |s| s);
+        let stop: &dyn enough::Stop = &self.pulse;
         let strict = self.config.require_real_merged_data
             || self
                 .policy
@@ -273,7 +271,7 @@ impl<'a> DecodeJob<'a> for PsdDecodeJob {
         Ok(PsdDecoder {
             data,
             config: self.config,
-            stop: self.stop,
+            pulse: self.pulse,
             limits: self.limits,
             policy: self.policy,
             alloc_pref,
@@ -313,7 +311,7 @@ impl<'a> DecodeJob<'a> for PsdDecodeJob {
 pub struct PsdDecoder<'a> {
     data: Cow<'a, [u8]>,
     config: PsdDecoderConfig,
-    stop: Option<StopToken>,
+    pulse: SharedPulse,
     limits: Option<ResourceLimits>,
     policy: Option<DecodePolicy>,
     alloc_pref: AllocPref,
@@ -323,10 +321,7 @@ impl Decode for PsdDecoder<'_> {
     type Error = At<CodecError>;
 
     fn decode(self) -> CodecResult<DecodeOutput> {
-        let stop: &dyn enough::Stop = self
-            .stop
-            .as_ref()
-            .map_or(&enough::Unstoppable as &dyn enough::Stop, |s| s);
+        let stop: &dyn enough::Stop = &self.pulse;
         stop.check().map_err(PsdError::Stopped)?;
 
         let layout = parser::parse_layout(&self.data).map_err(CodecError::of)?;

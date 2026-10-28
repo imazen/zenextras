@@ -9,7 +9,7 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4.13"
-zencodec = ">=0.1.27, <0.3.0"
+zencodec = ">=0.2.0, <0.3.0"
 
 [dependencies.zenjp2]
 path = ".."
@@ -24,6 +24,7 @@ bench = false
 
 [workspace]
 
-# Inventory API (imazen/zencodec#133). Swap for the released version before merge.
+# The parent workspace's zencodec 0.2 core family (zenpipe's 6214c93c). Swap for the
+# released version before merge.
 [patch.crates-io]
-zencodec = { git = "https://github.com/imazen/zencodec", rev = "d327434b0826a3e39633665c76f5081c0ceb34cc" }
+zencodec = { git = "https://github.com/imazen/zencodec", rev = "6214c93c24d35769a34a9561fe844c717e4d3a3a" }

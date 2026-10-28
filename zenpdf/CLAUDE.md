@@ -15,6 +15,14 @@
 - `src/error.rs` -- PdfError enum
 - `src/lib.rs` -- public API re-exports
 
+## Known Bugs
+
+- Fixed (zencodec 0.2 Pulse migration, 2026-10-28): the zencodec decode never
+  read the job's stop; only `inventory` did. It now polls when the decoder is
+  built, when the decode starts, and between parsing and drawing. hayro cannot
+  be interrupted, so a stop raised during a draw is seen when the draw returns
+  (3 polls at any page size). `tests/pulse.rs` is the regression.
+
 ## Known Upstream Issues (hayro 0.7)
 
 Status against the 2026-07-18 security audit, after the hayro 0.5 → 0.7 bump.

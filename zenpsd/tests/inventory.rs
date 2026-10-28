@@ -342,6 +342,7 @@ fn compressions_rle_zip_and_zip_prediction_for_psd_and_psb() {
 }
 
 #[test]
+#[allow(deprecated)] // Exercises the legacy best-effort policy setter on purpose.
 fn metadata_extraction_and_version_info_handling() {
     let mut resources = Vec::new();
     // ICC (0x040F)

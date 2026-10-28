@@ -82,30 +82,32 @@ fn every_stop_poll_retains_a_one_shot_timeout() {
         config
             .clone()
             .job()
-            .with_stop(zencodec::StopToken::new(AtPoll {
-                polls: polls.clone(),
-                fail_at: usize::MAX,
-            }))
+            .with_pulse(zencodec::SharedPulse::new(
+                zencodec::how_far::StopOnly::new(AtPoll {
+                    polls: polls.clone(),
+                    fail_at: usize::MAX,
+                }),
+            ))
             .inventory(data)
             .unwrap();
         let total = polls.load(Ordering::Relaxed);
         assert!(total > 0);
         for fail_at in 0..total {
             let stop = || {
-                zencodec::StopToken::new(AtPoll {
+                zencodec::SharedPulse::new(zencodec::how_far::StopOnly::new(AtPoll {
                     polls: Arc::new(AtomicUsize::new(0)),
                     fail_at,
-                })
+                }))
             };
             let generic = config
                 .clone()
                 .job()
-                .with_stop(stop())
+                .with_pulse(stop())
                 .inventory(data)
                 .unwrap_err();
             let dynamic: &dyn DynDecoderConfig = &config;
             let mut job = dynamic.dyn_job();
-            job.set_stop(stop());
+            job.set_pulse(stop());
             let erased = job.inventory(data).unwrap_err();
             let expected = ErrorCategory::Stopped(enough::StopReason::TimedOut);
             assert_eq!(generic.category(), expected, "poll {fail_at}/{total}");
@@ -120,6 +122,7 @@ fn every_stop_poll_retains_a_one_shot_timeout() {
 
 #[cfg(feature = "inventory")]
 #[test]
+#[allow(deprecated)] // Exercises the legacy best-effort policy setter on purpose.
 fn configured_icc_suppression_changes_inventory_disposition() {
     use zencodec::decode::DecodePolicy;
     use zencodec::inventory::{Disposition, MetadataKind};

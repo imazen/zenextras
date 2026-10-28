@@ -1842,7 +1842,9 @@ fn p11_the_stop_token_cancels_the_inventory() {
     let data = one_page("", RED, &[]);
     let r = PdfDecoderConfig::new()
         .job()
-        .with_stop(zencodec::StopToken::new(Cancelled))
+        .with_pulse(zencodec::SharedPulse::new(
+            zencodec::how_far::StopOnly::new(Cancelled),
+        ))
         .inventory(&data);
     assert!(r.is_err(), "a cancelled token stops the inventory");
 }
