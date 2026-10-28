@@ -14,6 +14,14 @@ member entries here reference those files.
 
 ### Dependency integration
 
+- Move root and standalone fuzz graphs to the verified zencodec main family
+  `f02a17ec` and paired pixels `283655c5`. Replace direct shared git edges in
+  TIFF/IVF/WebM with registry requirements so consumers can select one family
+  through root patches. Keep existing floors and current-plus-next ceilings.
+  Add six-graph identity receipts and align the TIFF P3 synthesis test with the
+  canonical CICP-tagged carrier, preserving exact bytes and samples. See
+  [graph contract](docs/shared-contract-graph.md).
+
 - Every member is on one zencodec 0.2 core family, zenpipe's `6214c93c` (zencodec PR 168), superseding the `f73a7e0e` and `d327434b` pins below. zencodec, zencodec-testkit and zenmeta come through the workspace patch; zentiff, zenivf and zenwebm name the same revision directly. zenjpeg moves from `cf7b051b` to zenpipe's `d099267c` (its decoder is unchanged), and ultrahdr-core is patched to zenpipe's `61097504`, because crates.io 0.6.0 is on zencodec 0.1. The root lock and every fuzz lock hold one zencodec, one family source each (run 53b). The zenpdf and zentiff fuzz manifests had drifted from the parent's hayro-syntax and image-tiff forks, so the PDF fuzzer built registry hayro-syntax without the resource-limit fork; both now name the parent's forks.
 - The zencodec adapters keep the job's `SharedPulse` (zencodec 0.2 `with_pulse`). Each crate's `tests/pulse.rs` installs the pulse four ways: a pulse that cannot report, one that can, the deprecated `with_stop`, and the erased job's `set_pulse`. A stop at entry is refused with its reason, and a one-shot stop at every poll ends the operation with its reason. Each crate polls an exact set of checkpoints. An unstopped pulse changes no output byte against the native API, and zentiff's JPEG pages also match libtiff's recorded hashes. The tests also tell cooperative cancellation between native calls from interruption inside one. Measured with every arm alike (run 53b):
   - PDF: 3 polls at 595x841 and at 2381x3367.

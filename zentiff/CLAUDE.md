@@ -2,6 +2,12 @@
 
 ## Known Bugs
 
+- Paired core/pixels graph validation (2026-10-28): the CICP-only P3 integration
+  test expected the old `DISPLAY_P3_V4` compact profile, while the current
+  `icc-db` synthesizer emits the canonical CICP-tagged P3 profile. Keep exact
+  synthesized-carrier equality, independent P3 tag verification and unchanged
+  active samples; do not restore the old profile or loosen a color tolerance.
+
 - Fixed (fork `2a7d124f`, 2026-10-24): after the fork bump to `da9f8647`,
   IFD0's tag values were capped at image-tiff's default `ifd_value_size`
   because `Decoder::new` parsed IFD0 before `with_limits`. The fork's

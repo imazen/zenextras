@@ -778,18 +778,28 @@ fn cicp_only_source_synthesizes_icc_on_encode() {
         .decode()
         .unwrap();
 
-    // An ICC profile must now be present (the bundled Display P3 profile),
-    // matching what the synthesis table returns for P3 primaries.
+    // icc-db uses the canonical CICP-tagged profile, not DISPLAY_P3_V4's
+    // compact compatibility matrix. Keep exact carrier bytes and independently
+    // require the requested signal plus unchanged active samples.
     let icc = decoded
         .info()
         .source_color
         .icc_profile
         .as_deref()
         .expect("CICP-only P3 source should synthesize an ICC for TIFF");
-    let expected = zenpixels_convert::icc_profiles::DISPLAY_P3_V4;
+    use zenpixels_convert::icc_profiles::{SynthesizedIcc, synthesize_icc_for_cicp};
+    let SynthesizedIcc::Profile(expected) = synthesize_icc_for_cicp(Cicp::DISPLAY_P3) else {
+        panic!("Display P3 must have a synthesized profile");
+    };
     assert_eq!(
-        icc, expected,
-        "embedded ICC should be the synthesized P3 profile"
+        icc,
+        expected.as_ref(),
+        "embedded ICC must equal the synthesized P3 profile"
+    );
+    assert_eq!(zenpixels::icc::extract_cicp(icc), Some(Cicp::DISPLAY_P3));
+    assert_eq!(
+        decoded.pixels().contiguous_bytes().as_ref(),
+        buf.as_contiguous_bytes().unwrap()
     );
 }
 

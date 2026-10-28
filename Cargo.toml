@@ -12,13 +12,17 @@ members = [
 ]
 
 [patch.crates-io]
-# The zencodec 0.2 core family every member builds on: zenpipe's revision (zencodec
-# PR 168, 6214c93c), so the workspace and a zenpipe graph each hold one core. zentiff,
-# zenivf and zenwebm name the same revision for their direct core edges.
-zencodec = { git = "https://github.com/imazen/zencodec", rev = "6214c93c24d35769a34a9561fe844c717e4d3a3a" }
-zencodec-testkit = { git = "https://github.com/imazen/zencodec", rev = "6214c93c24d35769a34a9561fe844c717e4d3a3a" }
-# Unpublished; zenjpeg names it from the registry.
-zenmeta = { git = "https://github.com/imazen/zencodec", rev = "6214c93c24d35769a34a9561fe844c717e4d3a3a" }
+# One unpublished core family at the verified main merge. Members use registry
+# requirements so downstream consumers can choose one family with their root patch.
+zencodec = { git = "https://github.com/imazen/zencodec", rev = "f02a17ec6001a9efcad1267f92a3ea928ed06e57" }
+zencodec-testkit = { git = "https://github.com/imazen/zencodec", rev = "f02a17ec6001a9efcad1267f92a3ea928ed06e57" }
+zencodec-io = { git = "https://github.com/imazen/zencodec", rev = "f02a17ec6001a9efcad1267f92a3ea928ed06e57" }
+zencodec-media = { git = "https://github.com/imazen/zencodec", rev = "f02a17ec6001a9efcad1267f92a3ea928ed06e57" }
+zencodec-media-testkit = { git = "https://github.com/imazen/zencodec", rev = "f02a17ec6001a9efcad1267f92a3ea928ed06e57" }
+zenmeta = { git = "https://github.com/imazen/zencodec", rev = "f02a17ec6001a9efcad1267f92a3ea928ed06e57" }
+# Paired precision/conversion APIs consumed by this shared core.
+zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "283655c5424e0ad7ebc6d2acd94670fac1e29158" }
+zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "283655c5424e0ad7ebc6d2acd94670fac1e29158" }
 # zenjpeg depends on ultrahdr-core; crates.io 0.6.0 is on zencodec 0.1. zenpipe's revision
 # is on the 0.2 core above.
 ultrahdr-core = { git = "https://github.com/imazen/ultrahdr", rev = "610975047bcb0bb266e952f15bcd978ba3f34950" }

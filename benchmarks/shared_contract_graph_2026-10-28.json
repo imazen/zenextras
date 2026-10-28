@@ -1,0 +1,234 @@
+{
+  "date": "2026-10-28",
+  "source": "a37e09b4a216baf5662d99e859e239bab2cb03d7",
+  "graph_source": "c94700555290883d158431d43d004e542959deba",
+  "results": {
+    "default": {
+      "passed": 288,
+      "failed": 0,
+      "ignored": 4
+    },
+    "all_features": {
+      "passed": 641,
+      "failed": 0,
+      "ignored": 5
+    }
+  },
+  "graphs": [
+    {
+      "graph": ".",
+      "shared": {
+        "how-far": [
+          {
+            "version": "0.1.0",
+            "source": "registry+https://github.com/rust-lang/crates.io-index"
+          }
+        ],
+        "zencodec": [
+          {
+            "version": "0.2.0",
+            "source": "git+https://github.com/imazen/zencodec?rev=f02a17ec6001a9efcad1267f92a3ea928ed06e57#f02a17ec6001a9efcad1267f92a3ea928ed06e57"
+          }
+        ],
+        "zencodec-io": [
+          {
+            "version": "0.1.0",
+            "source": "git+https://github.com/imazen/zencodec?rev=f02a17ec6001a9efcad1267f92a3ea928ed06e57#f02a17ec6001a9efcad1267f92a3ea928ed06e57"
+          }
+        ],
+        "zencodec-media": [
+          {
+            "version": "0.1.0",
+            "source": "git+https://github.com/imazen/zencodec?rev=f02a17ec6001a9efcad1267f92a3ea928ed06e57#f02a17ec6001a9efcad1267f92a3ea928ed06e57"
+          }
+        ],
+        "zencodec-media-testkit": [
+          {
+            "version": "0.1.0",
+            "source": "git+https://github.com/imazen/zencodec?rev=f02a17ec6001a9efcad1267f92a3ea928ed06e57#f02a17ec6001a9efcad1267f92a3ea928ed06e57"
+          }
+        ],
+        "zencodec-testkit": [
+          {
+            "version": "0.2.0",
+            "source": "git+https://github.com/imazen/zencodec?rev=f02a17ec6001a9efcad1267f92a3ea928ed06e57#f02a17ec6001a9efcad1267f92a3ea928ed06e57"
+          }
+        ],
+        "zenmeta": [
+          {
+            "version": "0.1.0",
+            "source": "git+https://github.com/imazen/zencodec?rev=f02a17ec6001a9efcad1267f92a3ea928ed06e57#f02a17ec6001a9efcad1267f92a3ea928ed06e57"
+          }
+        ],
+        "zenpixels": [
+          {
+            "version": "0.2.17",
+            "source": "git+https://github.com/imazen/zenpixels?rev=283655c5424e0ad7ebc6d2acd94670fac1e29158#283655c5424e0ad7ebc6d2acd94670fac1e29158"
+          }
+        ],
+        "zenpixels-convert": [
+          {
+            "version": "0.2.17",
+            "source": "git+https://github.com/imazen/zenpixels?rev=283655c5424e0ad7ebc6d2acd94670fac1e29158#283655c5424e0ad7ebc6d2acd94670fac1e29158"
+          }
+        ]
+      }
+    },
+    {
+      "graph": "zentiff/fuzz",
+      "shared": {
+        "how-far": [
+          {
+            "version": "0.1.0",
+            "source": "registry+https://github.com/rust-lang/crates.io-index"
+          }
+        ],
+        "zencodec": [
+          {
+            "version": "0.2.0",
+            "source": "git+https://github.com/imazen/zencodec?rev=f02a17ec6001a9efcad1267f92a3ea928ed06e57#f02a17ec6001a9efcad1267f92a3ea928ed06e57"
+          }
+        ],
+        "zenmeta": [
+          {
+            "version": "0.1.0",
+            "source": "git+https://github.com/imazen/zencodec?rev=f02a17ec6001a9efcad1267f92a3ea928ed06e57#f02a17ec6001a9efcad1267f92a3ea928ed06e57"
+          }
+        ],
+        "zenpixels": [
+          {
+            "version": "0.2.17",
+            "source": "git+https://github.com/imazen/zenpixels?rev=283655c5424e0ad7ebc6d2acd94670fac1e29158#283655c5424e0ad7ebc6d2acd94670fac1e29158"
+          }
+        ],
+        "zenpixels-convert": [
+          {
+            "version": "0.2.17",
+            "source": "git+https://github.com/imazen/zenpixels?rev=283655c5424e0ad7ebc6d2acd94670fac1e29158#283655c5424e0ad7ebc6d2acd94670fac1e29158"
+          }
+        ]
+      }
+    },
+    {
+      "graph": "zenpdf/fuzz",
+      "shared": {
+        "how-far": [
+          {
+            "version": "0.1.0",
+            "source": "registry+https://github.com/rust-lang/crates.io-index"
+          }
+        ],
+        "zencodec": [
+          {
+            "version": "0.2.0",
+            "source": "git+https://github.com/imazen/zencodec?rev=f02a17ec6001a9efcad1267f92a3ea928ed06e57#f02a17ec6001a9efcad1267f92a3ea928ed06e57"
+          }
+        ],
+        "zenpixels": [
+          {
+            "version": "0.2.17",
+            "source": "git+https://github.com/imazen/zenpixels?rev=283655c5424e0ad7ebc6d2acd94670fac1e29158#283655c5424e0ad7ebc6d2acd94670fac1e29158"
+          }
+        ]
+      }
+    },
+    {
+      "graph": "zensvg/fuzz",
+      "shared": {
+        "how-far": [
+          {
+            "version": "0.1.0",
+            "source": "registry+https://github.com/rust-lang/crates.io-index"
+          }
+        ],
+        "zencodec": [
+          {
+            "version": "0.2.0",
+            "source": "git+https://github.com/imazen/zencodec?rev=f02a17ec6001a9efcad1267f92a3ea928ed06e57#f02a17ec6001a9efcad1267f92a3ea928ed06e57"
+          }
+        ],
+        "zenpixels": [
+          {
+            "version": "0.2.17",
+            "source": "git+https://github.com/imazen/zenpixels?rev=283655c5424e0ad7ebc6d2acd94670fac1e29158#283655c5424e0ad7ebc6d2acd94670fac1e29158"
+          }
+        ]
+      }
+    },
+    {
+      "graph": "zenjp2/fuzz",
+      "shared": {
+        "how-far": [
+          {
+            "version": "0.1.0",
+            "source": "registry+https://github.com/rust-lang/crates.io-index"
+          }
+        ],
+        "zencodec": [
+          {
+            "version": "0.2.0",
+            "source": "git+https://github.com/imazen/zencodec?rev=f02a17ec6001a9efcad1267f92a3ea928ed06e57#f02a17ec6001a9efcad1267f92a3ea928ed06e57"
+          }
+        ],
+        "zenpixels": [
+          {
+            "version": "0.2.17",
+            "source": "git+https://github.com/imazen/zenpixels?rev=283655c5424e0ad7ebc6d2acd94670fac1e29158#283655c5424e0ad7ebc6d2acd94670fac1e29158"
+          }
+        ]
+      }
+    },
+    {
+      "graph": "zenexr/fuzz",
+      "shared": {
+        "how-far": [
+          {
+            "version": "0.1.0",
+            "source": "registry+https://github.com/rust-lang/crates.io-index"
+          }
+        ],
+        "zencodec": [
+          {
+            "version": "0.2.0",
+            "source": "git+https://github.com/imazen/zencodec?rev=f02a17ec6001a9efcad1267f92a3ea928ed06e57#f02a17ec6001a9efcad1267f92a3ea928ed06e57"
+          }
+        ],
+        "zenpixels": [
+          {
+            "version": "0.2.17",
+            "source": "git+https://github.com/imazen/zenpixels?rev=283655c5424e0ad7ebc6d2acd94670fac1e29158#283655c5424e0ad7ebc6d2acd94670fac1e29158"
+          }
+        ]
+      }
+    }
+  ],
+  "checks": [
+    "default workspace tests",
+    "all-features workspace tests and doctests",
+    "no-default workspace compilation",
+    "strict all-target all-feature Clippy",
+    "unchanged public API snapshot check",
+    "all targets compile in each of five standalone fuzz graphs with qualified locks"
+  ],
+  "unchanged_runtime_source": true,
+  "maintenance": "TIFF P3 test follows canonical CICP-tagged synthesis; exact byte equality, independent CICP and exact samples required",
+  "required_transitive_change": "zenpixels-convert 0.2.17 requires lz4_flex 0.14.0; old 0.13.1 replaced",
+  "initial_failures": [
+    "archive command addressed JJ workspace rather than repository git object store; corrected before execution",
+    "old locked zenpixels0.2.16 conflicted with core>=0.2.17; explicitly unlocked paired family",
+    "TIFF P3 test expected obsolete compact compatibility profile; updated for canonical icc-db contract without tolerance relaxation"
+  ],
+  "receipts": [
+    "run-heavy: done rc=1 2s | peak-RSS 0.04GiB | min-avail 4862MiB | peak-load 0.29",
+    "run-heavy: done rc=101 251s | peak-RSS 0.58GiB | min-avail 4229MiB | peak-load 2.09",
+    "run-heavy: done rc=0 250s | peak-RSS 0.57GiB | min-avail 4271MiB | peak-load 1.74",
+    "run-heavy: done rc=0 36s | peak-RSS 0.49GiB | min-avail 4246MiB | peak-load 1.10"
+  ],
+  "logs": "~/tmp/zenextras-main-contract-20261028",
+  "not_claimed": [
+    "full-platform results for new pin (CI follows push)",
+    "fuzz execution",
+    "performance or codec memory bound",
+    "crates.io release"
+  ]
+}

@@ -222,3 +222,23 @@ contract-pin-resolve:
     for member in zenexr zentiff zensvg zenpdf zenjp2; do
         cargo metadata --manifest-path "$member/fuzz/Cargo.toml" --format-version 1 > /dev/null
     done
+
+# Resolve root and five fuzz graphs in an isolated export; preserve full receipts.
+contract-graphs receipts:
+    python3 tools/check-contract-graphs.py "{{receipts}}"
+
+# Runtime/dependency migration gate; CI retains its complete feature/platform matrix.
+contract-check:
+    cargo test --workspace --locked
+    cargo test --workspace --all-features --locked
+    cargo check --workspace --no-default-features --locked
+    cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+    just api-doc-check
+
+# Compile every standalone fuzz graph against its already-qualified lock.
+contract-fuzz-check:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    for member in zentiff zenpdf zensvg zenjp2 zenexr; do
+        cargo check --manifest-path "$member/fuzz/Cargo.toml" --all-targets --locked
+    done
