@@ -174,9 +174,12 @@ pub(crate) fn decode_page<R: std::io::Read + std::io::Seek>(
             // The stream disagrees with the photometric; image-tiff decides.
             return Ok(None);
         }
-        let decoded = jpeg
-            .decode(stream, stop)
-            .map_err(|e| at!(TiffError::Decode(alloc::format!("JPEG chunk {i}: {e}"))))?;
+        let decoded = jpeg.decode(stream, stop).map_err(|e| match e.kind() {
+            // zenjpeg polls the stop inside the page; its reason (cancelled or
+            // timed out) is the TIFF decode's.
+            zenjpeg::decoder::ErrorKind::Cancelled(reason) => at!(TiffError::Stopped(*reason)),
+            _ => at!(TiffError::Decode(alloc::format!("JPEG chunk {i}: {e}"))),
+        })?;
         let (dw, dh) = decoded.dimensions();
         let (dw, dh) = (dw as usize, dh as usize);
         let short = |n: usize| dw < cols || dh < rows || n < dw * dh * channels;

@@ -14,7 +14,7 @@ use zencodec::decode::{
     Decode, DecodeCapabilities, DecodeJob, DecodeOutput, DecodePolicy, DecodeRowSink,
     DecoderConfig, OutputInfo,
 };
-use zencodec::{CodecError, ImageFormat, ImageInfo, ResourceLimits, StopToken, Unsupported};
+use zencodec::{CodecError, ImageFormat, ImageInfo, ResourceLimits, SharedPulse, Unsupported};
 use zenpixels::{PixelBuffer, PixelDescriptor};
 
 use crate::alloc_util::AllocPref;
@@ -65,6 +65,7 @@ static JP2_DECODE_CAPS: DecodeCapabilities = DecodeCapabilities::new()
     .with_inventory(cfg!(feature = "inventory"))
     .with_native_gray(true)
     .with_native_alpha(true)
+    .with_stop(true) // polled before parsing and before decoding; hayro decodes without polling
     .with_enforces_max_pixels(true)
     .with_enforces_max_memory(true);
 
@@ -166,7 +167,7 @@ impl DecoderConfig for Jp2DecoderConfig {
     fn job<'a>(self) -> Self::Job<'a> {
         Jp2DecodeJob {
             settings: self.settings,
-            stop: None,
+            pulse: SharedPulse::default(),
             limits: None,
             policy: None,
         }
@@ -180,7 +181,7 @@ impl DecoderConfig for Jp2DecoderConfig {
 /// Per-operation JPEG 2000 decode job.
 pub struct Jp2DecodeJob {
     settings: hayro_jpeg2000::DecodeSettings,
-    stop: Option<StopToken>,
+    pulse: SharedPulse,
     limits: Option<ResourceLimits>,
     policy: Option<DecodePolicy>,
 }
@@ -191,8 +192,8 @@ impl<'a> DecodeJob<'a> for Jp2DecodeJob {
     type StreamDec = Unsupported<At<CodecError>>;
     type AnimationFrameDec = Unsupported<At<CodecError>>;
 
-    fn with_stop(mut self, stop: StopToken) -> Self {
-        self.stop = Some(stop);
+    fn with_pulse(mut self, pulse: SharedPulse) -> Self {
+        self.pulse = pulse;
         self
     }
 
@@ -226,10 +227,7 @@ impl<'a> DecodeJob<'a> for Jp2DecodeJob {
                 .check_input_size(data.len() as u64)
                 .map_err(Jp2Error::Limit)?;
         }
-        let stop: &dyn enough::Stop = self
-            .stop
-            .as_ref()
-            .map_or(&enough::Unstoppable as &dyn enough::Stop, |s| s);
+        let stop: &dyn enough::Stop = &self.pulse;
         let keep_icc = self.policy.as_ref().is_none_or(|p| p.resolve_icc(true));
         crate::inventory::inventory(data, stop, keep_icc).map_err(|e| {
             CodecError::from_parts(Some("zenjp2"), e.category(), alloc::boxed::Box::new(e))
@@ -273,6 +271,7 @@ impl<'a> DecodeJob<'a> for Jp2DecodeJob {
                 .into());
             }
         }
+        check_pulse(&self.pulse)?;
 
         // Lower the zencodec 3-mode allocation preference onto the
         // crate-internal decoder. zenjp2's output buffer is allocated inside
@@ -294,6 +293,7 @@ impl<'a> DecodeJob<'a> for Jp2DecodeJob {
             limits: self.limits,
             policy: self.policy,
             alloc_pref,
+            pulse: self.pulse,
         })
     }
 
@@ -344,12 +344,16 @@ pub struct Jp2Decoder<'a> {
     /// hayro-owned), so this is currently a no-op carried for boundary parity;
     /// see [`crate::alloc_util`].
     alloc_pref: AllocPref,
+    /// The job's pulse, polled when the decode starts and again once the
+    /// header is parsed, before the codestream is decoded.
+    pulse: SharedPulse,
 }
 
 impl Decode for Jp2Decoder<'_> {
     type Error = At<CodecError>;
 
     fn decode(self) -> core::result::Result<DecodeOutput, Self::Error> {
+        check_pulse(&self.pulse)?;
         // The output pixel buffer is allocated inside `hayro_jpeg2000` below,
         // which this crate cannot route through a `try_reserve`, so the lowered
         // allocation preference has no zenjp2-owned site to apply to. Bind it
@@ -362,6 +366,7 @@ impl Decode for Jp2Decoder<'_> {
 
         // Enforce dimension/pixel limits before decoding
         check_limits(&image, self.limits.as_ref())?;
+        check_pulse(&self.pulse)?;
 
         let width = image.width();
         let height = image.height();
@@ -502,6 +507,13 @@ fn descriptor_for_info(info: &ImageInfo) -> PixelDescriptor {
     } else {
         PixelDescriptor::RGB8_SRGB
     }
+}
+
+/// Poll the job's pulse; a stop keeps its reason.
+fn check_pulse(stop: &dyn enough::Stop) -> core::result::Result<(), At<CodecError>> {
+    use whereat::ErrorAtExt;
+    stop.check()
+        .map_err(|reason| CodecError::new(Some("zenjp2"), reason.into()).start_at())
 }
 
 /// Check resource limits before decoding. Each cap maps to a distinct

@@ -9,7 +9,7 @@ use whereat::At;
 use zencodec::decode::{
     DecodeCapabilities, DecodeOutput, DecodePolicy, DecodeRowSink, OutputInfo, SinkError,
 };
-use zencodec::{CodecError, ImageFormat, ImageInfo, ResourceLimits, StopToken};
+use zencodec::{CodecError, ImageFormat, ImageInfo, ResourceLimits, SharedPulse};
 use zenpixels::{AlphaMode, ChannelLayout, ChannelType, PixelBuffer, PixelDescriptor};
 
 use enough::Stop;
@@ -39,7 +39,7 @@ static SVG_DECODE_CAPS: DecodeCapabilities = DecodeCapabilities::new()
     .with_incremental(true)
     .with_cheap_probe(true)
     .with_native_alpha(true)
-    .with_stop(true) // checked before render
+    .with_stop(true) // polled before parsing and before drawing; resvg draws without polling
     .with_enforces_max_pixels(true)
     .with_enforces_max_memory(true)
     .with_enforces_max_input_bytes(true)
@@ -187,7 +187,7 @@ impl zencodec::decode::DecoderConfig for SvgDecoderConfig {
         SvgDecodeJob {
             config: self,
             limits: ResourceLimits::none(),
-            stop: None,
+            pulse: SharedPulse::default(),
         }
     }
 }
@@ -200,15 +200,13 @@ impl zencodec::decode::DecoderConfig for SvgDecoderConfig {
 pub struct SvgDecodeJob {
     config: SvgDecoderConfig,
     limits: ResourceLimits,
-    stop: Option<StopToken>,
+    pulse: SharedPulse,
 }
 
 impl SvgDecodeJob {
-    /// Check the stop token, returning `Err(SvgError::Stopped)` if cancelled.
+    /// Poll the job's pulse, returning `Err(SvgError::Stopped)` with its reason.
     fn check_stop(&self) -> Result<(), SvgError> {
-        if let Some(ref stop) = self.stop {
-            stop.check()?;
-        }
+        self.pulse.check()?;
         Ok(())
     }
 
@@ -235,8 +233,8 @@ impl<'a> zencodec::decode::DecodeJob<'a> for SvgDecodeJob {
     type StreamDec = zencodec::Unsupported<At<CodecError>>;
     type AnimationFrameDec = zencodec::Unsupported<At<CodecError>>;
 
-    fn with_stop(mut self, stop: StopToken) -> Self {
-        self.stop = Some(stop);
+    fn with_pulse(mut self, pulse: SharedPulse) -> Self {
+        self.pulse = pulse;
         self
     }
 
@@ -288,17 +286,14 @@ impl<'a> zencodec::decode::DecodeJob<'a> for SvgDecodeJob {
     /// Structural inventory: every element, attribute usvg ignores, comment,
     /// processing instruction, DOCTYPE item and text run, or the gzip
     /// framing of an SVGZ file, with what the render path does with it (see
-    /// `crate::inventory`). Honors `max_input_bytes` and the stop token; a
+    /// `crate::inventory`). Honors `max_input_bytes` and the job's pulse; a
     /// document the decoder refuses before drawing (usvg's parse, output
     /// size, limits) draws nothing.
     #[cfg(feature = "inventory")]
     fn inventory(&self, data: &[u8]) -> Result<zencodec::inventory::Inventory, At<CodecError>> {
         use whereat::ErrorAtExt;
         self.check_input_size(data.len())?;
-        let stop: &dyn Stop = match &self.stop {
-            Some(s) => s,
-            None => &enough::Unstoppable,
-        };
+        let stop: &dyn Stop = &self.pulse;
         // The decoder's own checks before drawing, its render options and
         // the fonts it would load decide what is drawn.
         let options = &self.config.render_options;
@@ -353,7 +348,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for SvgDecodeJob {
         Ok(SvgDecoder {
             config: self.config,
             data,
-            stop: self.stop,
+            pulse: self.pulse,
             alloc_pref,
         })
     }
@@ -408,7 +403,9 @@ fn wrap_sink_error(e: SinkError) -> At<CodecError> {
 pub struct SvgDecoder<'a> {
     config: SvgDecoderConfig,
     data: Cow<'a, [u8]>,
-    stop: Option<StopToken>,
+    /// The job's pulse, polled when the render starts and again once the
+    /// document is parsed, before it is drawn.
+    pulse: SharedPulse,
     /// Lowered allocation preference. zensvg performs no width × height-sized
     /// Rust allocation of its own in the render path (the raster is
     /// tiny-skia-owned), so this is currently a no-op carried for boundary
@@ -420,13 +417,11 @@ impl zencodec::decode::Decode for SvgDecoder<'_> {
     type Error = At<CodecError>;
 
     fn decode(self) -> Result<DecodeOutput, At<CodecError>> {
-        // Check stop before the expensive render. `enough::StopReason` does not
+        // Poll before the expensive parse and draw. `enough::StopReason` does not
         // implement `core::error::Error` (see `SvgError::Stopped`'s docs), so
         // `?` can't convert it directly to `At<CodecError>` in one hop — route
         // it through `SvgError` first.
-        if let Some(ref stop) = self.stop {
-            stop.check().map_err(SvgError::from)?;
-        }
+        self.pulse.check().map_err(SvgError::from)?;
 
         // The output raster is allocated inside tiny-skia (`Pixmap::new`) below,
         // which this crate cannot route through a `try_reserve`, so the lowered
@@ -434,7 +429,10 @@ impl zencodec::decode::Decode for SvgDecoder<'_> {
         // explicitly to document that the plumbing is intentionally a no-op here.
         let _ = self.alloc_pref;
 
-        let result = crate::render::render(&self.data, &self.config.render_options)?;
+        // `render::render`'s two steps, with a poll between parsing and drawing.
+        let tree = crate::render::parse_svg(&self.data, &self.config.render_options)?;
+        self.pulse.check().map_err(SvgError::from)?;
+        let result = crate::render::render_tree(&tree, &self.config.render_options)?;
 
         let pixels = PixelBuffer::from_vec(result.data, result.width, result.height, RGBA8_SRGB)
             .map_err(|e| SvgError::PixelBufferMismatch(format!("{e}")))?;

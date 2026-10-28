@@ -174,14 +174,10 @@ pub fn render_pages(data: &[u8], config: &PdfConfig) -> Result<Vec<RenderedPage>
     render_pages_inner(&pdf, config)
 }
 
-/// Like [`render_pages`] but accepts owned data, avoiding a copy when the
-/// caller already has a `Vec<u8>` (e.g., from the zencodec decode path).
-pub(crate) fn render_pages_owned(data: Vec<u8>, config: &PdfConfig) -> Result<Vec<RenderedPage>> {
-    let pdf = open_pdf_owned(data)?;
-    render_pages_inner(&pdf, config)
-}
-
-fn render_pages_inner(pdf: &Pdf, config: &PdfConfig) -> Result<Vec<RenderedPage>> {
+/// Like [`render_pages`], for a document already parsed with
+/// [`open_pdf_owned`]: the zencodec decode path parses its owned bytes without
+/// copying them, and polls its pulse between parsing and drawing.
+pub(crate) fn render_pages_inner(pdf: &Pdf, config: &PdfConfig) -> Result<Vec<RenderedPage>> {
     let pages = pdf.pages();
     let count = pages.len() as u32;
 

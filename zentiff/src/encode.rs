@@ -375,8 +375,9 @@ fn effective_predictor(
 ///
 /// Supports Gray, GrayAlpha, RGB, RGBA in u8, u16, and f32 channel types.
 ///
-/// The `cancel` signal is checked before encoding; pass `&Unstoppable` when
-/// cancellation is not needed.
+/// The `cancel` signal is checked before encoding and again once the pixels
+/// are gathered, before image-tiff compresses and writes them in one call; pass
+/// `&Unstoppable` when cancellation is not needed.
 #[track_caller]
 pub fn encode(
     pixels: &PixelSlice<'_>,
@@ -392,6 +393,8 @@ pub fn encode(
 
     let compression = config.compression.to_tiff()?;
     let predictor = effective_predictor(&desc, config.predictor.to_tiff());
+    // image-tiff compresses and writes the whole image in one call.
+    cancel.check().map_err(|e| at!(TiffError::from(e)))?;
 
     let mut buf = std::io::Cursor::new(Vec::new());
 
@@ -435,6 +438,8 @@ pub(crate) fn encode_with_meta(
 
     let compression = config.compression.to_tiff()?;
     let predictor = effective_predictor(&desc, config.predictor.to_tiff());
+    // image-tiff compresses and writes the whole image in one call.
+    cancel.check().map_err(|e| at!(TiffError::from(e)))?;
 
     let mut buf = std::io::Cursor::new(Vec::new());
 
