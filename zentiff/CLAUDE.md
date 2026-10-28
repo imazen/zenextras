@@ -25,3 +25,11 @@
   after traversal, which could replace a timeout with generic cancellation.
   The walker policy now retains the first reason. A stop-once regression test
   exercises cancellation after the job's initial check.
+
+- Known difference (2026-10-27): 12-bit JPEG pages through zenjpeg differ from
+  libjpeg-turbo 3.2.0 where the IDCT overshoots far past 4095: libjpeg-turbo's
+  range-limit table wraps such samples to 0, zenjpeg clamps to 4095 (2 of 46
+  generated 12-bit gray files, a handful of samples each). libtiff itself drops
+  the last sample of 12-bit JPEG rows with an odd sample count (writes 0); that
+  is libtiff's bug, not ours. Oracle: the fork's
+  `parity/build-libtiff-jpeg12.sh` and `parity/gen_base12.c`.

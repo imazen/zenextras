@@ -52,9 +52,10 @@ std = ["tiff/default", "enough/std", "whereat/std"]
 deflate = ["tiff/deflate"]
 fax = ["tiff/fax"]
 jpeg = ["tiff/jpeg"]
-# Decode 8-bit gray, RGB and YCbCr JPEG pages with zenjpeg instead of image-tiff's zune-jpeg:
-# byte-identical to libtiff with libjpeg-turbo. Other JPEG pages keep using `jpeg`.
-zenjpeg = ["std", "dep:zenjpeg"]
+# Decode 8- and 12-bit gray, RGB and YCbCr JPEG pages with zenjpeg instead of image-tiff's
+# zune-jpeg: matching libtiff with libjpeg-turbo (12-bit through zenjpeg's `extended-jpeg`,
+# which also brings arithmetic coding and lossless JPEG). Other JPEG pages keep using `jpeg`.
+zenjpeg = ["std", "dep:zenjpeg", "zenjpeg/extended-jpeg"]
 lzw = ["tiff/lzw"]
 webp = ["tiff/webp"]
 zstd = ["tiff/zstd"]
