@@ -11,7 +11,7 @@ cargo-fuzz = true
 libfuzzer-sys = "0.4.13"
 
 # The inventory target drives the zencodec trait.
-zencodec = ">=0.1.26, <0.3.0"
+zencodec = ">=0.2.0, <0.3.0"
 
 [dependencies.zenpdf]
 path = ".."
@@ -41,8 +41,8 @@ bench = false
 [workspace]
 
 # This fuzz crate is its own workspace, so it repeats the parent's patches:
-# the zencodec inventory API (imazen/zencodec#133; swap for the release
-# before merge) and the hayro-syntax fork the decoder ships with.
+# the zencodec 0.2 core family (zenpipe's 6214c93c; swap for the release) and
+# the hayro-syntax fork the decoder ships with.
 [patch.crates-io]
-zencodec = { git = "https://github.com/imazen/zencodec", rev = "d327434b0826a3e39633665c76f5081c0ceb34cc" }
-hayro-syntax = { git = "https://github.com/lilith/hayro", rev = "beec7225f7f8cec6cb62f6ecf116db738177d0b9" }
+zencodec = { git = "https://github.com/imazen/zencodec", rev = "6214c93c24d35769a34a9561fe844c717e4d3a3a" }
+hayro-syntax = { git = "https://github.com/lilith/hayro", rev = "2ce50d0164878b8505e118f81dcb1d0367b26957" }

@@ -11,7 +11,7 @@ cargo-fuzz = true
 libfuzzer-sys = "0.4.13"
 
 # The inventory target drives the zencodec trait.
-zencodec = ">=0.1.26, <0.3.0"
+zencodec = ">=0.2.0, <0.3.0"
 
 [dependencies.zensvg]
 path = ".."
@@ -42,6 +42,6 @@ bench = false
 [workspace]
 
 # This fuzz crate is its own workspace, so it repeats the parent's zencodec
-# patch (imazen/zencodec#133; swap for the release before merge).
+# patch (the 0.2 core family at zenpipe's 6214c93c; swap for the release).
 [patch.crates-io]
-zencodec = { git = "https://github.com/imazen/zencodec", rev = "d327434b0826a3e39633665c76f5081c0ceb34cc" }
+zencodec = { git = "https://github.com/imazen/zencodec", rev = "6214c93c24d35769a34a9561fe844c717e4d3a3a" }

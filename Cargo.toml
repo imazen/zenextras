@@ -12,15 +12,23 @@ members = [
 ]
 
 [patch.crates-io]
-# Unpublished metadata implementation under review; one contract version for all consumers.
-zencodec = { git = "https://github.com/imazen/zencodec", rev = "d327434b0826a3e39633665c76f5081c0ceb34cc" }
-zencodec-testkit = { git = "https://github.com/imazen/zencodec", rev = "d327434b0826a3e39633665c76f5081c0ceb34cc" }
+# The zencodec 0.2 core family every member builds on: zenpipe's revision (zencodec
+# PR 168, 6214c93c), so the workspace and a zenpipe graph each hold one core. zentiff,
+# zenivf and zenwebm name the same revision for their direct core edges.
+zencodec = { git = "https://github.com/imazen/zencodec", rev = "6214c93c24d35769a34a9561fe844c717e4d3a3a" }
+zencodec-testkit = { git = "https://github.com/imazen/zencodec", rev = "6214c93c24d35769a34a9561fe844c717e4d3a3a" }
+# Unpublished; zenjpeg names it from the registry.
+zenmeta = { git = "https://github.com/imazen/zencodec", rev = "6214c93c24d35769a34a9561fe844c717e4d3a3a" }
+# zenjpeg depends on ultrahdr-core; crates.io 0.6.0 is on zencodec 0.1. zenpipe's revision
+# is on the 0.2 core above.
+ultrahdr-core = { git = "https://github.com/imazen/ultrahdr", rev = "610975047bcb0bb266e952f15bcd978ba3f34950" }
 # Pinned PDF stream resource-limit fork used by zenpdf.
 hayro-syntax = { git = "https://github.com/lilith/hayro", rev = "2ce50d0164878b8505e118f81dcb1d0367b26957" }
 
 # zenjpeg 0.9.0 (unreleased; byte-exact with libjpeg-turbo, 12-bit and lossless decode) for
-# zentiff's JPEG pages. Drop once it is on crates.io.
-zenjpeg = { git = "https://github.com/imazen/zenjpeg", rev = "cf7b051ba9c198ff7b1cd222552e9d17a29b0513" }
+# zentiff's JPEG pages, at zenpipe's revision (zenjpeg PR 246, d099267c): it builds on the
+# core family above, and its decoder is unchanged since cf7b051b. Drop once it is on crates.io.
+zenjpeg = { git = "https://github.com/imazen/zenjpeg", rev = "d099267c37b4f91b35fe5f15ddb680455e1d4bd8" }
 
 # Pinned TIFF scratch-buffer resource-limit fork used by zentiff.
 tiff = { git = "https://github.com/lilith/image-tiff", rev = "10a3b6b2fa88eb5943525066a989ea9e64e644d5" }
