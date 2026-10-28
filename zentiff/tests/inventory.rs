@@ -570,6 +570,7 @@ fn overlapping_values_and_ifd_cycles_stay_valid() {
 
 /// A `DecodePolicy` that withholds metadata turns those parts into `Dropped`.
 #[test]
+#[allow(deprecated)] // Exercises the legacy best-effort policy setter on purpose.
 fn decode_policy_suppression_is_reflected() {
     let data = every_unit_fixture();
     let inv = TiffDecoderCodecConfig::new()
@@ -1830,6 +1831,7 @@ fn values_over_the_value_limit_are_dropped() {
 /// Under a policy that suppresses EXIF, the EXIF IFD and its pointer are
 /// parsed for nothing.
 #[test]
+#[allow(deprecated)] // Exercises the legacy best-effort policy setter on purpose.
 fn suppressed_exif_ifd_and_pointer_are_dropped() {
     let mut w = W::new();
     let strip = w.put(&[1, 2, 3, 4]);
@@ -2664,15 +2666,15 @@ fn configured_limits_and_cancellation_survive_dispatch() {
             Err(enough::StopReason::Cancelled)
         }
     }
-    let stop = zencodec::StopToken::new(Cancelled);
+    let stop = zencodec::SharedPulse::new(zencodec::how_far::StopOnly::new(Cancelled));
     let native = config
         .clone()
         .job()
-        .with_stop(stop.clone())
+        .with_pulse(stop.clone())
         .inventory(&data)
         .unwrap_err();
     let mut erased_job = dynamic.dyn_job();
-    erased_job.set_stop(stop);
+    erased_job.set_pulse(stop);
     let erased = erased_job.inventory(&data).unwrap_err();
     assert_eq!(
         native.category(),
@@ -2697,7 +2699,9 @@ fn mid_walk_cancellation_preserves_the_first_reason() {
     }
     let err = TiffDecoderCodecConfig::new()
         .job()
-        .with_stop(zencodec::StopToken::new(StopOnce(AtomicUsize::new(0))))
+        .with_pulse(zencodec::SharedPulse::new(
+            zencodec::how_far::StopOnly::new(StopOnce(AtomicUsize::new(0))),
+        ))
         .inventory(&every_unit_fixture())
         .unwrap_err();
     assert_eq!(
