@@ -133,7 +133,8 @@ mod tests {
 
     #[test]
     fn vec_with_capacity_fallible_oom_returns_err() {
-        let res = vec_with_capacity::<u8>(AllocPref::Fallible, false, usize::MAX / 2);
+        // As above: usize::MAX always fails; usize::MAX / 2 could be granted on i686.
+        let res = vec_with_capacity::<u8>(AllocPref::Fallible, false, usize::MAX);
         assert!(matches!(
             res.as_ref().map_err(|e| e.error()),
             Err(PsdError::OutOfMemory(_))
