@@ -36,3 +36,16 @@ unchanged public API snapshots pass on the
 paired graph. [Qualification receipt](../benchmarks/shared_contract_graph_2026-10-28.json)
 records exact source identities, counts and all initial failures. These are local
 validation results; platform CI follows the push.
+
+
+## Optional call controls (source follow-up)
+
+The IVF and WebM demux/mux boundaries now accept `Option<&dyn Pulse>`.
+`None` disables only the extra call control; packet validation and container
+limits still run. These containers have no retained job Pulse. Local checks
+resolve absence to `NoPulse`; no artificial control is forwarded to another
+owner. Existing byte, timing and seek controls use `None` without changed
+assertions. Paired-graph build and native tests remain unrun for this follow-up.
+
+The earlier container PR 53 is superseded: its source, tests and examples were
+already present byte-for-byte on main `a5e79261` when this follow-up started.

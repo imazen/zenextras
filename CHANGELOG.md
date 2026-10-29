@@ -14,6 +14,8 @@ member entries here reference those files.
 
 ### Dependency integration
 
+- IVF/WebM borrowed call controls use `Option<&dyn Pulse>`; absence leaves container validation active. Existing parity assertions are unchanged and explicit cancellation-before-effects controls are prepared. Paired graph qualification is pending.
+
 - Move root and standalone fuzz graphs to the verified zencodec main family
   `f02a17ec` and paired pixels `283655c5`. Replace direct shared git edges in
   TIFF/IVF/WebM with registry requirements so consumers can select one family
