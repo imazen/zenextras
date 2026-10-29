@@ -1072,8 +1072,12 @@ fn build_track(index: u32, t: &RawTrack, tb: TimeBase) -> Res<TrackInfo> {
 impl Demuxer for WebmDemuxer {
     type Error = WebmError;
 
-    fn step(&mut self, input: Input<'_>, pulse: &dyn zencodec::Pulse) -> Res<DemuxProgress> {
-        pulse.check()?;
+    fn step(
+        &mut self,
+        input: Input<'_>,
+        pulse: Option<&dyn zencodec::Pulse>,
+    ) -> Res<DemuxProgress> {
+        pulse.unwrap_or(&zencodec::NoPulse).check()?;
         self.requests.clear();
         if input.total_len.is_some() {
             self.total = input.total_len;
