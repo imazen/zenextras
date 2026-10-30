@@ -6,7 +6,8 @@ use zencodec::encode::OutputBuffer;
 use zencodec::time::{FrameDuration, Rounding, TimeBase, Timestamp};
 use zencodec_media::container::{MuxFinish, MuxHint, MuxTiming, Muxer};
 use zencodec_media::packet::{Packet, RandomAccess};
-use zencodec_media::session::{ProtocolViolation, SessionError};
+use zencodec_media::session::{ProtocolViolation, SessionError, UnsupportedMedia};
+use zencodec_media::timeline::TrackTimeline;
 use zencodec_media::track::{CodecId, TrackInfo, TrackKind};
 
 use crate::ebml::{self, id};
@@ -265,7 +266,9 @@ impl WebmMuxer {
             TrackKind::Audio => 2,
             _ => return err(WebmError::UnsupportedTrackKind),
         };
-        if t.edit_delay_ticks().is_some_and(|d| d != 0) {
+        #[allow(deprecated)] // Preserve the legacy scalar refusal for unknown timelines.
+        let legacy_edit = t.edit_delay_ticks();
+        if legacy_edit.is_some_and(|d| d != 0) {
             return err(WebmError::EditList);
         }
         let mut e = Vec::new();
@@ -341,6 +344,14 @@ impl Muxer for WebmMuxer {
         }
         if tracks.len() > 126 {
             return err(WebmError::TooManyTracks);
+        }
+        if tracks
+            .iter()
+            .any(|track| matches!(track.timeline(), TrackTimeline::Edited(_)))
+        {
+            return Err(SessionError::Unsupported(
+                UnsupportedMedia::PresentationTimeline,
+            ));
         }
         let scale_ns = self.choose_scale(tracks)?;
         let segment = TimeBase::new(scale_ns, NS_PER_SECOND as u32)

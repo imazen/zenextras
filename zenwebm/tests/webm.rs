@@ -684,6 +684,7 @@ fn the_muxer_refuses_what_webm_cannot_carry() {
         m.begin(&sub, MuxHint::default()),
         Err(SessionError::Codec(WebmError::UnsupportedTrackKind))
     ));
+    #[allow(deprecated)] // Keep the existing legacy-offset refusal assertion.
     let edit = vec![
         TrackInfo::video(0, CodecId::Vp9, tb, VideoTrackInfo::new(8, 8))
             .with_edit_delay_ticks(3)
@@ -881,4 +882,55 @@ fn optional_call_control_refuses_before_container_effects() {
             zencodec::how_far::StopReason::TimedOut
         ))
     ));
+}
+
+#[test]
+fn complete_edits_refuse_before_output_and_allow_clean_retry() {
+    use std::sync::Arc;
+    use zencodec::time::FrameDuration;
+    use zencodec_media::session::UnsupportedMedia;
+    use zencodec_media::timeline::{
+        EditContent, EditExtent, EditList, EditSegment, PlaybackRate, TrackTimeline,
+    };
+    let make = |timeline| {
+        TrackInfo::video(0, CodecId::Av1, MS, VideoTrackInfo::new(64, 48))
+            .with_timeline(timeline)
+            .build()
+            .unwrap()
+    };
+    let empty = TrackTimeline::Edited(Arc::new(
+        EditList::new(Timestamp::new(0, MS), vec![]).unwrap(),
+    ));
+    let dwell = TrackTimeline::Edited(Arc::new(
+        EditList::new(
+            Timestamp::new(0, MS),
+            vec![EditSegment::new(
+                EditExtent::Finite(FrameDuration::new(1, 1).unwrap()),
+                EditContent::Media {
+                    start: Timestamp::new(0, MS),
+                    rate: PlaybackRate::new(0, 1).unwrap(),
+                },
+            )],
+        )
+        .unwrap(),
+    ));
+    for program in [empty, dwell] {
+        let mut mux = WebmMuxer::new();
+        assert!(matches!(
+            mux.begin(&[make(program)], MuxHint::default()),
+            Err(SessionError::Unsupported(
+                UnsupportedMedia::PresentationTimeline
+            ))
+        ));
+        let mut bytes = Vec::new();
+        mux.take_output(&mut bytes);
+        assert!(bytes.is_empty(), "refused presentation published a header");
+        mux.begin(&[make(TrackTimeline::Unedited)], MuxHint::default())
+            .unwrap();
+        mux.take_output(&mut bytes);
+        assert!(
+            !bytes.is_empty(),
+            "successful retry did not publish its header"
+        );
+    }
 }
