@@ -395,3 +395,11 @@ member entries here reference those files.
   (`readme = "README.crates.md"`, `README.md` retained for the `include_str!`
   docs path) with absolute license links; and `repository` set to the
   `zenextras` monorepo.
+
+## Container timeline review (unreleased)
+
+- Refuse complete edit programs before IVF/WebM writer output; report IVF
+  input as explicitly unedited. Legacy nonzero-offset refusal is retained
+  for WebM and enforced for IVF. This targets the shared timeline review;
+  the image-adapter root graph remains on its previous family. Qualification
+  and remaining exact-preservation limits: `docs/container-timelines.md`.

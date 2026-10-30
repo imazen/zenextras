@@ -242,3 +242,9 @@ contract-fuzz-check:
     for member in zentiff zenpdf zensvg zenjp2 zenexr; do
         cargo check --manifest-path "$member/fuzz/Cargo.toml" --all-targets --locked
     done
+
+# Container-only timeline qualification in an isolated prepared workspace.
+container-timeline-check:
+    cargo test --locked -p zenivf -p zenwebm --all-targets
+    cargo clippy --locked -p zenivf -p zenwebm --all-targets -- -D warnings
+    cargo check --locked -p zenivf -p zenwebm --target wasm32-unknown-unknown

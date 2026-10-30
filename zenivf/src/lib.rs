@@ -36,6 +36,7 @@ use zencodec_media::container::{
 use zencodec_media::limits::MediaLimits;
 use zencodec_media::packet::{Packet, RandomAccess};
 use zencodec_media::session::{ProtocolViolation, SessionError, UnsupportedMedia};
+use zencodec_media::timeline::TrackTimeline;
 use zencodec_media::track::{CodecId, CodecTag, TrackInfo, TrackKind, VideoTrackInfo};
 
 /// The IVF signature.
@@ -321,7 +322,8 @@ impl IvfDemuxer {
         // other writers write zero.
         self.declared = (frames != 0 && frames != u32::MAX).then_some(frames);
         let mut track =
-            TrackInfo::video(0, codec_from_fourcc(fourcc), tb, VideoTrackInfo::new(w, h));
+            TrackInfo::video(0, codec_from_fourcc(fourcc), tb, VideoTrackInfo::new(w, h))
+                .with_timeline(TrackTimeline::Unedited);
         if let Some(n) = self.declared {
             track = track.with_declared_packets(u64::from(n));
         }
@@ -549,6 +551,17 @@ impl Muxer for IvfMuxer {
         let [track] = tracks else {
             return Err(codec(IvfError::OneVideoTrack));
         };
+        // IVF has no edit-list representation. Never silently discard a known
+        // program, including an explicitly empty presentation.
+        #[allow(deprecated)] // Existing unknown-timeline callers still carry a scalar.
+        let legacy_edit = track.edit_delay_ticks();
+        if matches!(track.timeline(), TrackTimeline::Edited(_))
+            || legacy_edit.is_some_and(|offset| offset != 0)
+        {
+            return Err(SessionError::Unsupported(
+                UnsupportedMedia::PresentationTimeline,
+            ));
+        }
         let Some(video) = track
             .video_info()
             .filter(|_| track.kind() == TrackKind::Video)

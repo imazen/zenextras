@@ -313,3 +313,54 @@ fn optional_call_control_refuses_before_container_effects() {
         ))
     ));
 }
+
+#[test]
+fn complete_edits_refuse_before_output_and_allow_clean_retry() {
+    use std::sync::Arc;
+    use zencodec::time::FrameDuration;
+    use zencodec_media::session::UnsupportedMedia;
+    use zencodec_media::timeline::{
+        EditContent, EditExtent, EditList, EditSegment, PlaybackRate, TrackTimeline,
+    };
+    let make = |timeline| {
+        TrackInfo::video(0, CodecId::Av1, tb(), VideoTrackInfo::new(64, 48))
+            .with_timeline(timeline)
+            .build()
+            .unwrap()
+    };
+    let empty = TrackTimeline::Edited(Arc::new(
+        EditList::new(Timestamp::new(0, tb()), vec![]).unwrap(),
+    ));
+    let dwell = TrackTimeline::Edited(Arc::new(
+        EditList::new(
+            Timestamp::new(0, tb()),
+            vec![EditSegment::new(
+                EditExtent::Finite(FrameDuration::new(1, 1).unwrap()),
+                EditContent::Media {
+                    start: Timestamp::new(0, tb()),
+                    rate: PlaybackRate::new(0, 1).unwrap(),
+                },
+            )],
+        )
+        .unwrap(),
+    ));
+    for program in [empty, dwell] {
+        let mut mux = IvfMuxer::new();
+        assert!(matches!(
+            mux.begin(&[make(program)], MuxHint::default()),
+            Err(SessionError::Unsupported(
+                UnsupportedMedia::PresentationTimeline
+            ))
+        ));
+        let mut bytes = Vec::new();
+        mux.take_output(&mut bytes);
+        assert!(bytes.is_empty(), "refused presentation published a header");
+        mux.begin(&[make(TrackTimeline::Unedited)], MuxHint::default())
+            .unwrap();
+        mux.take_output(&mut bytes);
+        assert!(
+            !bytes.is_empty(),
+            "successful retry did not publish its header"
+        );
+    }
+}
