@@ -90,7 +90,7 @@ pub(crate) fn resolve_fallible(pref: AllocPref, site_default_fallible: bool) -> 
 /// `pref` is the caller's [`AllocPref`]; `site_default_fallible` is this site's
 /// default when `pref` is [`CodecDefault`](AllocPref::CodecDefault).
 ///
-/// * fallible → `try_reserve_exact` then zero-fill, returning
+/// * fallible → allocator-zeroed storage, returning
 ///   [`SvgError::OutOfMemory`](crate::error::SvgError::OutOfMemory) on allocation failure.
 /// * infallible → `vec![0u8; n]` (single `calloc`, aborts on OOM).
 #[allow(dead_code)] // tested template; no zensvg-owned zeroed render site yet
@@ -99,15 +99,13 @@ pub(crate) fn alloc_zeroed(
     site_default_fallible: bool,
     n: usize,
 ) -> Result<Vec<u8>, SvgError> {
-    if resolve_fallible(pref, site_default_fallible) {
-        let mut v = Vec::new();
-        v.try_reserve_exact(n)
-            .map_err(|_| SvgError::OutOfMemory { bytes: n })?;
-        v.resize(n, 0);
-        Ok(v)
-    } else {
-        Ok(vec![0u8; n])
-    }
+    bytemuck::allocation::try_zeroed_vec(n).map_err(|()| {
+        if !resolve_fallible(pref, site_default_fallible) {
+            let layout = core::alloc::Layout::array::<u8>(n).expect("capacity overflow");
+            std::alloc::handle_alloc_error(layout);
+        }
+        SvgError::OutOfMemory { bytes: n }
+    })
 }
 
 /// Allocate an empty `Vec<T>` with reserved capacity for `cap` elements,
@@ -168,6 +166,33 @@ mod tests {
     fn explicit_infallible_overrides_any_site_default() {
         assert!(!resolve_fallible(AllocPref::Infallible, true));
         assert!(!resolve_fallible(AllocPref::Infallible, false));
+    }
+
+    #[test]
+    fn zeroed_boundaries_preserve_policy_and_growth() {
+        for pref in [
+            AllocPref::CodecDefault,
+            AllocPref::Fallible,
+            AllocPref::Infallible,
+        ] {
+            for site in [false, true] {
+                for n in [0, 1, 4095, 4096, 4097] {
+                    let mut v = alloc_zeroed(pref, site, n).unwrap();
+                    assert_eq!(v.len(), n);
+                    assert!(v.iter().all(|&b| b == 0));
+                    v.fill(7);
+                    v.push(9);
+                    assert!(v[..n].iter().all(|&b| b == 7));
+                    assert_eq!(v[n], 9);
+                }
+            }
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "capacity overflow")]
+    fn infallible_overflow_panics() {
+        let _ = alloc_zeroed(AllocPref::Infallible, false, usize::MAX);
     }
 
     #[test]

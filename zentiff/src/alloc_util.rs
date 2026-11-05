@@ -23,7 +23,6 @@
 //!
 //! [`TiffError::LimitExceeded`]: crate::error::TiffError::LimitExceeded
 
-use alloc::vec;
 use alloc::vec::Vec;
 
 use whereat::{At, at};
@@ -75,7 +74,7 @@ pub(crate) fn resolve_fallible(pref: AllocPref, site_default_fallible: bool) -> 
 /// `pref` is the caller's [`AllocPref`]; `site_default_fallible` is this site's
 /// default when `pref` is [`CodecDefault`](AllocPref::CodecDefault).
 ///
-/// * fallible → `try_reserve_exact` then zero-fill, returning
+/// * fallible → allocator-zeroed storage, returning
 ///   [`TiffError::LimitExceeded`](crate::error::TiffError::LimitExceeded) on
 ///   allocation failure.
 /// * infallible → `vec![0u8; n]` (single `calloc`, aborts on OOM).
@@ -85,18 +84,15 @@ pub(crate) fn alloc_zeroed(
     site_default_fallible: bool,
     n: usize,
 ) -> Result<Vec<u8>, At<TiffError>> {
-    if resolve_fallible(pref, site_default_fallible) {
-        let mut v = Vec::new();
-        v.try_reserve_exact(n).map_err(|_| {
-            at!(TiffError::LimitExceeded(alloc::format!(
-                "out of memory allocating {n} bytes"
-            )))
-        })?;
-        v.resize(n, 0);
-        Ok(v)
-    } else {
-        Ok(vec![0u8; n])
-    }
+    bytemuck::allocation::try_zeroed_vec(n).map_err(|()| {
+        if !resolve_fallible(pref, site_default_fallible) {
+            let layout = core::alloc::Layout::array::<u8>(n).expect("capacity overflow");
+            alloc::alloc::handle_alloc_error(layout);
+        }
+        at!(TiffError::LimitExceeded(alloc::format!(
+            "out of memory allocating {n} bytes"
+        )))
+    })
 }
 
 /// Allocate an empty `Vec<T>` with reserved capacity for `cap` elements,
@@ -132,44 +128,24 @@ pub(crate) fn vec_with_capacity<T>(
     }
 }
 
-/// Allocate a **zero-filled** `Vec<T>` of LENGTH `len`, honoring the per-site
-/// fallibility — the slice-write counterpart to [`vec_with_capacity`].
-///
-/// Use this wherever a conversion writes a fixed number of output elements per
-/// input pixel. Filling a preallocated slice through `chunks_exact_mut` is much
-/// faster than `Vec::push`: `push` re-checks capacity on every element and the
-/// possible reallocation blocks vectorization, so LLVM cannot widen the stores.
-/// Measured 13-40x on exactly these channel-expansion loops
-/// (`benchmarks/channel_expand_2026-08-01.md`).
-///
-/// The zero-fill is not an extra pass on the infallible path: `vec![T::default();
-/// len]` for a zeroable `T` lowers to a single `calloc`, which the allocator
-/// serves from already-zeroed pages.
-///
-/// * fallible → `try_reserve_exact` + `resize`, returning
-///   [`TiffError::LimitExceeded`](crate::error::TiffError::LimitExceeded) on
-///   allocation failure.
-/// * infallible → `vec![T::default(); len]` (aborts on OOM).
-///
-/// The returned `Vec` has `len() == len`; the caller overwrites it.
-pub(crate) fn vec_zeroed<T: Clone + Default>(
+/// Allocate explicitly zero-valued elements for conversion output.
+/// Both policies request zeroed storage; only failure handling differs.
+/// `Zeroable` establishes valid zero bytes independently of `Default`.
+pub(crate) fn vec_zeroed<T: bytemuck::Zeroable>(
     pref: AllocPref,
     site_default_fallible: bool,
     len: usize,
 ) -> Result<Vec<T>, At<TiffError>> {
-    if resolve_fallible(pref, site_default_fallible) {
-        let mut v = Vec::new();
-        v.try_reserve_exact(len).map_err(|_| {
-            at!(TiffError::LimitExceeded(alloc::format!(
-                "out of memory allocating {} bytes",
-                len.saturating_mul(core::mem::size_of::<T>())
-            )))
-        })?;
-        v.resize(len, T::default());
-        Ok(v)
-    } else {
-        Ok(alloc::vec![T::default(); len])
-    }
+    bytemuck::allocation::try_zeroed_vec(len).map_err(|()| {
+        if !resolve_fallible(pref, site_default_fallible) {
+            let layout = core::alloc::Layout::array::<T>(len).expect("capacity overflow");
+            alloc::alloc::handle_alloc_error(layout);
+        }
+        at!(TiffError::LimitExceeded(alloc::format!(
+            "out of memory allocating {} bytes",
+            len.saturating_mul(core::mem::size_of::<T>())
+        )))
+    })
 }
 
 #[cfg(test)]
@@ -200,6 +176,42 @@ mod tests {
     fn explicit_infallible_overrides_any_site_default() {
         assert!(!resolve_fallible(AllocPref::Infallible, true));
         assert!(!resolve_fallible(AllocPref::Infallible, false));
+    }
+
+    #[test]
+    fn typed_zeros_include_float_bits_and_zst_lengths() {
+        let v = vec_zeroed::<f32>(AllocPref::Fallible, true, 17).unwrap();
+        assert!(v.iter().all(|v| v.to_bits() == 0));
+        let v = vec_zeroed::<()>(AllocPref::Fallible, true, usize::MAX).unwrap();
+        assert_eq!(v.len(), usize::MAX);
+        assert_eq!(v.capacity(), usize::MAX);
+    }
+
+    #[test]
+    fn zeroed_boundaries_preserve_policy_and_growth() {
+        for pref in [
+            AllocPref::CodecDefault,
+            AllocPref::Fallible,
+            AllocPref::Infallible,
+        ] {
+            for site in [false, true] {
+                for n in [0, 1, 4095, 4096, 4097] {
+                    let mut v = alloc_zeroed(pref, site, n).unwrap();
+                    assert_eq!(v.len(), n);
+                    assert!(v.iter().all(|&b| b == 0));
+                    v.fill(7);
+                    v.push(9);
+                    assert!(v[..n].iter().all(|&b| b == 7));
+                    assert_eq!(v[n], 9);
+                }
+            }
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "capacity overflow")]
+    fn infallible_overflow_panics() {
+        let _ = alloc_zeroed(AllocPref::Infallible, false, usize::MAX);
     }
 
     #[test]

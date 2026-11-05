@@ -15,6 +15,7 @@ readme = "README.crates.md"
 include = ["/src/**", "/README.md", "/README.crates.md", "/CHANGELOG.md", "/LICENSE*", "/tests/**/*.rs", "/tests/fixtures/**"]
 
 [dependencies]
+bytemuck = { version = "1.25.2", default-features = false, features = ["extern_crate_alloc"] }
 hayro = { version = "0.8.0", default-features = true }
 hayro-syntax = "0.8.0"
 rgb = { version = "0.8.53", default-features = false, features = ["as-bytes"] }

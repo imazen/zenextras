@@ -13,6 +13,7 @@ readme = "README.crates.md"
 include = ["/src/**", "/README.crates.md", "/CHANGELOG.md", "/LICENSE*"]
 
 [dependencies]
+bytemuck = { version = "1.25.2", default-features = false, features = ["extern_crate_alloc"] }
 hayro-jpeg2000 = { version = "0.4.1", default-features = false, features = ["std"] }
 zencodec = { optional = true, version = ">=0.2.0, <0.4.0" }
 zenpixels = { version = ">=0.2.10, <0.4.0", default-features = false }

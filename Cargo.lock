@@ -2129,6 +2129,7 @@ dependencies = [
 name = "zenjp2"
 version = "0.1.0"
 dependencies = [
+ "bytemuck",
  "codec-corpus",
  "enough",
  "hayro-jpeg2000 0.4.1 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -2180,6 +2181,7 @@ dependencies = [
 name = "zenpdf"
 version = "0.2.0"
 dependencies = [
+ "bytemuck",
  "enough",
  "flate2",
  "hayro",
@@ -2240,6 +2242,7 @@ dependencies = [
 name = "zensvg"
 version = "0.1.0"
 dependencies = [
+ "bytemuck",
  "data-url",
  "enough",
  "flate2",

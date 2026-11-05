@@ -8,6 +8,8 @@ member entries here reference those files.
 
 ### [Unreleased]
 
+- TIFF typed conversion buffers and TIFF/SVG/PDF/JP2 zero-byte helpers request allocator-zeroed storage with their existing failure policies. Typed TIFF buffers require Zeroable rather than assuming Default is zero.
+
 ### Tooling
 
 - `tools/exr-decode-bench` (standalone, never built by the workspace or CI): decode speed of B44/B44A/DWAA/DWAB (NONE/ZIP/PIZ as references) in zenexr and `exr` against OpenEXR C++, same bytes in, bit-identical pixels out, same threads. Results for 1 and 8 threads in [`benchmarks/exr_decode_2026-10-22.md`](benchmarks/exr_decode_2026-10-22.md) (5cc33682).
