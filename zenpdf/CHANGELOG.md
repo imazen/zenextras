@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Zeroed allocation helpers request allocator-zeroed storage while preserving allocation errors and infallible failure handling.
+
 ### Fixed
 - The zencodec decode ignored the job's stop: only `inventory` read it, so a stopped job still drew its page. The decode now polls when the decoder is built, when the decode starts, and between parsing and drawing (3 polls at any page size; hayro draws without polling), and `capabilities().stop()` is true. `tests/pulse.rs` fails on the previous code (run 53b, cell A).
 - `PageSelection::All` is bounded by `Limits::max_pages` before the page-index

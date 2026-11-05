@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Zeroed allocation helpers request allocator-zeroed storage while preserving allocation errors and infallible failure handling.
+
 ### QUEUED BREAKING CHANGES
 
 - Requires zencodec `>=0.2.0`: `SvgDecodeJob` implements `with_pulse`.

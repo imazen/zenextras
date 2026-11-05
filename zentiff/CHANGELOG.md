@@ -6,6 +6,8 @@ semantic versioning.
 
 ## [Unreleased]
 
+- Zeroed allocation helpers request allocator-zeroed storage while preserving allocation errors and infallible failure handling.
+
 ### Changed
 
 - `encode` checks its stop a second time, once the pixels are gathered, before image-tiff compresses and writes them in one call (2 polls per encode at 64x48 and 512x384, run 53b).
