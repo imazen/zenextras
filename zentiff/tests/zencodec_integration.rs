@@ -249,6 +249,10 @@ fn roundtrip_graya8_via_traits_stays_two_channel() {
 }
 
 #[test]
+#[allow(
+    deprecated,
+    reason = "exercise the existing TIFF best-effort metadata contract; checked retention is not implemented"
+)]
 fn roundtrip_graya8_with_metadata_stays_two_channel() {
     // Exercises the metadata-aware encode path (write_one_graya_image): an ICC
     // profile + orientation must coexist with the Gray + ExtraSamples layout,
@@ -453,6 +457,10 @@ fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
 }
 
 #[test]
+#[allow(
+    deprecated,
+    reason = "exercise the existing TIFF best-effort metadata contract; checked retention is not implemented"
+)]
 fn metadata_web_policy_roundtrip_keeps_icc_orientation_strips_gps() {
     let icc = sample_icc();
     let exif = rich_exif_le();
@@ -652,6 +660,10 @@ fn read_ifd_tags(buf: &[u8], ifd_off: usize, want_ptrs: &[u16]) -> (Vec<u16>, Ve
 }
 
 #[test]
+#[allow(
+    deprecated,
+    reason = "exercise the existing TIFF best-effort metadata contract; checked retention is not implemented"
+)]
 fn foreign_exif_blob_decomposes_into_correct_native_ifds() {
     // Encode an image carrying a foreign 3-level EXIF blob with PreserveExact
     // (no retention stripping) so every tag must survive — routed to its IFD.
@@ -753,6 +765,10 @@ fn foreign_exif_blob_decomposes_into_correct_native_ifds() {
 }
 
 #[test]
+#[allow(
+    deprecated,
+    reason = "exercise the existing TIFF best-effort metadata contract; checked retention is not implemented"
+)]
 fn cicp_only_source_synthesizes_icc_on_encode() {
     use zencodec::Cicp;
 
@@ -787,8 +803,8 @@ fn cicp_only_source_synthesizes_icc_on_encode() {
         .icc_profile
         .as_deref()
         .expect("CICP-only P3 source should synthesize an ICC for TIFF");
-    use zenpixels_convert::icc_profiles::{SynthesizedIcc, synthesize_icc_for_cicp};
-    let SynthesizedIcc::Profile(expected) = synthesize_icc_for_cicp(Cicp::DISPLAY_P3) else {
+    use zenpixels_convert::icc_profiles::SynthesizedIcc;
+    let SynthesizedIcc::Profile(expected) = SynthesizedIcc::for_cicp(Cicp::DISPLAY_P3) else {
         panic!("Display P3 must have a synthesized profile");
     };
     assert_eq!(
@@ -796,7 +812,7 @@ fn cicp_only_source_synthesizes_icc_on_encode() {
         expected.as_ref(),
         "embedded ICC must equal the synthesized P3 profile"
     );
-    assert_eq!(zenpixels::icc::extract_cicp(icc), Some(Cicp::DISPLAY_P3));
+    assert_eq!(zenpixels::Cicp::from_icc(icc), Some(Cicp::DISPLAY_P3));
     assert_eq!(
         decoded.pixels().contiguous_bytes().as_ref(),
         buf.as_contiguous_bytes().unwrap()
@@ -806,6 +822,10 @@ fn cicp_only_source_synthesizes_icc_on_encode() {
 /// A PQ source keeps its transfer: TIFF's only colour carrier is ICC, and
 /// without the bundled profile database PQ got no profile at all (read as sRGB).
 #[test]
+#[allow(
+    deprecated,
+    reason = "exercise the existing TIFF best-effort metadata contract; checked retention is not implemented"
+)]
 fn pq_cicp_only_source_synthesizes_a_pq_icc() {
     use zencodec::Cicp;
 
@@ -833,7 +853,7 @@ fn pq_cicp_only_source_synthesizes_a_pq_icc() {
         .icc_profile
         .clone()
         .expect("a PQ source needs an ICC in TIFF");
-    let id = zenpixels::icc::identify_common(&icc).expect("a known profile");
+    let id = zenpixels::icc::IccIdentification::from_icc(&icc).expect("a known profile");
     let cicp = id.to_cicp().expect("CICP for the profile");
     assert_eq!(
         (cicp.color_primaries, cicp.transfer_characteristics),
@@ -843,6 +863,10 @@ fn pq_cicp_only_source_synthesizes_a_pq_icc() {
 }
 
 #[test]
+#[allow(
+    deprecated,
+    reason = "exercise the existing TIFF best-effort metadata contract; checked retention is not implemented"
+)]
 fn srgb_cicp_only_source_embeds_no_icc() {
     use zencodec::Cicp;
 
@@ -965,4 +989,111 @@ fn truncation_series_categorizes_as_incomplete_input() {
         "truncated TIFF must categorize as incomplete input (UnexpectedEof/MalformedImage/\
              UnsupportedImageType/UnsupportedImageFeature), never panic, OOM, or Internal",
     );
+}
+
+#[test]
+#[allow(
+    deprecated,
+    reason = "exercise the existing TIFF best-effort metadata contract; checked retention is not implemented"
+)]
+fn gray_cicp_keeps_a_gray_profile_and_exact_samples() {
+    use std::sync::Arc;
+    use zenpixels::{Cicp, ColorContext};
+    for alpha in [false, true] {
+        for context in [false, true] {
+            let desc = if alpha {
+                PixelDescriptor::GRAYA8_SRGB
+            } else {
+                PixelDescriptor::GRAY8_SRGB
+            };
+            let desc = if context {
+                desc.with_transfer(zenpixels::TransferFunction::Pq)
+                    .with_primaries(zenpixels::ColorPrimaries::Bt2020)
+            } else {
+                desc
+            };
+            let channels = desc.channels();
+            let values: Vec<u8> = (0..5 * 3 * channels).map(|v| (v * 37) as u8).collect();
+            let mut pixels = PixelBuffer::from_vec(values.clone(), 5, 3, desc).unwrap();
+            let cicp = Cicp::new(9, 16, 0, true);
+            let mut job = TiffEncoderCodecConfig::new().job();
+            if context {
+                pixels = pixels.with_color_context(Arc::new(ColorContext::from_cicp(cicp)));
+            } else {
+                job = job.with_metadata_policy(
+                    Metadata::none().with_cicp(cicp),
+                    MetadataPolicy::PreserveExact,
+                );
+            }
+            let encoded = job
+                .encoder()
+                .unwrap()
+                .encode(pixels.as_slice())
+                .unwrap()
+                .into_vec();
+            let mut reader = tiff::decoder::Decoder::open(std::io::Cursor::new(&encoded)).unwrap();
+            reader.next_image().unwrap();
+            let profile = reader
+                .current_ifd()
+                .get_tag_u8_vec(tiff::tags::Tag::IccProfile)
+                .unwrap();
+            assert_eq!(
+                &profile[16..20],
+                b"GRAY",
+                "alpha={alpha}, context={context}"
+            );
+            let identified =
+                zenpixels::icc::IccIdentification::from_icc(&profile).expect("known gray profile");
+            assert_eq!(identified.transfer, zenpixels::TransferFunction::Pq);
+            if let Ok(directory) = std::env::var("TIFF_GRAY_ORACLE_OUTPUT") {
+                let directory = std::path::Path::new(&directory);
+                std::fs::create_dir_all(directory).unwrap();
+                std::fs::write(
+                    directory.join(format!("gray-alpha{alpha}-context{context}.tif")),
+                    &encoded,
+                )
+                .unwrap();
+            }
+            let tiff::decoder::DecodingSampleBuffer::U8(samples) = reader.read_image().unwrap()
+            else {
+                panic!("expected U8")
+            };
+            assert_eq!(samples, values);
+        }
+    }
+}
+
+#[test]
+fn integer_depth_evidence_describes_final_oriented_samples() {
+    use zencodec::OrientationHint;
+    for descriptor in [
+        PixelDescriptor::GRAY16_SRGB,
+        PixelDescriptor::RGB16_SRGB,
+        PixelDescriptor::RGBA16_SRGB,
+    ] {
+        for (middle, expected_bits) in [(64u16, 10), (65, 16)] {
+            let words: Vec<u16> = (0..3 * 2 * descriptor.channels())
+                .map(|i| [0, middle, 65535][i % 3])
+                .collect();
+            let bytes: Vec<u8> = words.iter().flat_map(|v| v.to_ne_bytes()).collect();
+            let pixels = PixelBuffer::from_vec(bytes.clone(), 3, 2, descriptor).unwrap();
+            let encoded = encode_via_trait(&pixels);
+            for hint in [
+                OrientationHint::Preserve,
+                OrientationHint::ExactTransform(Orientation::FlipH),
+            ] {
+                let output = TiffDecoderCodecConfig::new()
+                    .job()
+                    .with_orientation(hint)
+                    .decoder(Cow::Borrowed(&encoded), &[])
+                    .unwrap()
+                    .decode()
+                    .unwrap();
+                let rows = output.pixels();
+                let exact = rows.exact_depth().expect("current integer sample evidence");
+                assert_eq!(exact.color_bits(), expected_bits, "{descriptor:?} {hint:?}");
+                assert!(exact.holds_for(&rows).unwrap());
+            }
+        }
+    }
 }

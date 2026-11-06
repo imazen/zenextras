@@ -359,8 +359,7 @@ impl TiffCodecEncoder {
 
         self.check_limits(&pixels)?;
 
-        let channel_count = pixels.descriptor().channels() as u8;
-        let encode_meta = lower_metadata(self.metadata.as_ref(), &self.policy, channel_count)?;
+        let encode_meta = lower_metadata(self.metadata.as_ref(), &self.policy, &pixels)?;
 
         let encoded =
             crate::encode::encode_with_meta(&pixels, &self.config.inner, &encode_meta, stop)?;
@@ -395,18 +394,35 @@ impl zencodec::encode::Encoder for TiffCodecEncoder {
 fn lower_metadata(
     meta: Option<&Metadata>,
     policy: &EncodePolicy,
-    channel_count: u8,
+    pixels: &PixelSlice<'_>,
 ) -> crate::Result<crate::encode::TiffEncodeMeta> {
-    let Some(meta) = meta else {
-        return Ok(crate::encode::TiffEncodeMeta::default());
+    let empty = Metadata::none();
+    let meta = meta.unwrap_or(&empty);
+    let context = pixels.color_context();
+    let explicit_context = context.is_some_and(|c| c.icc.is_some() || c.cicp.is_some());
+    let (icc, cicp) = if explicit_context {
+        (
+            context.and_then(|c| c.icc.as_ref()),
+            context.and_then(|c| c.cicp),
+        )
+    } else {
+        (
+            meta.icc_profile.as_ref(),
+            meta.cicp.or_else(|| {
+                meta.icc_profile
+                    .is_none()
+                    .then(|| Cicp::from_descriptor(&pixels.descriptor()))
+                    .flatten()
+            }),
+        )
     };
 
-    // --- Color (ICC) via resolve_color_emit ------------------------------
-    let mut src = SourceColor::default().with_channel_count(channel_count);
-    if let Some(c) = meta.cicp {
+    // The current pixel description takes precedence over job metadata.
+    let mut src = SourceColor::default().with_channel_count(pixels.descriptor().channels() as u8);
+    if let Some(c) = cicp {
         src = src.with_cicp(c).with_color_authority(ColorAuthority::Cicp);
     }
-    if let Some(icc) = &meta.icc_profile {
+    if let Some(icc) = icc {
         src = src
             .with_icc_profile(icc.clone())
             .with_color_authority(ColorAuthority::Icc);
@@ -418,13 +434,29 @@ fn lower_metadata(
     // Coarse `embed_icc` gate (best-effort) overrides the plan toward dropping.
     let icc: Option<Vec<u8>> = if policy.resolve_icc(true) {
         match plan.icc {
-            IccDisposition::KeepSource => meta.icc_profile.as_deref().map(|b| b.to_vec()),
+            IccDisposition::KeepSource => icc.map(|b| b.to_vec()),
             IccDisposition::SynthesizeFrom(cicp) => synth_icc_from_cicp(cicp)?,
+            IccDisposition::SynthesizeGrayFrom(cicp) => {
+                match zenpixels_convert::icc_profiles::SynthesizedIcc::for_gray_cicp(cicp) {
+                    zenpixels_convert::icc_profiles::SynthesizedIcc::Profile(bytes) => {
+                        Some(bytes.into_owned())
+                    }
+                    other => {
+                        return Err(at!(TiffError::Encode(alloc::format!(
+                            "no gray ICC for {cicp:?}: {other:?}"
+                        ))));
+                    }
+                }
+            }
             IccDisposition::Drop => None,
             // `IccDisposition` is `#[non_exhaustive]`; a future disposition we
             // don't understand must not emit unknown ICC bytes — drop instead.
             _ => None,
         }
+    } else if !matches!(plan.icc, IccDisposition::Drop) {
+        return Err(at!(TiffError::InvalidInput(alloc::string::String::from(
+            "TIFF requires an ICC to describe these pixels, but ICC emission is disabled"
+        ))));
     } else {
         None
     };
@@ -466,7 +498,7 @@ fn lower_metadata(
 /// [`synthesize_icc_for_cicp`]: zenpixels_convert::icc_profiles::synthesize_icc_for_cicp
 fn synth_icc_from_cicp(cicp: Cicp) -> crate::Result<Option<Vec<u8>>> {
     use zenpixels_convert::icc_profiles::SynthesizedIcc;
-    match zenpixels_convert::icc_profiles::synthesize_icc_for_cicp(cicp) {
+    match zenpixels_convert::icc_profiles::SynthesizedIcc::for_cicp(cicp) {
         SynthesizedIcc::Profile(bytes) => Ok(Some(bytes.into_owned())),
         SynthesizedIcc::NotNeeded => Ok(None),
         // TIFF carries colour only as ICC: writing the pixels without one
@@ -868,7 +900,7 @@ impl TiffCodecDecoder<'_> {
         // `Preserve` (default) returns the decoded output unchanged: stored
         // pixels + stored dims + intrinsic EXIF tag. A bake hint physically
         // rotates the buffer and rewrites the reported dims/tag to match.
-        Ok(apply_orientation_to_output(decoded, self.orientation))
+        apply_orientation_to_output(decoded, self.orientation)
     }
 }
 
@@ -1002,30 +1034,52 @@ fn resolve_orientation(hint: OrientationHint, intrinsic: Orientation) -> Orienta
 /// [`tiff_info_to_image_info`] already set.
 ///
 /// Otherwise the resolved orientation (see [`resolve_orientation`]) is physically
-/// applied to the pixels via [`zenpixels_convert::orient::apply_orientation`],
+/// applied to the pixels via [`zenpixels_convert::PixelSliceConvertExt::oriented`],
 /// and the reported `ImageInfo` is rewritten to the baked buffer's dimensions
 /// with [`Orientation::Identity`] (the pixels are final — no orientation remains
 /// to apply). The intrinsic EXIF orientation is read from the `ImageInfo` the
 /// decode path already computed, so it matches what `probe()` reports.
-fn apply_orientation_to_output(output: DecodeOutput, hint: OrientationHint) -> DecodeOutput {
+fn apply_orientation_to_output(
+    output: DecodeOutput,
+    hint: OrientationHint,
+) -> crate::Result<DecodeOutput> {
     if !hint.bakes() {
-        return output;
+        return Ok(output);
     }
     let mut info = output.info().clone();
     let intrinsic = info.orientation;
     let resolved = resolve_orientation(hint, intrinsic);
 
+    let exact = output.pixels().exact_depth();
     let buf = output.into_buffer();
 
     // Even when the resolved transform is Identity (e.g. `Correct` on an
     // upright image) we still rewrite the reported orientation to Identity so a
     // consumer never double-applies the (now-stale) intrinsic tag. The pixel
     // copy is skipped in that case.
-    let baked = if resolved.is_identity() {
+    let mut baked = if resolved.is_identity() {
         buf
     } else {
-        zenpixels_convert::orient::apply_orientation(buf.as_slice(), resolved)
+        {
+            use zenpixels_convert::PixelSliceConvertExt;
+            buf.as_slice().oriented(resolved).map_err(|error| {
+                at!(match error.error() {
+                    zenpixels_convert::ConvertError::AllocationFailed => TiffError::LimitExceeded(
+                        alloc::string::String::from("orientation allocation failed")
+                    ),
+                    zenpixels_convert::ConvertError::Buffer(error) => TiffError::Buffer(*error),
+                    other => TiffError::Decode(alloc::format!("orientation: {other}")),
+                })
+            })?
+        }
     };
+
+    // Orientation only permutes current values, so its established grid survives.
+    if let Some(exact) = exact {
+        baked
+            .set_exact_depth(Some(exact))
+            .map_err(|error| at!(TiffError::InvalidInput(error.to_string())))?;
+    }
 
     // `ImageInfo` has no dimension setter; the fields are public. Report the
     // baked buffer's geometry + Identity (pixels are now final).
@@ -1033,7 +1087,7 @@ fn apply_orientation_to_output(output: DecodeOutput, hint: OrientationHint) -> D
     info.height = baked.height();
     info = info.with_orientation(Orientation::Identity);
 
-    DecodeOutput::new(baked, info).with_source_encoding_details(TiffSourceEncoding)
+    Ok(DecodeOutput::new(baked, info).with_source_encoding_details(TiffSourceEncoding))
 }
 
 /// Rewrite a probe [`ImageInfo`] (stored dims + intrinsic EXIF tag, as produced

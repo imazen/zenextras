@@ -47,3 +47,35 @@
   regression. zentiff polls between native calls (decode start, before each JPEG
   chunk, after the page); zenjpeg polls inside each chunk (456 of 482 polls on
   `quad-jpeg.tif`).
+
+
+## Known Bugs: gray carrier and current cohort (2026-11-06, review candidate)
+
+The adapter dropped a gray CICP source's required ICC disposition and ignored
+pixel-context-only color. The regression fails on the migrated pre-fix source
+at a missing TIFF ICC tag. The candidate writes a GRAY profile for Gray/GrayAlpha,
+reads current pixel color before job metadata, and refuses an explicitly disabled
+required ICC. TIFF has no standardized CICP carrier.
+
+The full root graph cannot select archmage beta.2 through stable-only JPEG and
+other dependency requirements. A documented isolated manifest excludes optional
+JPEG resolution and uses the real source/tests via symlinks: 61 library and 22
+integration tests pass, strict library/test Clippy passes. Independent libtiff and
+Little CMS read all four exported metadata/context and gray/alpha combinations,
+with exact samples and a GRAY ICC. This is selected-path evidence, not full
+workspace qualification. Existing assertions and dependency floors are retained.
+
+
+## Current-sample integer depth (2026-11-06 review)
+
+The native decoder now measures `ExactDepth` for its delivered U8/U16 grid
+rather than inferring it from source BitsPerSample. Measurement finishes before
+the existing completion checkpoint; the established two-poll expectations are
+unchanged. Orientation carries that proven grid through its byte permutation.
+The gray/RGB/RGBA16 test distinguishes widened ten-bit codes from off-grid
+values and checks both preserved and flipped output.
+
+The selected no-JPEG probe now includes the real fuzz regression directory.
+Its dependencies are frozen Git revisions, not a mutable sibling checkout.
+Full root qualification still fails on the previously recorded optional JPEG
+and SIMD dependency resolution; this remains an unmerged review candidate.

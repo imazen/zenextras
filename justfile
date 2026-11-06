@@ -242,3 +242,25 @@ contract-fuzz-check:
     for member in zentiff zenpdf zensvg zenjp2 zenexr; do
         cargo check --manifest-path "$member/fuzz/Cargo.toml" --all-targets --locked
     done
+
+# Current gray-carrier candidate; root patches select one core/pixel family.
+tiff-gray-check:
+    cargo test -p zentiff --features zencodec --test zencodec_integration gray_cicp_keeps_a_gray_profile_and_exact_samples
+
+# Selected no-JPEG path only; full workspace resolution remains a separate gate.
+tiff-gray-probe output:
+    python3 zentiff/scripts/prepare_gray_probe.py "{{output}}"
+    cargo test --manifest-path "{{output}}/Cargo.toml" --features zencodec --lib --test zencodec_integration
+    cargo clippy --manifest-path "{{output}}/Cargo.toml" --features zencodec --lib --tests -- -D warnings
+
+tiff-gray-oracle output reader:
+    TIFF_GRAY_ORACLE_OUTPUT="{{output}}" cargo test -p zentiff --features zencodec --test zencodec_integration gray_cicp_keeps_a_gray_profile_and_exact_samples
+    cc -Wall -Wextra -Werror zentiff/scripts/gray_icc_reader.c -o "{{reader}}" $(pkg-config --cflags --libs libtiff-4 lcms2)
+    "{{reader}}" "{{output}}/gray-alphafalse-contextfalse.tif"
+    "{{reader}}" "{{output}}/gray-alphafalse-contexttrue.tif"
+    "{{reader}}" "{{output}}/gray-alphatrue-contextfalse.tif"
+    "{{reader}}" "{{output}}/gray-alphatrue-contexttrue.tif"
+
+# The selected TIFF probe uses the real source and regression test directories.
+tiff-exact-depth-check manifest:
+    cargo test --locked --manifest-path "{{manifest}}" --features zencodec --test zencodec_integration integer_depth_evidence_describes_final_oriented_samples

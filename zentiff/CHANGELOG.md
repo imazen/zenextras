@@ -6,6 +6,8 @@ semantic versioning.
 
 ## [Unreleased]
 
+- Review candidate: preserve gray CICP through a GRAY ICC, including pixel-context-only input; refuse a required carrier when ICC emission is disabled. Migrate ICC lookup and orientation calls to the current shared pixel API.
+
 - Zeroed allocation helpers request allocator-zeroed storage while preserving allocation errors and infallible failure handling.
 
 ### Changed
