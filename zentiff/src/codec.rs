@@ -466,7 +466,7 @@ fn lower_metadata(
 /// [`synthesize_icc_for_cicp`]: zenpixels_convert::icc_profiles::synthesize_icc_for_cicp
 fn synth_icc_from_cicp(cicp: Cicp) -> crate::Result<Option<Vec<u8>>> {
     use zenpixels_convert::icc_profiles::SynthesizedIcc;
-    match zenpixels_convert::icc_profiles::synthesize_icc_for_cicp(cicp) {
+    match zenpixels_convert::icc_profiles::SynthesizedIcc::for_cicp(cicp) {
         SynthesizedIcc::Profile(bytes) => Ok(Some(bytes.into_owned())),
         SynthesizedIcc::NotNeeded => Ok(None),
         // TIFF carries colour only as ICC: writing the pixels without one
@@ -868,7 +868,7 @@ impl TiffCodecDecoder<'_> {
         // `Preserve` (default) returns the decoded output unchanged: stored
         // pixels + stored dims + intrinsic EXIF tag. A bake hint physically
         // rotates the buffer and rewrites the reported dims/tag to match.
-        Ok(apply_orientation_to_output(decoded, self.orientation))
+        apply_orientation_to_output(decoded, self.orientation)
     }
 }
 
@@ -1002,14 +1002,17 @@ fn resolve_orientation(hint: OrientationHint, intrinsic: Orientation) -> Orienta
 /// [`tiff_info_to_image_info`] already set.
 ///
 /// Otherwise the resolved orientation (see [`resolve_orientation`]) is physically
-/// applied to the pixels via [`zenpixels_convert::orient::apply_orientation`],
+/// applied to the pixels via [`zenpixels_convert::PixelSliceConvertExt::oriented`],
 /// and the reported `ImageInfo` is rewritten to the baked buffer's dimensions
 /// with [`Orientation::Identity`] (the pixels are final — no orientation remains
 /// to apply). The intrinsic EXIF orientation is read from the `ImageInfo` the
 /// decode path already computed, so it matches what `probe()` reports.
-fn apply_orientation_to_output(output: DecodeOutput, hint: OrientationHint) -> DecodeOutput {
+fn apply_orientation_to_output(
+    output: DecodeOutput,
+    hint: OrientationHint,
+) -> crate::Result<DecodeOutput> {
     if !hint.bakes() {
-        return output;
+        return Ok(output);
     }
     let mut info = output.info().clone();
     let intrinsic = info.orientation;
@@ -1024,7 +1027,17 @@ fn apply_orientation_to_output(output: DecodeOutput, hint: OrientationHint) -> D
     let baked = if resolved.is_identity() {
         buf
     } else {
-        zenpixels_convert::orient::apply_orientation(buf.as_slice(), resolved)
+        {
+            use zenpixels_convert::PixelSliceConvertExt;
+            buf.as_slice().oriented(resolved).map_err(|error| {
+                at!(match error.error() {
+                    zenpixels_convert::ConvertError::AllocationFailed =>
+                        TiffError::LimitExceeded(alloc::format!("orientation allocation failed")),
+                    zenpixels_convert::ConvertError::Buffer(error) => TiffError::Buffer(*error),
+                    other => TiffError::Decode(alloc::format!("orientation: {other}")),
+                })
+            })?
+        }
     };
 
     // `ImageInfo` has no dimension setter; the fields are public. Report the
@@ -1033,7 +1046,7 @@ fn apply_orientation_to_output(output: DecodeOutput, hint: OrientationHint) -> D
     info.height = baked.height();
     info = info.with_orientation(Orientation::Identity);
 
-    DecodeOutput::new(baked, info).with_source_encoding_details(TiffSourceEncoding)
+    Ok(DecodeOutput::new(baked, info).with_source_encoding_details(TiffSourceEncoding))
 }
 
 /// Rewrite a probe [`ImageInfo`] (stored dims + intrinsic EXIF tag, as produced

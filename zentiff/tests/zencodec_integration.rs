@@ -787,8 +787,8 @@ fn cicp_only_source_synthesizes_icc_on_encode() {
         .icc_profile
         .as_deref()
         .expect("CICP-only P3 source should synthesize an ICC for TIFF");
-    use zenpixels_convert::icc_profiles::{SynthesizedIcc, synthesize_icc_for_cicp};
-    let SynthesizedIcc::Profile(expected) = synthesize_icc_for_cicp(Cicp::DISPLAY_P3) else {
+    use zenpixels_convert::icc_profiles::SynthesizedIcc;
+    let SynthesizedIcc::Profile(expected) = SynthesizedIcc::for_cicp(Cicp::DISPLAY_P3) else {
         panic!("Display P3 must have a synthesized profile");
     };
     assert_eq!(
@@ -796,7 +796,7 @@ fn cicp_only_source_synthesizes_icc_on_encode() {
         expected.as_ref(),
         "embedded ICC must equal the synthesized P3 profile"
     );
-    assert_eq!(zenpixels::icc::extract_cicp(icc), Some(Cicp::DISPLAY_P3));
+    assert_eq!(zenpixels::Cicp::from_icc(icc), Some(Cicp::DISPLAY_P3));
     assert_eq!(
         decoded.pixels().contiguous_bytes().as_ref(),
         buf.as_contiguous_bytes().unwrap()
@@ -833,7 +833,7 @@ fn pq_cicp_only_source_synthesizes_a_pq_icc() {
         .icc_profile
         .clone()
         .expect("a PQ source needs an ICC in TIFF");
-    let id = zenpixels::icc::identify_common(&icc).expect("a known profile");
+    let id = zenpixels::icc::IccIdentification::from_icc(&icc).expect("a known profile");
     let cicp = id.to_cicp().expect("CICP for the profile");
     assert_eq!(
         (cicp.color_primaries, cicp.transfer_characteristics),
