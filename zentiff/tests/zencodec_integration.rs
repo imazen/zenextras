@@ -1066,15 +1066,29 @@ fn gray_cicp_keeps_a_gray_profile_and_exact_samples() {
 #[test]
 fn integer_depth_evidence_describes_final_oriented_samples() {
     use zencodec::OrientationHint;
-    for descriptor in [PixelDescriptor::GRAY16_SRGB, PixelDescriptor::RGB16_SRGB, PixelDescriptor::RGBA16_SRGB] {
+    for descriptor in [
+        PixelDescriptor::GRAY16_SRGB,
+        PixelDescriptor::RGB16_SRGB,
+        PixelDescriptor::RGBA16_SRGB,
+    ] {
         for (middle, expected_bits) in [(64u16, 10), (65, 16)] {
-            let words: Vec<u16> = (0..3 * 2 * descriptor.channels()).map(|i| [0, middle, 65535][i % 3]).collect();
+            let words: Vec<u16> = (0..3 * 2 * descriptor.channels())
+                .map(|i| [0, middle, 65535][i % 3])
+                .collect();
             let bytes: Vec<u8> = words.iter().flat_map(|v| v.to_ne_bytes()).collect();
             let pixels = PixelBuffer::from_vec(bytes.clone(), 3, 2, descriptor).unwrap();
             let encoded = encode_via_trait(&pixels);
-            for hint in [OrientationHint::Preserve, OrientationHint::ExactTransform(Orientation::FlipH)] {
-                let output = TiffDecoderCodecConfig::new().job().with_orientation(hint)
-                    .decoder(Cow::Borrowed(&encoded), &[]).unwrap().decode().unwrap();
+            for hint in [
+                OrientationHint::Preserve,
+                OrientationHint::ExactTransform(Orientation::FlipH),
+            ] {
+                let output = TiffDecoderCodecConfig::new()
+                    .job()
+                    .with_orientation(hint)
+                    .decoder(Cow::Borrowed(&encoded), &[])
+                    .unwrap()
+                    .decode()
+                    .unwrap();
                 let rows = output.pixels();
                 let exact = rows.exact_depth().expect("current integer sample evidence");
                 assert_eq!(exact.color_bits(), expected_bits, "{descriptor:?} {hint:?}");

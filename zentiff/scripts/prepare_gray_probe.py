@@ -20,6 +20,6 @@ patches = (root / "Cargo.toml").read_text().split('[patch.crates-io]', 1)[1]
 patches = '\n'.join(line for line in patches.splitlines() if not line.startswith(
     ('zenjpeg =', 'zenresize =', 'zenpng =', 'ultrahdr-core =', 'zenflate =', 'hayro-syntax =')))
 (out / "Cargo.toml").write_text(manifest + '\n[workspace]\n\n[patch.crates-io]\n' + patches + '\n')
-for item in ['src', 'tests', 'benches', 'examples']:
+for item in ['src', 'tests', 'benches', 'examples', 'fuzz']:
     (out / item).symlink_to(crate / item, target_is_directory=True)
 print(out / "Cargo.toml")

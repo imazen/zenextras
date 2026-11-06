@@ -64,3 +64,18 @@ integration tests pass, strict library/test Clippy passes. Independent libtiff a
 Little CMS read all four exported metadata/context and gray/alpha combinations,
 with exact samples and a GRAY ICC. This is selected-path evidence, not full
 workspace qualification. Existing assertions and dependency floors are retained.
+
+
+## Current-sample integer depth (2026-11-06 review)
+
+The native decoder now measures `ExactDepth` for its delivered U8/U16 grid
+rather than inferring it from source BitsPerSample. Measurement finishes before
+the existing completion checkpoint; the established two-poll expectations are
+unchanged. Orientation carries that proven grid through its byte permutation.
+The gray/RGB/RGBA16 test distinguishes widened ten-bit codes from off-grid
+values and checks both preserved and flipped output.
+
+The selected no-JPEG probe now includes the real fuzz regression directory.
+Its dependencies are frozen Git revisions, not a mutable sibling checkout.
+Full root qualification still fails on the previously recorded optional JPEG
+and SIMD dependency resolution; this remains an unmerged review candidate.

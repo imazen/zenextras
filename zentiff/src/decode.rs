@@ -939,8 +939,6 @@ pub fn decode(
         }
     };
 
-    cancel.check().map_err(|e| at!(TiffError::from(e)))?;
-
     let width = info.width;
     let height = info.height;
     let color_type = info.color_type;
@@ -979,12 +977,25 @@ pub fn decode(
 
     // Associated alpha: the color samples are premultiplied. Label them so,
     // rather than as straight alpha.
-    let pixels = if info.associated_alpha && pixels.descriptor().alpha().is_some() {
+    let mut pixels = if info.associated_alpha && pixels.descriptor().alpha().is_some() {
         pixels.with_alpha_mode(Some(zenpixels::AlphaMode::Premultiplied))
     } else {
         pixels
     };
 
+    if matches!(
+        pixels.descriptor().channel_type(),
+        ChannelType::U8 | ChannelType::U16
+    ) {
+        let exact = zenpixels::sample::ExactDepth::measure(&pixels.as_slice())
+            .map_err(|error| at!(TiffError::InvalidInput(error.to_string())))?;
+        pixels
+            .set_exact_depth(Some(exact))
+            .map_err(|error| at!(TiffError::InvalidInput(error.to_string())))?;
+    }
+    // Keep the established two-checkpoint contract; completion follows pixel
+    // conversion and evidence measurement so expired work is never returned.
+    cancel.check().map_err(|e| at!(TiffError::from(e)))?;
     Ok(TiffDecodeOutput { pixels, info })
 }
 

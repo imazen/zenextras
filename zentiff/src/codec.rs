@@ -1050,13 +1050,14 @@ fn apply_orientation_to_output(
     let intrinsic = info.orientation;
     let resolved = resolve_orientation(hint, intrinsic);
 
+    let exact = output.pixels().exact_depth();
     let buf = output.into_buffer();
 
     // Even when the resolved transform is Identity (e.g. `Correct` on an
     // upright image) we still rewrite the reported orientation to Identity so a
     // consumer never double-applies the (now-stale) intrinsic tag. The pixel
     // copy is skipped in that case.
-    let baked = if resolved.is_identity() {
+    let mut baked = if resolved.is_identity() {
         buf
     } else {
         {
@@ -1072,6 +1073,13 @@ fn apply_orientation_to_output(
             })?
         }
     };
+
+    // Orientation only permutes current values, so its established grid survives.
+    if let Some(exact) = exact {
+        baked
+            .set_exact_depth(Some(exact))
+            .map_err(|error| at!(TiffError::InvalidInput(error.to_string())))?;
+    }
 
     // `ImageInfo` has no dimension setter; the fields are public. Report the
     // baked buffer's geometry + Identity (pixels are now final).

@@ -8,6 +8,8 @@ member entries here reference those files.
 
 ### [Unreleased]
 
+- zentiff: measure delivered integer sample-grid depth before completion and retain it through exact orientation permutations. Source depth is not used as grid proof.
+
 - TIFF typed conversion buffers and TIFF/SVG/PDF/JP2 zero-byte helpers request allocator-zeroed storage with their existing failure policies. Typed TIFF buffers require Zeroable rather than assuming Default is zero.
 
 ### Tooling
