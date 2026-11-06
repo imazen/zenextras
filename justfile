@@ -242,3 +242,7 @@ contract-fuzz-check:
     for member in zentiff zenpdf zensvg zenjp2 zenexr; do
         cargo check --manifest-path "$member/fuzz/Cargo.toml" --all-targets --locked
     done
+
+# Current gray-carrier candidate; root patches select one core/pixel family.
+tiff-gray-check:
+    cargo test -p zentiff --features zencodec --test zencodec_integration gray_cicp_keeps_a_gray_profile_and_exact_samples

@@ -966,3 +966,49 @@ fn truncation_series_categorizes_as_incomplete_input() {
              UnsupportedImageType/UnsupportedImageFeature), never panic, OOM, or Internal",
     );
 }
+
+#[test]
+fn gray_cicp_keeps_a_gray_profile_and_exact_samples() {
+    use std::sync::Arc;
+    use zenpixels::{Cicp, ColorContext};
+    for alpha in [false, true] {
+        for context in [false, true] {
+            let desc = if alpha {
+                PixelDescriptor::GRAYA8_SRGB
+            } else {
+                PixelDescriptor::GRAY8_SRGB
+            };
+            let channels = desc.channels();
+            let values: Vec<u8> = (0..5 * 3 * channels).map(|v| (v * 37) as u8).collect();
+            let mut pixels = PixelBuffer::from_vec(values.clone(), 5, 3, desc).unwrap();
+            let cicp = Cicp::new(9, 16, 0, true);
+            let mut job = TiffEncoderCodecConfig::new().job();
+            if context {
+                pixels = pixels.with_color_context(Arc::new(ColorContext::from_cicp(cicp)));
+            } else {
+                job = job.with_metadata_policy(
+                    Metadata::none().with_cicp(cicp),
+                    MetadataPolicy::PreserveExact,
+                );
+            }
+            let encoded = job
+                .encoder()
+                .unwrap()
+                .encode(pixels.as_slice())
+                .unwrap()
+                .into_vec();
+            let mut reader = tiff::decoder::Decoder::new(std::io::Cursor::new(&encoded)).unwrap();
+            let profile = reader.get_tag_u8_vec(tiff::tags::Tag::IccProfile).unwrap();
+            assert_eq!(
+                &profile[16..20],
+                b"GRAY",
+                "alpha={alpha}, context={context}"
+            );
+            assert_eq!(zenpixels::Cicp::from_icc(&profile), Some(cicp));
+            let tiff::decoder::DecodingResult::U8(samples) = reader.read_image().unwrap() else {
+                panic!("expected U8")
+            };
+            assert_eq!(samples, values);
+        }
+    }
+}

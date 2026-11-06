@@ -14,25 +14,33 @@ members = [
 [patch.crates-io]
 # One unpublished core family at the verified main merge. Members use registry
 # requirements so downstream consumers can choose one family with their root patch.
-zencodec = { git = "https://github.com/imazen/zencodec", rev = "f02a17ec6001a9efcad1267f92a3ea928ed06e57" }
-zencodec-testkit = { git = "https://github.com/imazen/zencodec", rev = "f02a17ec6001a9efcad1267f92a3ea928ed06e57" }
-zencodec-io = { git = "https://github.com/imazen/zencodec", rev = "f02a17ec6001a9efcad1267f92a3ea928ed06e57" }
-zencodec-media = { git = "https://github.com/imazen/zencodec", rev = "f02a17ec6001a9efcad1267f92a3ea928ed06e57" }
-zencodec-media-testkit = { git = "https://github.com/imazen/zencodec", rev = "f02a17ec6001a9efcad1267f92a3ea928ed06e57" }
-zenmeta = { git = "https://github.com/imazen/zencodec", rev = "f02a17ec6001a9efcad1267f92a3ea928ed06e57" }
+zencodec = { path = "/home/lilith/tmp/lanes/116/zencodec" }
+zencodec-testkit = { path = "/home/lilith/tmp/lanes/116/zencodec/zencodec-testkit" }
+zencodec-io = { path = "/home/lilith/tmp/lanes/116/zencodec/zencodec-io" }
+zencodec-media = { path = "/home/lilith/tmp/lanes/116/zencodec/zencodec-media" }
+zencodec-media-testkit = { path = "/home/lilith/tmp/lanes/116/zencodec/zencodec-media-testkit" }
+zenmeta = { path = "/home/lilith/tmp/lanes/116/zencodec/zenmeta" }
 # Paired precision/conversion APIs consumed by this shared core.
-zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "283655c5424e0ad7ebc6d2acd94670fac1e29158" }
-zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "283655c5424e0ad7ebc6d2acd94670fac1e29158" }
+zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "b6b12bbe702e7ca2f93db559858ae1f233a066ec" }
+zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "b6b12bbe702e7ca2f93db559858ae1f233a066ec" }
 # zenjpeg depends on ultrahdr-core; crates.io 0.6.0 is on zencodec 0.1. zenpipe's revision
 # is on the 0.2 core above.
-ultrahdr-core = { git = "https://github.com/imazen/ultrahdr", rev = "610975047bcb0bb266e952f15bcd978ba3f34950" }
+ultrahdr-core = { git = "https://github.com/imazen/ultrahdr", rev = "85cc309c07526341e6fa8b7e4d6130aaf64c8fea" }
 # Pinned PDF stream resource-limit fork used by zenpdf.
 hayro-syntax = { git = "https://github.com/lilith/hayro", rev = "2ce50d0164878b8505e118f81dcb1d0367b26957" }
 
 # zenjpeg 0.9.0 (unreleased; byte-exact with libjpeg-turbo, 12-bit and lossless decode) for
 # zentiff's JPEG pages, at zenpipe's revision (zenjpeg PR 246, d099267c): it builds on the
 # core family above, and its decoder is unchanged since cf7b051b. Drop once it is on crates.io.
-zenjpeg = { git = "https://github.com/imazen/zenjpeg", rev = "d099267c37b4f91b35fe5f15ddb680455e1d4bd8" }
+zenjpeg = { git = "https://github.com/imazen/zenjpeg", rev = "a8ebcd0bfc401b9b783846223f5b2a50a971cce1" }
 
 # Pinned TIFF scratch-buffer resource-limit fork used by zentiff.
 tiff = { git = "https://github.com/lilith/image-tiff", rev = "10a3b6b2fa88eb5943525066a989ea9e64e644d5" }
+
+garb = { git = "https://github.com/imazen/garb", rev = "58ce9cad7b337418a7abe9b1f6e3e4bd1928b385" }
+linear-srgb = { git = "https://github.com/imazen/linear-srgb", rev = "52896f4b24664315586bd60e5f048253b1f69052" }
+
+zencodec-coroutine = { path = "/home/lilith/tmp/lanes/116/zencodec/zencodec-coroutine" }
+zenresize = { git = "https://github.com/imazen/zenresize", rev = "e3975fb9d6d6b7baa96038a0eb8e27febb37c012" }
+zenflate = { git = "https://github.com/imazen/zenflate", rev = "a0ea03637a2cc9a193e343018ae2cfb1a6c31edd" }
+zenpng = { git = "https://github.com/imazen/zenpng", rev = "02a7f0df5f72dd79b0afa58d66ced7cdd8395e31" }
