@@ -260,3 +260,7 @@ tiff-gray-oracle output reader:
     "{{reader}}" "{{output}}/gray-alphafalse-contexttrue.tif"
     "{{reader}}" "{{output}}/gray-alphatrue-contextfalse.tif"
     "{{reader}}" "{{output}}/gray-alphatrue-contexttrue.tif"
+
+# The selected TIFF probe uses the real source and regression test directories.
+tiff-exact-depth-check manifest:
+    cargo test --locked --manifest-path "{{manifest}}" --features zencodec --test zencodec_integration integer_depth_evidence_describes_final_oriented_samples
