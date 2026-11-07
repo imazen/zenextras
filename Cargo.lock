@@ -1641,7 +1641,7 @@ checksum = "b6f5e870be6c3b371b77fe0ee0bafb859fa4964b4404c27de1d380043c4dda20"
 [[package]]
 name = "ultrahdr-core"
 version = "0.6.0"
-source = "git+https://github.com/imazen/ultrahdr?rev=610975047bcb0bb266e952f15bcd978ba3f34950#610975047bcb0bb266e952f15bcd978ba3f34950"
+source = "git+https://github.com/imazen/ultrahdr?rev=7eaa493c2b510428cb014e072f77559453627e17#7eaa493c2b510428cb014e072f77559453627e17"
 dependencies = [
  "bytemuck",
  "enough",
@@ -2198,7 +2198,7 @@ dependencies = [
 [[package]]
 name = "zenpixels"
 version = "0.2.17"
-source = "git+https://github.com/imazen/zenpixels?rev=283655c5424e0ad7ebc6d2acd94670fac1e29158#283655c5424e0ad7ebc6d2acd94670fac1e29158"
+source = "git+https://github.com/imazen/zenpixels?rev=96c7b1efb10e0a645c6854294178c33f4bad7865#96c7b1efb10e0a645c6854294178c33f4bad7865"
 dependencies = [
  "bytemuck",
  "imgref",
@@ -2209,7 +2209,7 @@ dependencies = [
 [[package]]
 name = "zenpixels-convert"
 version = "0.2.17"
-source = "git+https://github.com/imazen/zenpixels?rev=283655c5424e0ad7ebc6d2acd94670fac1e29158#283655c5424e0ad7ebc6d2acd94670fac1e29158"
+source = "git+https://github.com/imazen/zenpixels?rev=96c7b1efb10e0a645c6854294178c33f4bad7865#96c7b1efb10e0a645c6854294178c33f4bad7865"
 dependencies = [
  "archmage",
  "bytemuck",
