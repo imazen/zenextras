@@ -24,13 +24,13 @@ features = ["all-codecs"]
 members = ["."]
 
 [patch.crates-io]
-zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "283655c5424e0ad7ebc6d2acd94670fac1e29158" }
-zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "283655c5424e0ad7ebc6d2acd94670fac1e29158" }
+zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "96c7b1efb10e0a645c6854294178c33f4bad7865" }
+zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "96c7b1efb10e0a645c6854294178c33f4bad7865" }
 tiff = { git = "https://github.com/lilith/image-tiff", rev = "10a3b6b2fa88eb5943525066a989ea9e64e644d5" }
 zencodec = { git = "https://github.com/imazen/zencodec", rev = "f02a17ec6001a9efcad1267f92a3ea928ed06e57" }
 zenmeta = { git = "https://github.com/imazen/zencodec", rev = "f02a17ec6001a9efcad1267f92a3ea928ed06e57" }
 zenjpeg = { git = "https://github.com/imazen/zenjpeg", rev = "d099267c37b4f91b35fe5f15ddb680455e1d4bd8" }
-ultrahdr-core = { git = "https://github.com/imazen/ultrahdr", rev = "610975047bcb0bb266e952f15bcd978ba3f34950" }
+ultrahdr-core = { git = "https://github.com/imazen/ultrahdr", rev = "7eaa493c2b510428cb014e072f77559453627e17" }
 zenanalyze = { git = "https://github.com/imazen/zenanalyze", rev = "8ca647c525cf488c61bbf35475ca8ba3db6b628e" }
 
 [[bin]]

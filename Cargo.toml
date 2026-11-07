@@ -21,11 +21,11 @@ zencodec-media = { git = "https://github.com/imazen/zencodec", rev = "f02a17ec60
 zencodec-media-testkit = { git = "https://github.com/imazen/zencodec", rev = "f02a17ec6001a9efcad1267f92a3ea928ed06e57" }
 zenmeta = { git = "https://github.com/imazen/zencodec", rev = "f02a17ec6001a9efcad1267f92a3ea928ed06e57" }
 # Paired precision/conversion APIs consumed by this shared core.
-zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "283655c5424e0ad7ebc6d2acd94670fac1e29158" }
-zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "283655c5424e0ad7ebc6d2acd94670fac1e29158" }
+zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "96c7b1efb10e0a645c6854294178c33f4bad7865" }
+zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "96c7b1efb10e0a645c6854294178c33f4bad7865" }
 # zenjpeg depends on ultrahdr-core; crates.io 0.6.0 is on zencodec 0.1. zenpipe's revision
 # is on the 0.2 core above.
-ultrahdr-core = { git = "https://github.com/imazen/ultrahdr", rev = "610975047bcb0bb266e952f15bcd978ba3f34950" }
+ultrahdr-core = { git = "https://github.com/imazen/ultrahdr", rev = "7eaa493c2b510428cb014e072f77559453627e17" }
 # Pinned PDF stream resource-limit fork used by zenpdf.
 hayro-syntax = { git = "https://github.com/lilith/hayro", rev = "2ce50d0164878b8505e118f81dcb1d0367b26957" }
 
