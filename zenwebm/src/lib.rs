@@ -27,6 +27,8 @@
 //!   (at each video random-access point, and at the configured length), no
 //!   patches, no index. The document type is `webm` when every codec is a
 //!   WebM codec, `matroska` otherwise.
+//!   [`WebmMuxer::flush_cluster`] publishes a caller-selected boundary without
+//!   waiting for the next packet or finishing the segment.
 #![no_std]
 #![forbid(unsafe_code)]
 

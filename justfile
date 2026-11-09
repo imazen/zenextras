@@ -12,6 +12,11 @@ build:
 test:
     cargo test --workspace
 
+# Qualify WebM against one pinned optional-control family.
+webm-contract:
+    cargo test --manifest-path tools/webm-contract/Cargo.toml
+    cargo clippy --manifest-path tools/webm-contract/Cargo.toml --all-targets -- -D warnings
+
 # Both feature states must keep capability and operation results synchronized.
 tiff-metadata-check:
     cargo test -p zentiff --features zencodec --test inventory_feature

@@ -253,6 +253,83 @@ fn clusters_start_at_video_random_access_points() {
 }
 
 #[test]
+fn explicit_flush_delivers_each_prefix_and_keeps_the_session_usable() {
+    let mut mux = WebmMuxer::new();
+    assert!(matches!(
+        mux.flush_cluster(None),
+        Err(SessionError::Protocol(
+            zencodec_media::session::ProtocolViolation::NoBegin
+        ))
+    ));
+    mux.begin(&tracks(), MuxHint::forward_only()).unwrap();
+    let header = mux.pending_output().to_vec();
+    mux.flush_cluster(None).unwrap();
+    assert_eq!(mux.pending_output(), header);
+    let want = packets(4);
+    let mut published = Vec::new();
+    for (i, packet) in want.iter().enumerate() {
+        mux.write_packet(packet.clone(), None).unwrap();
+        mux.flush_cluster(None).unwrap();
+        mux.take_output(&mut published);
+        // A real demuxer reads the prefix before another packet or finish.
+        let (_, got) = demux(&published).unwrap();
+        assert_eq!(got.len(), i + 1);
+        for (got, expected) in got.iter().zip(&want) {
+            assert_eq!(got.bytes(), expected.bytes());
+            assert_eq!(got.track(), expected.track());
+            assert_eq!(
+                got.pts(),
+                expected
+                    .pts()
+                    .map(|pts| pts.rescale(MS, zencodec::time::Rounding::Floor).unwrap())
+            );
+            assert_eq!(
+                got.random_access(),
+                if expected.random_access() == RandomAccess::Yes {
+                    RandomAccess::Yes
+                } else {
+                    RandomAccess::No
+                }
+            );
+        }
+        mux.flush_cluster(None).unwrap();
+        assert!(mux.pending_output().is_empty());
+    }
+    assert_eq!(mux.report().clusters, want.len() as u64);
+    let before = published.clone();
+    mux.finish(None).unwrap().apply_to(&mut published).unwrap();
+    assert_eq!(published, before);
+}
+
+#[test]
+fn cancelled_flush_preserves_the_unpublished_cluster() {
+    struct TimedOut;
+    impl zencodec::how_far::Stop for TimedOut {
+        fn check(&self) -> Result<(), zencodec::how_far::StopReason> {
+            Err(zencodec::how_far::StopReason::TimedOut)
+        }
+    }
+    let pulse = zencodec::how_far::StopOnly::new(TimedOut);
+    let mut mux = WebmMuxer::new();
+    mux.begin(&tracks(), MuxHint::forward_only()).unwrap();
+    let packet = packets(1).remove(0);
+    mux.write_packet(packet.clone(), None).unwrap();
+    let before = mux.pending_output().to_vec();
+    assert!(matches!(
+        mux.flush_cluster(Some(&pulse)),
+        Err(SessionError::Cancelled(
+            zencodec::how_far::StopReason::TimedOut
+        ))
+    ));
+    assert_eq!(mux.pending_output(), before);
+    assert_eq!(mux.report().clusters, 0);
+    mux.flush_cluster(None).unwrap();
+    let (_, got) = demux(mux.pending_output()).unwrap();
+    assert_eq!(got.len(), 1);
+    assert_eq!(got[0].bytes(), packet.bytes());
+}
+
+#[test]
 fn the_demuxer_meets_the_contract() {
     let bytes = mux(WebmMuxer::new(), &tracks(), &packets(9));
     check_demuxer_contract(|| WebmDemuxer::new(MediaLimits::default()), &bytes).unwrap();

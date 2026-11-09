@@ -115,6 +115,24 @@ impl Default for WebmMuxer {
 }
 
 impl WebmMuxer {
+    /// Publish the current cluster without finishing the segment or waiting for
+    /// another packet. Drain [`Muxer::pending_output`] afterward as usual.
+    ///
+    /// This is useful when the caller has reached a complete media boundary and
+    /// wants to deliver it immediately. It does not insert a random-access point:
+    /// the next cluster may start with a dependent video packet. With no open
+    /// cluster this is a no-op. Cancellation is checked before any output changes.
+    /// Calling this before [`Muxer::begin`] returns
+    /// [`ProtocolViolation::NoBegin`].
+    pub fn flush_cluster(&mut self, pulse: Option<&dyn zencodec::Pulse>) -> Res<()> {
+        pulse.unwrap_or(&zencodec::NoPulse).check()?;
+        if !self.begun {
+            return Err(SessionError::Protocol(ProtocolViolation::NoBegin));
+        }
+        self.close_cluster();
+        Ok(())
+    }
+
     /// A writer with clusters of up to 5 seconds or 8 MiB.
     pub fn new() -> Self {
         let segment = TimeBase::new(DEFAULT_SCALE_NS, NS_PER_SECOND as u32).expect("nonzero");

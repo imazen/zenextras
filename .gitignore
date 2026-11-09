@@ -43,3 +43,5 @@ Thumbs.db
 *.iml
 apidoc/target/
 apidoc/Cargo.lock
+
+!tools/webm-contract/Cargo.lock
