@@ -251,3 +251,7 @@ tiff-float-check:
 tiff-float-oracle out:
     TIFF_FLOAT_ORACLE_OUT={{quote(out)}} cargo test --locked -p zentiff --features zencodec --test float_predictor
     python3 zentiff/tests/float_oracle.py {{quote(out)}}
+
+# Required corpus admission for the i686 workflow; network runs on the host.
+tiff-corpus-prefetch:
+    CODEC_CORPUS_CACHE="${CODEC_CORPUS_CACHE:-target/corpus-cache}" cargo test --locked -p zentiff --features inventory --test inventory corpus_inventories_pass_check_inventory -- --exact

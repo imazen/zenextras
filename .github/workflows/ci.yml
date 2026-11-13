@@ -97,6 +97,16 @@ jobs:
         with:
           key: cross-i686
 
+      - name: Prefetch and validate TIFF corpus on the host
+        run: cargo test --locked -p zentiff --features inventory --test inventory corpus_inventories_pass_check_inventory -- --exact
+
+      - name: Mount the required corpus cache for cross
+        shell: bash
+        run: |
+          test -d "$PWD/target/corpus-cache"
+          echo "CODEC_CORPUS_CACHE=/codec-corpus" >> "$GITHUB_ENV"
+          echo "CROSS_CONTAINER_OPTS=-v $PWD/target/corpus-cache:/codec-corpus" >> "$GITHUB_ENV"
+
       - name: Test JPEG 2000 inventory (i686/QEMU)
         run: cross test -p zenjp2 --features inventory --target i686-unknown-linux-gnu --lib --test inventory --test inventory_review --test inventory_feature --test fuzz_regression --test shared_contracts --test sansio
 

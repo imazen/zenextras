@@ -28,6 +28,9 @@ semantic versioning.
 
 ### Fixed
 
+- Provision and explicitly mount tiff-conformance before i686 inventory tests;
+  missing corpus input remains a failure.
+
 - Default prediction admits F32 Gray/RGB/RGBA by selecting TIFF floating-point
   prediction instead of integer horizontal differencing (issue #52). Explicit
   unpredicted encoding and the existing GrayAlpha workaround are preserved.

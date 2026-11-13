@@ -2,6 +2,12 @@
 
 ## Known Bugs
 
+- i686 inventory CI provisioning (fixed 2026-11-13): the cross container
+  cannot fetch tiff-conformance. The workflow now runs the mandatory corpus
+  inventory check on the host first, then mounts that cache explicitly at
+  /codec-corpus for all cross steps. Corpus requirements and assertions remain
+  unchanged. `just tiff-corpus-prefetch` verifies host admission.
+
 - Fixed 2026-11-13 (issue #52): default horizontal prediction rejected F32
   Gray/RGB/RGBA input. It now lowers to TIFF floating-point prediction;
   explicit None and the GrayAlpha predictor workaround stay unchanged.
