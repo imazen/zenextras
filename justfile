@@ -254,4 +254,4 @@ tiff-float-oracle out:
 
 # Required corpus admission for the i686 workflow; network runs on the host.
 tiff-corpus-prefetch:
-    CODEC_CORPUS_CACHE="${CODEC_CORPUS_CACHE:-target/corpus-cache}" cargo test --locked -p zentiff --features inventory --test inventory corpus_inventories_pass_check_inventory -- --exact
+    CODEC_CORPUS_CACHE="${CODEC_CORPUS_CACHE:-$PWD/target/corpus-cache}" cargo test --locked -p zentiff --features inventory --test inventory corpus_inventories_pass_check_inventory -- --exact

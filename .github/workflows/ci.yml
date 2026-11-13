@@ -80,7 +80,7 @@ jobs:
     name: Test i686
     runs-on: ubuntu-latest
     env:
-      CODEC_CORPUS_CACHE: target/corpus-cache
+      CODEC_CORPUS_CACHE: ${{ github.workspace }}/target/corpus-cache
     steps:
       - uses: actions/checkout@v7
 
