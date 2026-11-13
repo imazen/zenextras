@@ -6,7 +6,6 @@
 //! `track,pts_ns,size,keyframe` per packet, after a `#delay,track,ns` line
 //! for each track with a codec delay.
 
-use zencodec::NoPulse;
 use zencodec_io::SliceCursor;
 use zencodec_media::container::{DemuxEvent, DemuxStage, Demuxer, MuxHint, Muxer};
 use zencodec_media::limits::MediaLimits;
@@ -23,7 +22,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut packets = Vec::new();
     loop {
         let y = cursor
-            .next(&bytes, &mut DemuxStage(&mut dem), &NoPulse)
+            .next(&bytes, &mut DemuxStage(&mut dem), None)
             .map_err(|e| format!("{e:?}"))?;
         let done = y.is_finished();
         if let DemuxEvent::Packet(p) = y.into_inner() {
@@ -61,11 +60,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .map_err(|e| format!("{e:?}"))?;
         let mut file = Vec::new();
         for p in packets {
-            m.write_packet(p, &NoPulse).map_err(|e| format!("{e:?}"))?;
+            m.write_packet(p, None).map_err(|e| format!("{e:?}"))?;
             m.take_output(&mut file);
         }
         let report = m.report();
-        m.finish(&NoPulse)
+        m.finish(None)
             .map_err(|e| format!("{e:?}"))?
             .apply_to(&mut file)?;
         std::fs::write(&out, &file)?;

@@ -1,6 +1,5 @@
 //! IVF against the zencodec-media contracts, and its own format rules.
 
-use zencodec::NoPulse;
 use zencodec::time::{Rounding, TimeBase, Timestamp};
 use zencodec_io::SliceCursor;
 use zencodec_media::container::{
@@ -50,10 +49,10 @@ fn file(n: usize, patch: bool) -> Vec<u8> {
     m.begin(&[track(CodecId::Av1)], MuxHint::default()).unwrap();
     let mut out = Vec::new();
     for p in packets(n) {
-        m.write_packet(p, &NoPulse).unwrap();
+        m.write_packet(p, None).unwrap();
         m.take_output(&mut out);
     }
-    m.finish(&NoPulse).unwrap().apply_to(&mut out).unwrap();
+    m.finish(None).unwrap().apply_to(&mut out).unwrap();
     out
 }
 
@@ -63,7 +62,7 @@ fn demux(bytes: &[u8]) -> Result<(Vec<TrackInfo>, Vec<Packet>), String> {
     let mut out = Vec::new();
     loop {
         let y = cursor
-            .next(bytes, &mut DemuxStage(&mut dem), &NoPulse)
+            .next(bytes, &mut DemuxStage(&mut dem), None)
             .map_err(|e| format!("{e:?}"))?;
         let done = y.is_finished();
         if let DemuxEvent::Packet(p) = y.into_inner() {
@@ -145,7 +144,7 @@ fn seeks_by_time_report_the_actual_packet() {
     let mut dem = IvfDemuxer::new(MediaLimits::default());
     let mut cursor = SliceCursor::new(64);
     cursor
-        .next(&bytes, &mut DemuxStage(&mut dem), &NoPulse)
+        .next(&bytes, &mut DemuxStage(&mut dem), None)
         .unwrap();
     let t = SeekTarget::new(
         0,
@@ -162,7 +161,7 @@ fn seeks_by_time_report_the_actual_packet() {
     assert!(matches!(dem.seek(&t).unwrap(), SeekStatus::Scanning));
     loop {
         if let DemuxEvent::Seeked(_) = cursor
-            .next(&bytes, &mut DemuxStage(&mut dem), &NoPulse)
+            .next(&bytes, &mut DemuxStage(&mut dem), None)
             .unwrap()
             .into_inner()
         {
@@ -246,7 +245,7 @@ fn format_rules() {
     let mut dem = IvfDemuxer::new(MediaLimits::default().with_max_packet_bytes(39));
     let mut cursor = SliceCursor::new(64);
     let e = loop {
-        match cursor.next(&big, &mut DemuxStage(&mut dem), &NoPulse) {
+        match cursor.next(&big, &mut DemuxStage(&mut dem), None) {
             Ok(y) if y.is_finished() => panic!("over-limit packet accepted"),
             Ok(_) => {}
             Err(e) => break e,
@@ -274,5 +273,43 @@ fn fourccs_round_trip() {
     assert!(matches!(
         m.begin(&[opus], MuxHint::default()),
         Err(SessionError::Codec(IvfError::UnsupportedCodec))
+    ));
+}
+
+#[test]
+fn optional_call_control_refuses_before_container_effects() {
+    struct TimedOut;
+    impl zencodec::how_far::Stop for TimedOut {
+        fn check(&self) -> Result<(), zencodec::how_far::StopReason> {
+            Err(zencodec::how_far::StopReason::TimedOut)
+        }
+    }
+    let pulse = zencodec::how_far::StopOnly::new(TimedOut);
+    let mut dem = IvfDemuxer::new(MediaLimits::default());
+    assert!(matches!(
+        dem.step(zencodec::decode::Input::empty(), Some(&pulse)),
+        Err(SessionError::Cancelled(
+            zencodec::how_far::StopReason::TimedOut
+        ))
+    ));
+    assert!(dem.tracks().is_empty());
+
+    let mut mux = IvfMuxer::new();
+    mux.begin(&[track(CodecId::Av1)], MuxHint::default())
+        .unwrap();
+    let before = mux.pending_output().to_vec();
+    assert!(matches!(
+        mux.write_packet(packets(1).remove(0), Some(&pulse)),
+        Err(SessionError::Cancelled(
+            zencodec::how_far::StopReason::TimedOut
+        ))
+    ));
+    assert_eq!(mux.pending_output(), before);
+    // Finish consumes its owner; a refused finish must not return publishable bytes.
+    assert!(matches!(
+        mux.finish(Some(&pulse)),
+        Err(SessionError::Cancelled(
+            zencodec::how_far::StopReason::TimedOut
+        ))
     ));
 }
