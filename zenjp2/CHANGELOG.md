@@ -23,6 +23,9 @@
 
 ### Fixed
 
+- Iterate packet lengths directly to keep inventory clean under Rust 1.100
+  strict Clippy; packet traversal order and error handling are unchanged.
+
 - The zencodec decode ignored the job's stop (only `inventory` read it). It now polls when the decoder is built, when the decode starts, and between parsing the header and decoding the codestream (hayro-jpeg2000 decodes without polling), and `capabilities().stop()` is true. `tests/pulse.rs` fails on the previous code (run 53b, cell A).
 - Keep `LimitExceeded` in the error source chain so callers can inspect the
   actual input size and configured maximum after dynamic dispatch.

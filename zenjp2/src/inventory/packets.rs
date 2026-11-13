@@ -1134,8 +1134,8 @@ fn packet<'d>(
             Some(b) => b,
             None => rd,
         };
-        for i in 0..st.lens.len() {
-            let n = u64::from(st.lens[i]);
+        for &length in &st.lens {
+            let n = u64::from(length);
             target.read_bytes(n).ok_or(Fail::Parse("packet body"))?;
         }
     }
