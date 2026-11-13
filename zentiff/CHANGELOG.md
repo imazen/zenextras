@@ -28,6 +28,11 @@ semantic versioning.
 
 ### Fixed
 
+- Default prediction admits F32 Gray/RGB/RGBA by selecting TIFF floating-point
+  prediction instead of integer horizontal differencing (issue #52). Explicit
+  unpredicted encoding and the existing GrayAlpha workaround are preserved.
+
+
 - With the `zenjpeg` feature, a stop that zenjpeg raised inside a JPEG page came back as a decode error ("JPEG chunk i: …"), so its reason was lost. It is now `Stopped(reason)`. `tests/pulse.rs::jpeg_pages::a_jpeg_page_keeps_the_reason_at_every_poll` fails on the previous code and passes now, and removing the fix's match arm makes it fail again (run 53b, cell A and mutation M3).
 - YCbCr pages decoded as RGB without conversion: every YCbCr TIFF, JPEG-in-TIFF included, had wrong colors (up to 251 levels off). They are now converted with YCbCrCoefficients and ReferenceBlackWhite (TIFF 6.0 section 21) and match libtiff within 1 level (JPEG within 4, a JPEG decoder difference). Tests: `tests/color_spaces.rs`.
 - Associated alpha (ExtraSamples 1) was labelled straight; it is now labelled premultiplied in both decode output and probe descriptors. CMYK with associated alpha is reported unsupported.

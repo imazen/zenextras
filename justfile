@@ -242,3 +242,12 @@ contract-fuzz-check:
     for member in zentiff zenpdf zensvg zenjp2 zenexr; do
         cargo check --manifest-path "$member/fuzz/Cargo.toml" --all-targets --locked
     done
+
+# Float TIFF defaults, exact sample bits and padded input rows.
+tiff-float-check:
+    cargo test --locked -p zentiff --features zencodec --test float_predictor
+
+# A fresh output directory is required; emitted files remain preserved.
+tiff-float-oracle out:
+    TIFF_FLOAT_ORACLE_OUT={{quote(out)}} cargo test --locked -p zentiff --features zencodec --test float_predictor
+    python3 zentiff/tests/float_oracle.py {{quote(out)}}

@@ -94,7 +94,7 @@ pub enum Predictor {
     /// No prediction.
     #[default]
     None,
-    /// Horizontal differencing (each sample stores the difference from the previous).
+    /// Horizontal differencing for integers; floating-point prediction for f32.
     Horizontal,
 }
 
@@ -358,14 +358,20 @@ pub mod internal_params {
 /// stride mismatch corrupts the round-trip, so horizontal prediction is force-
 /// disabled for `GrayAlpha`. The predictor is only a compression optimisation,
 /// not a correctness feature, and the Gray + `ExtraSamples` form is already
-/// half the samples of the old RGBA widening regardless. All other layouts keep
-/// the requested predictor.
+/// half the samples of the old RGBA widening regardless. For f32, the horizontal
+/// request selects TIFF's byte-shuffled floating-point predictor instead:
+/// integer horizontal differencing is invalid for IEEE floating-point samples.
+/// An explicit `None` remains unpredicted.
 fn effective_predictor(
     desc: &PixelDescriptor,
     requested: tiff::encoder::Predictor,
 ) -> tiff::encoder::Predictor {
     if desc.layout() == ChannelLayout::GrayAlpha {
         tiff::encoder::Predictor::None
+    } else if desc.channel_type() == ChannelType::F32
+        && requested == tiff::encoder::Predictor::Horizontal
+    {
+        tiff::encoder::Predictor::FloatingPoint
     } else {
         requested
     }

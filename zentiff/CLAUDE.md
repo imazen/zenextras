@@ -2,6 +2,14 @@
 
 ## Known Bugs
 
+- Fixed 2026-11-13 (issue #52): default horizontal prediction rejected F32
+  Gray/RGB/RGBA input. It now lowers to TIFF floating-point prediction;
+  explicit None and the GrayAlpha predictor workaround stay unchanged.
+  `just tiff-float-check` checks exact bits and shared metadata encoding.
+  `just tiff-float-oracle <fresh-dir>` checks independent tifffile/imagecodecs
+  recovery across layouts, compression, BigTIFF and padded rows. Native
+  row-level encoding remains unsupported; zencodecs owns its buffering fallback.
+
 - Paired core/pixels graph validation (2026-10-28): the CICP-only P3 integration
   test expected the old `DISPLAY_P3_V4` compact profile, while the current
   `icc-db` synthesizer emits the canonical CICP-tagged P3 profile. Keep exact
