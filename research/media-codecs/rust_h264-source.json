@@ -1,0 +1,132 @@
+{
+  "repository": "roticv/rust_h264",
+  "commit": "c9987ca14829e2bec68c277ff0821321870de9ee",
+  "retrieval": "GitHub connector; default-branch head verified 2026-09-28",
+  "files": [
+    {
+      "path": "Cargo.toml",
+      "git_blob_sha": "eece2221f9d7186bfb0bd0a86539d87137ec6bcf",
+      "size": 706
+    },
+    {
+      "path": "LICENSE-APACHE",
+      "git_blob_sha": "36de88abfd04b2e0be7f3bae2270dc5477a49f63",
+      "size": 10277
+    },
+    {
+      "path": "LICENSE-MIT",
+      "git_blob_sha": "bcf0f003f64eb6fc7ef72ed5a04d473be9d81177",
+      "size": 1063
+    },
+    {
+      "path": "src/bitstream.rs",
+      "git_blob_sha": "208d22e219aea0afdab2dce2a16481c4d411ad3b",
+      "size": 9279
+    },
+    {
+      "path": "src/cabac.rs",
+      "git_blob_sha": "d079b3868860d7fb7f4c94d72f7731712194e3b0",
+      "size": 37196
+    },
+    {
+      "path": "src/cabac_tables.rs",
+      "git_blob_sha": "83ffee03cd0bc12b278ca08b1ab6089c20994a51",
+      "size": 41379
+    },
+    {
+      "path": "src/cavlc.rs",
+      "git_blob_sha": "3c323c4020efb59fb7472b62fb1a86848a742da9",
+      "size": 25596
+    },
+    {
+      "path": "src/deblock.rs",
+      "git_blob_sha": "159e3c7225a9bb7604c9d03974c381732a3b9260",
+      "size": 32604
+    },
+    {
+      "path": "src/decode_cabac.rs",
+      "git_blob_sha": "ce6a0347194ab6ce1c717528650b6409338f4456",
+      "size": 195215
+    },
+    {
+      "path": "src/decode_cavlc.rs",
+      "git_blob_sha": "7d46064dad9023c1e30cd3d88833ee6f1589506f",
+      "size": 103001
+    },
+    {
+      "path": "src/decoder.rs",
+      "git_blob_sha": "235ea1f4ce518ce67c974259c4bb0de0c61e22eb",
+      "size": 103227
+    },
+    {
+      "path": "src/dpb.rs",
+      "git_blob_sha": "f50dd15af1939f44d4fd68a13e04949ff9a53626",
+      "size": 33486
+    },
+    {
+      "path": "src/error.rs",
+      "git_blob_sha": "f8f6921395a9c92ac4c584cd15d1b87e7e834ab0",
+      "size": 1990
+    },
+    {
+      "path": "src/inter_pred.rs",
+      "git_blob_sha": "47efcddbf3d1a58b3edfef1b11878730d226501d",
+      "size": 44680
+    },
+    {
+      "path": "src/intra_pred.rs",
+      "git_blob_sha": "6781b56d06af1a3ca16e6e4ec03e94edd2193521",
+      "size": 30412
+    },
+    {
+      "path": "src/lib.rs",
+      "git_blob_sha": "279133c74447ccc2c2b63dcd75c73fb58d3f391e",
+      "size": 2769
+    },
+    {
+      "path": "src/mv_pred.rs",
+      "git_blob_sha": "055a1ff56ef62b17d350bdaafc9df34476f41b4f",
+      "size": 40475
+    },
+    {
+      "path": "src/nal.rs",
+      "git_blob_sha": "eac303c1d1214785fb671eef2708a6935708e9fb",
+      "size": 16453
+    },
+    {
+      "path": "src/neighbor.rs",
+      "git_blob_sha": "abfa466ceee18fc29e857aa839a06909e9958070",
+      "size": 20467
+    },
+    {
+      "path": "src/pps.rs",
+      "git_blob_sha": "9951becc15b9d52e16fe1feb00a22f890d4eca76",
+      "size": 6005
+    },
+    {
+      "path": "src/residual.rs",
+      "git_blob_sha": "bc53315b93273508e68f370b4eb8c561433a87e2",
+      "size": 16474
+    },
+    {
+      "path": "src/sei.rs",
+      "git_blob_sha": "c9d16954bfdbfa8dcc85066bbd1b7c73d5f7b2b7",
+      "size": 3594
+    },
+    {
+      "path": "src/slice.rs",
+      "git_blob_sha": "e70b6f61f621ef32f4e8380a8b53cb4c4e3d1e4f",
+      "size": 14586
+    },
+    {
+      "path": "src/slice_context.rs",
+      "git_blob_sha": "254ff6118dcdbbf20458fa70f27c0932b3d723c9",
+      "size": 53945
+    },
+    {
+      "path": "src/sps.rs",
+      "git_blob_sha": "24aaa7a6573b002d1e9c1dd7f6da4f1c4c656e39",
+      "size": 19837
+    }
+  ]
+}

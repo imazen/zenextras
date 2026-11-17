@@ -1,0 +1,6 @@
+bytemuck v1.25.0
+once_cell v1.21.4
+rusty_h264-common v0.16.0 (/tmp/zenmedia-resume-20260928/candidates/rusty_h264/crates/rusty_h264-common)
+rusty_h264-decoder v0.16.0 (/tmp/zenmedia-resume-20260928/candidates/rusty_h264/crates/rusty_h264-decoder)
+safe_arch v0.7.4
+wide v0.7.33

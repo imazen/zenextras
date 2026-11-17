@@ -1,0 +1,16 @@
+/rust_h264/
+/ruopus/
+/results/
+/audio-results/
+/__pycache__/
+*.log
+/harness/target/
+/harness/Cargo.lock
+/audio-harness/target/
+/audio-harness/Cargo.lock
+/results-vp9/
+/results-vp8/
+/tools/vp8-dec-raw
+/results-vp8-enc/
+/zenvp8/target/
+/tools/vp8-enc-raw

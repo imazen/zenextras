@@ -1,0 +1,319 @@
+{
+  "source": "https://opus-codec.org/static/testvectors/opus_testvectors.tar.gz",
+  "tarball_sha256": "94ac78ca4f74c4e43bc9fe4ec1ad0aa36f38ab90f45b0727c40dd1e96096e767",
+  "decoder_rate": 48000,
+  "channels": 2,
+  "vectors": [
+    {
+      "vector": "testvector01",
+      "reference_samples": 2830080,
+      "bit_sha256": "00a4d34e12a2a32a",
+      "dec_sha256": "917a3b81d0ad24b0",
+      "libopus": {
+        "samples": 1415040,
+        "snr_db": 79.8,
+        "count_match": true
+      },
+      "ruopus": {
+        "samples": 1415040,
+        "snr_db": 79.8,
+        "count_match": true
+      },
+      "rusopus": {
+        "samples": 1415040,
+        "snr_db": 94.0,
+        "count_match": true
+      },
+      "opus-rs": {
+        "samples": 1138800,
+        "snr_db": -7.5,
+        "count_match": false
+      }
+    },
+    {
+      "vector": "testvector02",
+      "reference_samples": 2402880,
+      "bit_sha256": "285deaf78e6b1ebd",
+      "dec_sha256": "4ad3b7aeaea242ac",
+      "libopus": {
+        "samples": 1201440,
+        "snr_db": 300.0,
+        "count_match": true
+      },
+      "ruopus": {
+        "samples": 1201440,
+        "snr_db": 300.0,
+        "count_match": true
+      },
+      "rusopus": {
+        "samples": 1201440,
+        "snr_db": 300.0,
+        "count_match": true
+      },
+      "opus-rs": {
+        "samples": 596160,
+        "snr_db": -2.7,
+        "count_match": false
+      }
+    },
+    {
+      "vector": "testvector03",
+      "reference_samples": 2031360,
+      "bit_sha256": "811b3d28483c781e",
+      "dec_sha256": "e00f4ee27f007d84",
+      "libopus": {
+        "samples": 1015680,
+        "snr_db": 300.0,
+        "count_match": true
+      },
+      "ruopus": {
+        "samples": 1015680,
+        "snr_db": 300.0,
+        "count_match": true
+      },
+      "rusopus": {
+        "samples": 1015680,
+        "snr_db": 300.0,
+        "count_match": true
+      },
+      "opus-rs": {
+        "samples": 502560,
+        "snr_db": -26.2,
+        "count_match": false
+      }
+    },
+    {
+      "vector": "testvector04",
+      "reference_samples": 2556480,
+      "bit_sha256": "874b838699a471ac",
+      "dec_sha256": "ce7450716f491128",
+      "libopus": {
+        "samples": 1278240,
+        "snr_db": 300.0,
+        "count_match": true
+      },
+      "ruopus": {
+        "samples": 1278240,
+        "snr_db": 300.0,
+        "count_match": true
+      },
+      "rusopus": {
+        "samples": 1278240,
+        "snr_db": 300.0,
+        "count_match": true
+      },
+      "opus-rs": {
+        "samples": 635520,
+        "snr_db": -3.1,
+        "count_match": false
+      }
+    },
+    {
+      "vector": "testvector05",
+      "reference_samples": 2608320,
+      "bit_sha256": "9b13f677c61cfad9",
+      "dec_sha256": "4a0299f4c7442ce8",
+      "libopus": {
+        "samples": 1304160,
+        "snr_db": 26.4,
+        "count_match": true
+      },
+      "ruopus": {
+        "samples": 1304160,
+        "snr_db": 26.4,
+        "count_match": true
+      },
+      "rusopus": {
+        "samples": 1304160,
+        "snr_db": 26.4,
+        "count_match": true
+      },
+      "opus-rs": {
+        "samples": 651360,
+        "snr_db": -13.0,
+        "count_match": false
+      }
+    },
+    {
+      "vector": "testvector06",
+      "reference_samples": 2401920,
+      "bit_sha256": "65a7795079498422",
+      "dec_sha256": "dd5956ceb323238c",
+      "libopus": {
+        "samples": 1200960,
+        "snr_db": 20.9,
+        "count_match": true
+      },
+      "ruopus": {
+        "samples": 1200960,
+        "snr_db": 20.9,
+        "count_match": true
+      },
+      "rusopus": {
+        "samples": 1200960,
+        "snr_db": 20.9,
+        "count_match": true
+      },
+      "opus-rs": {
+        "samples": 600000,
+        "snr_db": -13.4,
+        "count_match": false
+      }
+    },
+    {
+      "vector": "testvector07",
+      "reference_samples": 2170080,
+      "bit_sha256": "ae7ae8f569807d4d",
+      "dec_sha256": "ad56058474248fcf",
+      "libopus": {
+        "samples": 1085040,
+        "snr_db": 66.3,
+        "count_match": true
+      },
+      "ruopus": {
+        "samples": 1085040,
+        "snr_db": 66.3,
+        "count_match": true
+      },
+      "rusopus": {
+        "samples": 1085040,
+        "snr_db": 81.8,
+        "count_match": true
+      },
+      "opus-rs": {
+        "samples": 538320,
+        "snr_db": -3.0,
+        "count_match": false
+      }
+    },
+    {
+      "vector": "testvector08",
+      "reference_samples": 2620320,
+      "bit_sha256": "4de258de02ccc08c",
+      "dec_sha256": "bff57a955e82c0bb",
+      "libopus": {
+        "samples": 1310160,
+        "snr_db": 66.0,
+        "count_match": true
+      },
+      "ruopus": {
+        "samples": 1310160,
+        "snr_db": 66.0,
+        "count_match": true
+      },
+      "rusopus": {
+        "samples": 1310160,
+        "snr_db": 79.1,
+        "count_match": true
+      },
+      "opus-rs": {
+        "samples": 878040,
+        "snr_db": -17.0,
+        "count_match": false
+      }
+    },
+    {
+      "vector": "testvector09",
+      "reference_samples": 2647200,
+      "bit_sha256": "91a798186cd2483e",
+      "dec_sha256": "d19317c82a716e9c",
+      "libopus": {
+        "samples": 1323600,
+        "snr_db": 66.0,
+        "count_match": true
+      },
+      "ruopus": {
+        "samples": 1323600,
+        "snr_db": 66.0,
+        "count_match": true
+      },
+      "rusopus": {
+        "samples": 1323600,
+        "snr_db": 82.2,
+        "count_match": true
+      },
+      "opus-rs": {
+        "samples": 670560,
+        "snr_db": -13.4,
+        "count_match": false
+      }
+    },
+    {
+      "vector": "testvector10",
+      "reference_samples": 3072960,
+      "bit_sha256": "7288deb8d0e9e49f",
+      "dec_sha256": "68727a2328d71315",
+      "libopus": {
+        "samples": 1536480,
+        "snr_db": 74.4,
+        "count_match": true
+      },
+      "ruopus": {
+        "samples": 1536480,
+        "snr_db": 74.4,
+        "count_match": true
+      },
+      "rusopus": {
+        "samples": 1536480,
+        "snr_db": 60.6,
+        "count_match": true
+      },
+      "opus-rs": {
+        "samples": 676920,
+        "snr_db": -15.4,
+        "count_match": false
+      }
+    },
+    {
+      "vector": "testvector11",
+      "reference_samples": 2881920,
+      "bit_sha256": "ee3cd3c6f420d803",
+      "dec_sha256": "fc31d697a1b7f5d2",
+      "libopus": {
+        "samples": 1440960,
+        "snr_db": 82.7,
+        "count_match": true
+      },
+      "ruopus": {
+        "samples": 1440960,
+        "snr_db": 82.7,
+        "count_match": true
+      },
+      "rusopus": {
+        "samples": 1440960,
+        "snr_db": 104.7,
+        "count_match": true
+      },
+      "opus-rs": {
+        "samples": 1423680,
+        "snr_db": -6.5,
+        "count_match": false
+      }
+    },
+    {
+      "vector": "testvector12",
+      "reference_samples": 2557440,
+      "bit_sha256": "48df85083178e8fc",
+      "dec_sha256": "8107b5e33122cd5e",
+      "libopus": {
+        "samples": 1278720,
+        "snr_db": 36.3,
+        "count_match": true
+      },
+      "ruopus": {
+        "samples": 1278720,
+        "snr_db": 36.3,
+        "count_match": true
+      },
+      "rusopus": {
+        "samples": 1278720,
+        "snr_db": 36.2,
+        "count_match": true
+      },
+      "opus-rs": {
+        "samples": 0,
+        "status": "no_output"
+      }
+    }
+  ]
+}

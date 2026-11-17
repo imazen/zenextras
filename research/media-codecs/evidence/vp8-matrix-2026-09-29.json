@@ -1,0 +1,775 @@
+{
+ "harness": "/home/lilith/work/zenmedia-resume-20260928/zenextras/research/media-codecs/harness/target/release/h264-harness",
+ "cases": [
+  {
+   "decoder": "zenvp8",
+   "case": "v0_qcif",
+   "derived": false,
+   "exit_code": 0,
+   "output": {
+    "decoder": "zenvp8",
+    "iteration": 0,
+    "frames": 45,
+    "width": 176,
+    "height": 144,
+    "geometry_changes": 0,
+    "bit_depth": 8,
+    "format": "yuv420p",
+    "ns": 9988561,
+    "first_ns": 479126
+   },
+   "measurements": [
+    {
+     "decoder": "zenvp8",
+     "iteration": 1,
+     "frames": 45,
+     "width": 176,
+     "height": 144,
+     "geometry_changes": 0,
+     "bit_depth": 8,
+     "format": "yuv420p",
+     "ns": 8879749,
+     "first_ns": 318347
+    },
+    {
+     "decoder": "zenvp8",
+     "iteration": 2,
+     "frames": 45,
+     "width": 176,
+     "height": 144,
+     "geometry_changes": 0,
+     "bit_depth": 8,
+     "format": "yuv420p",
+     "ns": 9176347,
+     "first_ns": 236488
+    }
+   ],
+   "reference_bytes": 1710720,
+   "actual_bytes": 1710720,
+   "reference_sha256": "cc8026c2c03ea7190233cce45ee7614744ca50175305f3d26a11b8d550b5ef1f",
+   "got_sha256": "cc8026c2c03ea7190233cce45ee7614744ca50175305f3d26a11b8d550b5ef1f",
+   "status": "exact",
+   "median_fps": 4985.811504889237,
+   "median_first_frame_ms": 0.2774175
+  },
+  {
+   "decoder": "zenvp8",
+   "case": "v0_360p",
+   "derived": false,
+   "exit_code": 0,
+   "output": {
+    "decoder": "zenvp8",
+    "iteration": 0,
+    "frames": 30,
+    "width": 640,
+    "height": 360,
+    "geometry_changes": 0,
+    "bit_depth": 8,
+    "format": "yuv420p",
+    "ns": 35015863,
+    "first_ns": 1988144
+   },
+   "measurements": [
+    {
+     "decoder": "zenvp8",
+     "iteration": 1,
+     "frames": 30,
+     "width": 640,
+     "height": 360,
+     "geometry_changes": 0,
+     "bit_depth": 8,
+     "format": "yuv420p",
+     "ns": 30153871,
+     "first_ns": 1332880
+    },
+    {
+     "decoder": "zenvp8",
+     "iteration": 2,
+     "frames": 30,
+     "width": 640,
+     "height": 360,
+     "geometry_changes": 0,
+     "bit_depth": 8,
+     "format": "yuv420p",
+     "ns": 29815034,
+     "first_ns": 980453
+    }
+   ],
+   "reference_bytes": 10368000,
+   "actual_bytes": 10368000,
+   "reference_sha256": "38005432282330994e391d05f0a131cc4ccc8c5dcf181926bbb10848d2d0f688",
+   "got_sha256": "38005432282330994e391d05f0a131cc4ccc8c5dcf181926bbb10848d2d0f688",
+   "status": "exact",
+   "median_fps": 1000.5504611863626,
+   "median_first_frame_ms": 1.1566665
+  },
+  {
+   "decoder": "zenvp8",
+   "case": "v0_g12",
+   "derived": false,
+   "exit_code": 0,
+   "output": {
+    "decoder": "zenvp8",
+    "iteration": 0,
+    "frames": 60,
+    "width": 176,
+    "height": 144,
+    "geometry_changes": 0,
+    "bit_depth": 8,
+    "format": "yuv420p",
+    "ns": 13718391,
+    "first_ns": 461896
+   },
+   "measurements": [
+    {
+     "decoder": "zenvp8",
+     "iteration": 1,
+     "frames": 60,
+     "width": 176,
+     "height": 144,
+     "geometry_changes": 0,
+     "bit_depth": 8,
+     "format": "yuv420p",
+     "ns": 11469359,
+     "first_ns": 242908
+    },
+    {
+     "decoder": "zenvp8",
+     "iteration": 2,
+     "frames": 60,
+     "width": 176,
+     "height": 144,
+     "geometry_changes": 0,
+     "bit_depth": 8,
+     "format": "yuv420p",
+     "ns": 11057542,
+     "first_ns": 268578
+    }
+   ],
+   "reference_bytes": 2280960,
+   "actual_bytes": 2280960,
+   "reference_sha256": "e763f3667fc6c54d14387f5467ef184a61deb0679ebb14c6a8bf3ed5a51dc28e",
+   "got_sha256": "e763f3667fc6c54d14387f5467ef184a61deb0679ebb14c6a8bf3ed5a51dc28e",
+   "status": "exact",
+   "median_fps": 5328.745278048584,
+   "median_first_frame_ms": 0.255743
+  },
+  {
+   "decoder": "zenvp8",
+   "case": "v0_rt",
+   "derived": false,
+   "exit_code": 0,
+   "output": {
+    "decoder": "zenvp8",
+    "iteration": 0,
+    "frames": 30,
+    "width": 176,
+    "height": 144,
+    "geometry_changes": 0,
+    "bit_depth": 8,
+    "format": "yuv420p",
+    "ns": 7405592,
+    "first_ns": 456657
+   },
+   "measurements": [
+    {
+     "decoder": "zenvp8",
+     "iteration": 1,
+     "frames": 30,
+     "width": 176,
+     "height": 144,
+     "geometry_changes": 0,
+     "bit_depth": 8,
+     "format": "yuv420p",
+     "ns": 6814426,
+     "first_ns": 245408
+    },
+    {
+     "decoder": "zenvp8",
+     "iteration": 2,
+     "frames": 30,
+     "width": 176,
+     "height": 144,
+     "geometry_changes": 0,
+     "bit_depth": 8,
+     "format": "yuv420p",
+     "ns": 6117782,
+     "first_ns": 251328
+    }
+   ],
+   "reference_bytes": 1140480,
+   "actual_bytes": 1140480,
+   "reference_sha256": "e5d0919448fdd2ad54f7c93800ef11ad78d3b5365ac20e60b2bcd0938ec6611c",
+   "got_sha256": "e5d0919448fdd2ad54f7c93800ef11ad78d3b5365ac20e60b2bcd0938ec6611c",
+   "status": "exact",
+   "median_fps": 4653.081539619157,
+   "median_first_frame_ms": 0.24836799999999998
+  },
+  {
+   "decoder": "zenvp8",
+   "case": "v1",
+   "derived": false,
+   "exit_code": 0,
+   "output": {
+    "decoder": "zenvp8",
+    "iteration": 0,
+    "frames": 30,
+    "width": 176,
+    "height": 144,
+    "geometry_changes": 0,
+    "bit_depth": 8,
+    "format": "yuv420p",
+    "ns": 4129917,
+    "first_ns": 436806
+   },
+   "measurements": [
+    {
+     "decoder": "zenvp8",
+     "iteration": 1,
+     "frames": 30,
+     "width": 176,
+     "height": 144,
+     "geometry_changes": 0,
+     "bit_depth": 8,
+     "format": "yuv420p",
+     "ns": 2954537,
+     "first_ns": 277628
+    },
+    {
+     "decoder": "zenvp8",
+     "iteration": 2,
+     "frames": 30,
+     "width": 176,
+     "height": 144,
+     "geometry_changes": 0,
+     "bit_depth": 8,
+     "format": "yuv420p",
+     "ns": 2832307,
+     "first_ns": 238878
+    }
+   ],
+   "reference_bytes": 1140480,
+   "actual_bytes": 1140480,
+   "reference_sha256": "f253be5fe34358232fca251afa111468dfeb7fbc92b13ea644facd2276d83c3a",
+   "got_sha256": "f253be5fe34358232fca251afa111468dfeb7fbc92b13ea644facd2276d83c3a",
+   "status": "exact",
+   "median_fps": 10372.973663013338,
+   "median_first_frame_ms": 0.258253
+  },
+  {
+   "decoder": "zenvp8",
+   "case": "v2",
+   "derived": false,
+   "exit_code": 0,
+   "output": {
+    "decoder": "zenvp8",
+    "iteration": 0,
+    "frames": 30,
+    "width": 176,
+    "height": 144,
+    "geometry_changes": 0,
+    "bit_depth": 8,
+    "format": "yuv420p",
+    "ns": 3510762,
+    "first_ns": 519436
+   },
+   "measurements": [
+    {
+     "decoder": "zenvp8",
+     "iteration": 1,
+     "frames": 30,
+     "width": 176,
+     "height": 144,
+     "geometry_changes": 0,
+     "bit_depth": 8,
+     "format": "yuv420p",
+     "ns": 2319462,
+     "first_ns": 262978
+    },
+    {
+     "decoder": "zenvp8",
+     "iteration": 2,
+     "frames": 30,
+     "width": 176,
+     "height": 144,
+     "geometry_changes": 0,
+     "bit_depth": 8,
+     "format": "yuv420p",
+     "ns": 2132393,
+     "first_ns": 230138
+    }
+   ],
+   "reference_bytes": 1140480,
+   "actual_bytes": 1140480,
+   "reference_sha256": "fc480d7182e58c8ed592d841c66245a9b1b759bdfd38b783459375743f7a1a54",
+   "got_sha256": "fc480d7182e58c8ed592d841c66245a9b1b759bdfd38b783459375743f7a1a54",
+   "status": "exact",
+   "median_fps": 13501.36753015782,
+   "median_first_frame_ms": 0.246558
+  },
+  {
+   "decoder": "zenvp8",
+   "case": "v3",
+   "derived": false,
+   "exit_code": 0,
+   "output": {
+    "decoder": "zenvp8",
+    "iteration": 0,
+    "frames": 30,
+    "width": 176,
+    "height": 144,
+    "geometry_changes": 0,
+    "bit_depth": 8,
+    "format": "yuv420p",
+    "ns": 3199575,
+    "first_ns": 515346
+   },
+   "measurements": [
+    {
+     "decoder": "zenvp8",
+     "iteration": 1,
+     "frames": 30,
+     "width": 176,
+     "height": 144,
+     "geometry_changes": 0,
+     "bit_depth": 8,
+     "format": "yuv420p",
+     "ns": 2060214,
+     "first_ns": 261048
+    },
+    {
+     "decoder": "zenvp8",
+     "iteration": 2,
+     "frames": 30,
+     "width": 176,
+     "height": 144,
+     "geometry_changes": 0,
+     "bit_depth": 8,
+     "format": "yuv420p",
+     "ns": 1976824,
+     "first_ns": 239108
+    }
+   ],
+   "reference_bytes": 1140480,
+   "actual_bytes": 1140480,
+   "reference_sha256": "bb68b0a5d6bbc56280c3c342dd1f53d8092fd3932b893df92471b9dd87abdf5d",
+   "got_sha256": "bb68b0a5d6bbc56280c3c342dd1f53d8092fd3932b893df92471b9dd87abdf5d",
+   "status": "exact",
+   "median_fps": 14868.725963742707,
+   "median_first_frame_ms": 0.250078
+  },
+  {
+   "decoder": "zenvp8",
+   "case": "v0_parts",
+   "derived": false,
+   "exit_code": 0,
+   "output": {
+    "decoder": "zenvp8",
+    "iteration": 0,
+    "frames": 30,
+    "width": 176,
+    "height": 144,
+    "geometry_changes": 0,
+    "bit_depth": 8,
+    "format": "yuv420p",
+    "ns": 7051144,
+    "first_ns": 450947
+   },
+   "measurements": [
+    {
+     "decoder": "zenvp8",
+     "iteration": 1,
+     "frames": 30,
+     "width": 176,
+     "height": 144,
+     "geometry_changes": 0,
+     "bit_depth": 8,
+     "format": "yuv420p",
+     "ns": 5713195,
+     "first_ns": 240268
+    },
+    {
+     "decoder": "zenvp8",
+     "iteration": 2,
+     "frames": 30,
+     "width": 176,
+     "height": 144,
+     "geometry_changes": 0,
+     "bit_depth": 8,
+     "format": "yuv420p",
+     "ns": 6178161,
+     "first_ns": 236998
+    }
+   ],
+   "reference_bytes": 1140480,
+   "actual_bytes": 1140480,
+   "reference_sha256": "90e5fe4c934f16be9b28704a77dd5d93d221d5108ead6161bf8f7ec443e387f5",
+   "got_sha256": "90e5fe4c934f16be9b28704a77dd5d93d221d5108ead6161bf8f7ec443e387f5",
+   "status": "exact",
+   "median_fps": 5053.408087655514,
+   "median_first_frame_ms": 0.23863299999999998
+  },
+  {
+   "decoder": "zenvp8",
+   "case": "v0_arf",
+   "derived": false,
+   "exit_code": 0,
+   "output": {
+    "decoder": "zenvp8",
+    "iteration": 0,
+    "frames": 90,
+    "width": 176,
+    "height": 144,
+    "geometry_changes": 0,
+    "bit_depth": 8,
+    "format": "yuv420p",
+    "ns": 19069199,
+    "first_ns": 439146
+   },
+   "measurements": [
+    {
+     "decoder": "zenvp8",
+     "iteration": 1,
+     "frames": 90,
+     "width": 176,
+     "height": 144,
+     "geometry_changes": 0,
+     "bit_depth": 8,
+     "format": "yuv420p",
+     "ns": 17530421,
+     "first_ns": 245088
+    },
+    {
+     "decoder": "zenvp8",
+     "iteration": 2,
+     "frames": 90,
+     "width": 176,
+     "height": 144,
+     "geometry_changes": 0,
+     "bit_depth": 8,
+     "format": "yuv420p",
+     "ns": 16740437,
+     "first_ns": 242828
+    }
+   ],
+   "reference_bytes": 3421440,
+   "actual_bytes": 3421440,
+   "reference_sha256": "166276bf778f3d14dd295e52fe011de38181c7582951abdec49247577010c603",
+   "got_sha256": "166276bf778f3d14dd295e52fe011de38181c7582951abdec49247577010c603",
+   "status": "exact",
+   "median_fps": 5255.068173631788,
+   "median_first_frame_ms": 0.243958
+  },
+  {
+   "decoder": "zenvp8",
+   "case": "v0_hiq",
+   "derived": false,
+   "exit_code": 0,
+   "output": {
+    "decoder": "zenvp8",
+    "iteration": 0,
+    "frames": 20,
+    "width": 176,
+    "height": 144,
+    "geometry_changes": 0,
+    "bit_depth": 8,
+    "format": "yuv420p",
+    "ns": 4784752,
+    "first_ns": 463426
+   },
+   "measurements": [
+    {
+     "decoder": "zenvp8",
+     "iteration": 1,
+     "frames": 20,
+     "width": 176,
+     "height": 144,
+     "geometry_changes": 0,
+     "bit_depth": 8,
+     "format": "yuv420p",
+     "ns": 3983408,
+     "first_ns": 273128
+    },
+    {
+     "decoder": "zenvp8",
+     "iteration": 2,
+     "frames": 20,
+     "width": 176,
+     "height": 144,
+     "geometry_changes": 0,
+     "bit_depth": 8,
+     "format": "yuv420p",
+     "ns": 3983189,
+     "first_ns": 256988
+    }
+   ],
+   "reference_bytes": 760320,
+   "actual_bytes": 760320,
+   "reference_sha256": "a21dc299abc031f37bdbe355202434b27e5aa7a4be8e963f443d5d85c2d0ea8e",
+   "got_sha256": "a21dc299abc031f37bdbe355202434b27e5aa7a4be8e963f443d5d85c2d0ea8e",
+   "status": "exact",
+   "median_fps": 5020.96441306464,
+   "median_first_frame_ms": 0.265058
+  },
+  {
+   "decoder": "zenvp8",
+   "case": "v0_loq",
+   "derived": false,
+   "exit_code": 0,
+   "output": {
+    "decoder": "zenvp8",
+    "iteration": 0,
+    "frames": 20,
+    "width": 176,
+    "height": 144,
+    "geometry_changes": 0,
+    "bit_depth": 8,
+    "format": "yuv420p",
+    "ns": 4146747,
+    "first_ns": 448226
+   },
+   "measurements": [
+    {
+     "decoder": "zenvp8",
+     "iteration": 1,
+     "frames": 20,
+     "width": 176,
+     "height": 144,
+     "geometry_changes": 0,
+     "bit_depth": 8,
+     "format": "yuv420p",
+     "ns": 3073305,
+     "first_ns": 254708
+    },
+    {
+     "decoder": "zenvp8",
+     "iteration": 2,
+     "frames": 20,
+     "width": 176,
+     "height": 144,
+     "geometry_changes": 0,
+     "bit_depth": 8,
+     "format": "yuv420p",
+     "ns": 3579042,
+     "first_ns": 300548
+    }
+   ],
+   "reference_bytes": 760320,
+   "actual_bytes": 760320,
+   "reference_sha256": "d38acdb0fbc2cdf4be15fa44e4a34a51ee446daab412f3d2c5d8461734b92757",
+   "got_sha256": "d38acdb0fbc2cdf4be15fa44e4a34a51ee446daab412f3d2c5d8461734b92757",
+   "status": "exact",
+   "median_fps": 6047.869862011275,
+   "median_first_frame_ms": 0.277628
+  },
+  {
+   "decoder": "zenvp8",
+   "case": "v0_arf2p",
+   "derived": false,
+   "exit_code": 0,
+   "output": {
+    "decoder": "zenvp8",
+    "iteration": 0,
+    "frames": 64,
+    "width": 128,
+    "height": 96,
+    "geometry_changes": 0,
+    "bit_depth": 8,
+    "format": "yuv420p",
+    "ns": 8506633,
+    "first_ns": 348408
+   },
+   "measurements": [
+    {
+     "decoder": "zenvp8",
+     "iteration": 1,
+     "frames": 64,
+     "width": 128,
+     "height": 96,
+     "geometry_changes": 0,
+     "bit_depth": 8,
+     "format": "yuv420p",
+     "ns": 7976037,
+     "first_ns": 170819
+    },
+    {
+     "decoder": "zenvp8",
+     "iteration": 2,
+     "frames": 64,
+     "width": 128,
+     "height": 96,
+     "geometry_changes": 0,
+     "bit_depth": 8,
+     "format": "yuv420p",
+     "ns": 7019414,
+     "first_ns": 168669
+    }
+   ],
+   "reference_bytes": 1179648,
+   "actual_bytes": 1179648,
+   "reference_sha256": "cea99c7d26b87ad8faf341e8f49d9573624b587affb05cd2fe2145592cf0e697",
+   "got_sha256": "cea99c7d26b87ad8faf341e8f49d9573624b587affb05cd2fe2145592cf0e697",
+   "status": "exact",
+   "median_fps": 8570.802603472832,
+   "median_first_frame_ms": 0.169744
+  },
+  {
+   "decoder": "zenvp8",
+   "case": "trunc_tail",
+   "derived": true,
+   "exit_code": 0,
+   "output": {
+    "decoder": "zenvp8",
+    "iteration": 0,
+    "frames": 27,
+    "width": 176,
+    "height": 144,
+    "geometry_changes": 0,
+    "bit_depth": 8,
+    "format": "yuv420p",
+    "ns": 6264251,
+    "first_ns": 409477
+   },
+   "measurements": [
+    {
+     "decoder": "zenvp8",
+     "iteration": 1,
+     "frames": 27,
+     "width": 176,
+     "height": 144,
+     "geometry_changes": 0,
+     "bit_depth": 8,
+     "format": "yuv420p",
+     "ns": 5069360,
+     "first_ns": 254318
+    },
+    {
+     "decoder": "zenvp8",
+     "iteration": 2,
+     "frames": 27,
+     "width": 176,
+     "height": 144,
+     "geometry_changes": 0,
+     "bit_depth": 8,
+     "format": "yuv420p",
+     "ns": 5044240,
+     "first_ns": 235208
+    }
+   ],
+   "reference_bytes": 1026432,
+   "actual_bytes": 1026432,
+   "reference_sha256": "627155ca17ee4672d67d45372f816ee1d1a81788f1f8a5ed7a4e468c6942e4a2",
+   "got_sha256": "627155ca17ee4672d67d45372f816ee1d1a81788f1f8a5ed7a4e468c6942e4a2",
+   "status": "exact",
+   "median_fps": 5339.3779799469685,
+   "median_first_frame_ms": 0.244763
+  },
+  {
+   "decoder": "zenvp8",
+   "case": "corrupt_mid",
+   "derived": true,
+   "exit_code": 0,
+   "output": {
+    "decoder": "zenvp8",
+    "iteration": 0,
+    "frames": 30,
+    "width": 640,
+    "height": 360,
+    "geometry_changes": 0,
+    "bit_depth": 8,
+    "format": "yuv420p",
+    "ns": 35091722,
+    "first_ns": 1979115
+   },
+   "measurements": [
+    {
+     "decoder": "zenvp8",
+     "iteration": 1,
+     "frames": 30,
+     "width": 640,
+     "height": 360,
+     "geometry_changes": 0,
+     "bit_depth": 8,
+     "format": "yuv420p",
+     "ns": 29105330,
+     "first_ns": 1286940
+    },
+    {
+     "decoder": "zenvp8",
+     "iteration": 2,
+     "frames": 30,
+     "width": 640,
+     "height": 360,
+     "geometry_changes": 0,
+     "bit_depth": 8,
+     "format": "yuv420p",
+     "ns": 27951788,
+     "first_ns": 804633
+    }
+   ],
+   "reference_bytes": 10368000,
+   "actual_bytes": 10368000,
+   "reference_sha256": "d797bd6c44380a3245012e02dfa72e30f8352604742449ef75c45f4cfe3cc0d4",
+   "got_sha256": "66def33222bf474d38e28cef49160f7298f8d46fe63db93a2520311152dc5863",
+   "diff_bytes": 8,
+   "status": "mismatch"
+  },
+  {
+   "decoder": "zenvp8",
+   "case": "corrupt_kf",
+   "derived": true,
+   "exit_code": 1,
+   "status": "error",
+   "stderr": "Error: \"push: MissingKeyframe\"\n"
+  },
+  {
+   "decoder": "zenvp8",
+   "case": "resize_concat",
+   "derived": true,
+   "exit_code": 0,
+   "output": {
+    "decoder": "zenvp8",
+    "iteration": 0,
+    "frames": 40,
+    "width": 640,
+    "height": 360,
+    "geometry_changes": 1,
+    "bit_depth": 8,
+    "format": "yuv420p",
+    "ns": 27723410,
+    "first_ns": 537855
+   },
+   "measurements": [
+    {
+     "decoder": "zenvp8",
+     "iteration": 1,
+     "frames": 40,
+     "width": 640,
+     "height": 360,
+     "geometry_changes": 1,
+     "bit_depth": 8,
+     "format": "yuv420p",
+     "ns": 23520174,
+     "first_ns": 247528
+    },
+    {
+     "decoder": "zenvp8",
+     "iteration": 2,
+     "frames": 40,
+     "width": 640,
+     "height": 360,
+     "geometry_changes": 1,
+     "bit_depth": 8,
+     "format": "yuv420p",
+     "ns": 22626400,
+     "first_ns": 237998
+    }
+   ],
+   "reference_bytes": 1520640,
+   "actual_bytes": 7672320,
+   "reference_sha256": "15065ee073e1e6be896b4ba348b82e07a29863de0377e40a04dc4344a23c4bef",
+   "got_sha256": "540e35118035644ee829bad1d3d3e5057ce269977ca055e1fe68f987ab24fc6c",
+   "status": "reinit_ok"
+  }
+ ]
+}

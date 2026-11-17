@@ -1,0 +1,71 @@
+{
+  "schema": 1,
+  "checked_utc": "2026-09-28",
+  "candidates": [
+    {
+      "repo": "imazen/zenextras",
+      "commit": "109a9ec367278a93751f7701f8536358e5d3f5cd",
+      "status": "source audit only; no qualification implied"
+    },
+    {
+      "repo": "OxideAV/oxideav-h264",
+      "commit": "552f9883f6dc5bbdf69441063e65e9cb27af614b",
+      "status": "source audit only; no qualification implied"
+    },
+    {
+      "repo": "Remade-With-Rust/rusty_h264",
+      "commit": "e8de4d2fe3af1a5de9acb61f1fba5272c5071a0d",
+      "status": "source audit only; no qualification implied"
+    },
+    {
+      "repo": "Djuffin/hibernia",
+      "commit": "0687cce7095998862d53b526ad2c41da43b90add",
+      "status": "source audit only; no qualification implied"
+    },
+    {
+      "repo": "roticv/rust_h264",
+      "commit": "c9987ca14829e2bec68c277ff0821321870de9ee",
+      "status": "source audit only; no qualification implied"
+    },
+    {
+      "repo": "pdeljanov/Symphonia",
+      "commit": "ee35874b571a35a9a6e15d3bc9a3aaf8f11fbeee",
+      "status": "source audit only; no qualification implied"
+    },
+    {
+      "repo": "jmg049/ruopus",
+      "commit": "23166c3c961519349c6c0fc93664c2ed1fc8cc30",
+      "status": "source audit only; no qualification implied"
+    },
+    {
+      "repo": "OxideAV/oxideav-aac",
+      "commit": "03fff0b65152f25ca4492f3f2d6d9d4ea98753a9",
+      "status": "source audit only; no qualification implied"
+    },
+    {
+      "repo": "sharifhsn/wedeo",
+      "commit": "9cacd90e03b112959a406e02d43d35eec6a0ed16",
+      "status": "source audit only; no qualification implied"
+    },
+    {
+      "repo": "restsend/opus-rs",
+      "commit": "b7bae9c42e3bcb4511a018a1f38930034dc71238",
+      "status": "source audit only; no qualification implied"
+    },
+    {
+      "repo": "TadeuszWolfGang/Rusopus",
+      "commit": "ecb22cf694314eb09384de32a9b9a68059b6ff54",
+      "status": "source audit only; no qualification implied"
+    },
+    {
+      "repo": "yotarok/flacenc-rs",
+      "commit": "f2ebcf85550ce337ceceed7ba25a1e84c034efc1",
+      "status": "source audit only; no qualification implied"
+    },
+    {
+      "repo": "HEnquist/rubato",
+      "commit": "1d1da5c1d7e90640398496489b631496829ad742",
+      "status": "source audit only; no qualification implied"
+    }
+  ]
+}
