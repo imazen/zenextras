@@ -8,6 +8,13 @@ member entries here reference those files.
 
 ### [Unreleased]
 
+- Merge `research/media-codec-qualification` (fae597bf): the media-codec
+  qualification lane lands under [`research/media-codecs/`](research/media-codecs/README.md)
+  — H.264/audio/VP8/VP9 candidate audits, probes and evidence, port briefs,
+  and `zenvp8`, a safe-Rust VP8 **video** decoder (byte-exact vs libvpx;
+  experimental encoder behind the `encoder` feature). `zenvp8` is a
+  standalone workspace under `research/`, not a member crate; it is not
+  built by workspace or CI commands.
 - TIFF typed conversion buffers and TIFF/SVG/PDF/JP2 zero-byte helpers request allocator-zeroed storage with their existing failure policies. Typed TIFF buffers require Zeroable rather than assuming Default is zero.
 
 ### Fixed
