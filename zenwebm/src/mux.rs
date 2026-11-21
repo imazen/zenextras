@@ -399,8 +399,8 @@ impl Muxer for WebmMuxer {
         Ok(MuxTiming::streaming())
     }
 
-    fn write_packet(&mut self, mut packet: Packet, pulse: &dyn zencodec::Pulse) -> Res<()> {
-        pulse.check()?;
+    fn write_packet(&mut self, mut packet: Packet, pulse: Option<&dyn zencodec::Pulse>) -> Res<()> {
+        pulse.unwrap_or(&zencodec::NoPulse).check()?;
         if !self.begun {
             return Err(SessionError::Protocol(ProtocolViolation::NoBegin));
         }
@@ -550,8 +550,8 @@ impl Muxer for WebmMuxer {
         self.out.take_into(into);
     }
 
-    fn finish(mut self, pulse: &dyn zencodec::Pulse) -> Res<MuxFinish> {
-        pulse.check()?;
+    fn finish(mut self, pulse: Option<&dyn zencodec::Pulse>) -> Res<MuxFinish> {
+        pulse.unwrap_or(&zencodec::NoPulse).check()?;
         if !self.begun {
             return Err(SessionError::Protocol(ProtocolViolation::NoBegin));
         }

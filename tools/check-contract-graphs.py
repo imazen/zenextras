@@ -12,7 +12,7 @@ import shutil
 import subprocess
 import tomllib
 
-CORE = "f02a17ec6001a9efcad1267f92a3ea928ed06e57"
+CORE = "feb09f9fd25e90e49a30d7161db8f3b558dfb2a6"
 PIXELS = "283655c5424e0ad7ebc6d2acd94670fac1e29158"
 FAMILY = {"zencodec", "zencodec-testkit", "zencodec-io", "zencodec-media",
           "zencodec-media-testkit", "zencodec-coroutine", "zenmeta"}
