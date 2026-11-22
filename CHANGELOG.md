@@ -19,6 +19,8 @@ member entries here reference those files.
 
 ### Fixed
 
+- Bound `zensvg` internal XML entity amplification and reject cyclic/lasso `href` and paint/resource `url(#id)` graphs before `usvg` parsing; see [`zensvg/CHANGELOG.md`](zensvg/CHANGELOG.md).
+- Pass `--security-opt seccomp=unconfined` in `CROSS_CONTAINER_OPTS` for the `test-i686` CI job.
 - Resolve the host TIFF corpus cache to an absolute workspace path before Cargo runs integration tests from a member directory.
 
 ### Tooling

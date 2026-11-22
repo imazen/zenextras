@@ -25,5 +25,7 @@
 
 ### Fixed
 
+- Bound internal XML entity expansion before `roxmltree` parsing across all `zensvg` entry points (`decode`, `render`, `probe`, `probe_full`, `output_info`, `inventory`, `optimize`), including quoted `"SYSTEM"`/`"PUBLIC"` external-subset checks and `max_memory_bytes` caps (#40).
+- Walk the `roxmltree::Document` `id` reference graph iteratively in O(V+E) before `usvg::Tree::from_xmltree` conversion to reject functional `href`/`xlink:href` cycles and lassos (#42) as well as length >= 1 paint, filter, clip-path, mask, marker, container, and `inherit` cycles (#41) with `SvgError`, while keeping non-cyclic `<defs>` DAG reuse and `<a href="#...">` links valid.
 - `SvgError::source` retains the underlying `LimitExceeded` cause, including
   its configured maximum and observed value.
