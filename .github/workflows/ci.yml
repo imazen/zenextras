@@ -23,7 +23,7 @@ env:
 
 jobs:
   # ==========================================================================
-  # Native testing (6-platform matrix)
+  # Native testing (5-platform matrix)
   # ==========================================================================
   test:
     name: Test (${{ matrix.name }})

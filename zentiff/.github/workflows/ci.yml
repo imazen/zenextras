@@ -26,7 +26,7 @@ env:
 
 jobs:
   # ==========================================================================
-  # Cross-platform testing (6-platform matrix)
+  # Cross-platform testing (5-platform matrix)
   # ==========================================================================
   test:
     name: Test (${{ matrix.os }})
@@ -38,7 +38,6 @@ jobs:
           - ubuntu-latest
           - ubuntu-24.04-arm
           - macos-latest
-          - macos-26-intel
           - windows-latest
           - windows-11-arm
     steps:
