@@ -81,6 +81,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       CODEC_CORPUS_CACHE: ${{ github.workspace }}/target/corpus-cache
+      CROSS_CONTAINER_OPTS: --security-opt seccomp=unconfined
     steps:
       - uses: actions/checkout@v7
 
@@ -105,7 +106,7 @@ jobs:
         run: |
           test -d "$PWD/target/corpus-cache"
           echo "CODEC_CORPUS_CACHE=/codec-corpus" >> "$GITHUB_ENV"
-          echo "CROSS_CONTAINER_OPTS=-v $PWD/target/corpus-cache:/codec-corpus" >> "$GITHUB_ENV"
+          echo "CROSS_CONTAINER_OPTS=--security-opt seccomp=unconfined -v $PWD/target/corpus-cache:/codec-corpus" >> "$GITHUB_ENV"
 
       - name: Test JPEG 2000 inventory (i686/QEMU)
         run: cross test -p zenjp2 --features inventory --target i686-unknown-linux-gnu --lib --test inventory --test inventory_review --test inventory_feature --test fuzz_regression --test shared_contracts --test sansio
