@@ -143,6 +143,22 @@ pub fn optimize(svg_data: &[u8], options: &OptimizeOptions) -> Result<Vec<u8>, S
         svg_data
     };
 
+    // Bound DTD entity amplification / loops before XML parsing (zenextras#40).
+    if let Err(err) = crate::inventory::xml::check_entity_expansion(input, None) {
+        return Err(match err {
+            crate::inventory::xml::PrecheckFailure::EntityLoopOrDepth => {
+                SvgError::Parse("entity reference loop or nesting depth limit exceeded".into())
+            }
+            crate::inventory::xml::PrecheckFailure::EntityExpansionTooLarge {
+                estimated,
+                input_budget,
+                ..
+            } => SvgError::Parse(format!(
+                "entity expansion ({estimated} bytes) exceeds limit ({input_budget} bytes)"
+            )),
+        });
+    }
+
     let optimized = optimize_xml(input, options)?;
 
     if options.svgz {

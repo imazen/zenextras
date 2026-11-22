@@ -259,17 +259,27 @@ impl<'a> zencodec::decode::DecodeJob<'a> for SvgDecodeJob {
     }
 
     fn probe(&self, data: &[u8]) -> Result<ImageInfo, At<CodecError>> {
+        self.check_input_size(data.len())?;
         if !crate::format::detect_svg(data) {
             return Err(SvgError::NotSvg.into());
         }
 
-        let (w, h) = crate::render::svg_dimensions(data, &self.config.render_options)?;
+        let (w, h) = crate::render::svg_dimensions_with_memory_limit(
+            data,
+            &self.config.render_options,
+            self.limits.max_memory_bytes,
+        )?;
         Ok(self.build_image_info(w, h))
     }
 
     fn probe_full(&self, data: &[u8]) -> Result<ImageInfo, At<CodecError>> {
+        self.check_input_size(data.len())?;
         // Full parse: validate the entire SVG tree, not just header detection.
-        let tree = crate::render::parse_svg(data, &self.config.render_options)?;
+        let tree = crate::render::parse_svg_with_memory_limit(
+            data,
+            &self.config.render_options,
+            self.limits.max_memory_bytes,
+        )?;
         let size = tree.size();
         let scale = self.config.render_options.scale;
         let w = (size.width() * scale).ceil() as u32;
@@ -302,6 +312,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for SvgDecodeJob {
             stop,
             options,
             fonts: &fonts,
+            max_memory_bytes: self.limits.max_memory_bytes,
         };
         match crate::inventory::svg_inventory(data, svg_format(), &job) {
             Ok(inv) => Ok(inv),
@@ -316,7 +327,12 @@ impl<'a> zencodec::decode::DecodeJob<'a> for SvgDecodeJob {
     }
 
     fn output_info(&self, data: &[u8]) -> Result<OutputInfo, At<CodecError>> {
-        let (w, h) = crate::render::svg_dimensions(data, &self.config.render_options)?;
+        self.check_input_size(data.len())?;
+        let (w, h) = crate::render::svg_dimensions_with_memory_limit(
+            data,
+            &self.config.render_options,
+            self.limits.max_memory_bytes,
+        )?;
         Ok(OutputInfo::full_decode(w, h, RGBA8_SRGB).with_alpha(true))
     }
 
@@ -350,6 +366,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for SvgDecodeJob {
             data,
             pulse: self.pulse,
             alloc_pref,
+            max_memory_bytes: self.limits.max_memory_bytes,
         })
     }
 
@@ -411,6 +428,7 @@ pub struct SvgDecoder<'a> {
     /// tiny-skia-owned), so this is currently a no-op carried for boundary
     /// parity; see [`crate::alloc_util`].
     alloc_pref: AllocPref,
+    max_memory_bytes: Option<u64>,
 }
 
 impl zencodec::decode::Decode for SvgDecoder<'_> {
@@ -430,9 +448,17 @@ impl zencodec::decode::Decode for SvgDecoder<'_> {
         let _ = self.alloc_pref;
 
         // `render::render`'s two steps, with a poll between parsing and drawing.
-        let tree = crate::render::parse_svg(&self.data, &self.config.render_options)?;
+        let tree = crate::render::parse_svg_with_memory_limit(
+            &self.data,
+            &self.config.render_options,
+            self.max_memory_bytes,
+        )?;
         self.pulse.check().map_err(SvgError::from)?;
-        let result = crate::render::render_tree(&tree, &self.config.render_options)?;
+        let result = crate::render::render_tree_with_memory_limit(
+            &tree,
+            &self.config.render_options,
+            self.max_memory_bytes,
+        )?;
 
         let pixels = PixelBuffer::from_vec(result.data, result.width, result.height, RGBA8_SRGB)
             .map_err(|e| SvgError::PixelBufferMismatch(format!("{e}")))?;

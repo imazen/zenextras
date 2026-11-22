@@ -566,6 +566,7 @@ mod imp {
         pub stop: &'j dyn Stop,
         pub options: &'j RenderOptions,
         pub fonts: &'j FontLookup<'j>,
+        pub max_memory_bytes: Option<u64>,
     }
 
     /// The fonts the decoder would load for `<text>` (`render::parse_svg`),
@@ -677,7 +678,10 @@ mod imp {
 
     /// Parse with roxmltree as `usvg::Tree::from_str` does, once the nesting
     /// is known to be safe.
-    fn parse_doc(d: &[u8], bound: Option<usize>) -> Result<rx::Document<'_>, String> {
+    fn parse_doc(
+        d: &[u8],
+        bound: Result<usize, xml::PrecheckFailure>,
+    ) -> Result<rx::Document<'_>, String> {
         let s = parse_prechecks(d, bound)?;
         let opt = rx::ParsingOptions {
             allow_dtd: true,
@@ -695,18 +699,30 @@ mod imp {
     }
 
     /// UTF-8 and a nesting bound roxmltree's recursion survives.
-    fn parse_prechecks(d: &[u8], bound: Option<usize>) -> Result<&str, String> {
+    fn parse_prechecks(
+        d: &[u8],
+        bound: Result<usize, xml::PrecheckFailure>,
+    ) -> Result<&str, String> {
         let s =
             std::str::from_utf8(d).map_err(|_| "not UTF-8 (usvg requires UTF-8)".to_string())?;
         match bound {
-            None => {
+            Err(xml::PrecheckFailure::EntityLoopOrDepth) => {
                 return Err(
                     "an entity reference chain loops or nests deeper than roxmltree allows \
                  (EntityReferenceLoop)"
                         .into(),
                 );
             }
-            Some(n) if n > MAX_PARSE_NESTING => {
+            Err(xml::PrecheckFailure::EntityExpansionTooLarge {
+                estimated,
+                input_budget,
+                ..
+            }) => {
+                return Err(format!(
+                    "entity expansion ({estimated} bytes) exceeds budget ({input_budget} bytes; zenextras#40)"
+                ));
+            }
+            Ok(n) if n > MAX_PARSE_NESTING => {
                 return Err(format!(
                     "elements nest {n} deep; usvg rejects nesting past {} levels in what it \
                  converts, and the decoder's parser recurses once per level (the inventory \
@@ -714,7 +730,7 @@ mod imp {
                     MAX_USVG_DEPTH + 1
                 ));
             }
-            Some(_) => {}
+            Ok(_) => {}
         }
         Ok(s)
     }
@@ -728,8 +744,8 @@ mod imp {
         nest: u32,
     ) -> Result<Walked, InvError> {
         let tree = xml::lex(d);
-        let bound = xml::nesting_bound(d, &tree);
-        let deep = bound.is_none_or(|b| b > SHALLOW);
+        let bound = xml::check_preparse_bounds(d, &tree, job.max_memory_bytes);
+        let deep = bound.map_or(true, |b| b > SHALLOW);
         let parse = rejected.is_none();
         match deep_stack(deep && parse, || {
             walk_parsed(d, &tree, bound, inv, rejected.clone(), job, nest, false)
@@ -752,7 +768,7 @@ mod imp {
     fn walk_parsed(
         d: &[u8],
         tree: &XTree,
-        bound: Option<usize>,
+        bound: Result<usize, xml::PrecheckFailure>,
         inv: &mut Inventory,
         rejected: Option<String>,
         job: &Job,
@@ -764,7 +780,7 @@ mod imp {
         // it `Unknown`, not `Dropped` (zencodec docs/inventory.md, "When a
         // work budget runs out").
         let unverified =
-            unverified || (accepted.is_ok() && bound.is_some_and(|b| b > MAX_PARSE_NESTING));
+            unverified || (accepted.is_ok() && matches!(bound, Ok(b) if b > MAX_PARSE_NESTING));
         if accepted.is_ok()
             && let Err(e) = parse_prechecks(d, bound)
         {
@@ -850,9 +866,9 @@ mod imp {
         // The decoder's own checks before drawing.
         if accepted.is_ok() {
             let gate = if nest == 0 {
-                crate::render::check_render(d, job.options)
+                crate::render::check_render(d, job.options, job.max_memory_bytes)
             } else {
-                crate::render::check_nested(d, job.options)
+                crate::render::check_nested(d, job.options, job.max_memory_bytes)
             };
             if let Err(e) = gate {
                 accepted = Err(format!("the decoder rejects it before drawing: {e}"));
@@ -2909,7 +2925,7 @@ mod imp {
     /// Whether the decoder draws from a document, without mapping it.
     fn accept_only(d: &[u8], rejected: Option<String>, job: &Job, nest: u32) -> Walked {
         let tree = xml::lex(d);
-        let bound = xml::nesting_bound(d, &tree);
+        let bound = xml::check_preparse_bounds(d, &tree, job.max_memory_bytes);
         let check = || -> Result<(), String> {
             if let Some(r) = rejected.clone() {
                 return Err(r);
@@ -2918,13 +2934,13 @@ mod imp {
             model::check_cycles_and_loops(&doc)
                 .map_err(|e| format!("the decoder rejects it before drawing: {e}"))?;
             if nest == 0 {
-                crate::render::check_render(d, job.options)
+                crate::render::check_render(d, job.options, job.max_memory_bytes)
             } else {
-                crate::render::check_nested(d, job.options)
+                crate::render::check_nested(d, job.options, job.max_memory_bytes)
             }
             .map_err(|e| format!("the decoder rejects it before drawing: {e}"))
         };
-        let deep = bound.is_none_or(|b| b > SHALLOW);
+        let deep = bound.map_or(true, |b| b > SHALLOW);
         let r = deep_stack(deep, check).unwrap_or_else(|| Err("nested too deeply to check".into()));
         Walked {
             accepted: r.is_ok(),

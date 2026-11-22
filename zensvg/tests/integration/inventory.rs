@@ -683,11 +683,18 @@ fn a_pattern_cycle_of_three_does_not_abort() {
     assert_eq!(rect.disposition(), Disposition::Dropped, "{inv}");
     assert!(detail(rect).contains("#p1 → #p2 → #p3 → #p1"), "{rect:?}");
     assert!(detail(rect).contains("zenextras#41"), "{rect:?}");
-    // A cycle of two is broken by usvg (fix_recursive_patterns) and drawn
-    // content around it is still mapped.
+    // A cycle of two is also rejected by the pre-parse O(V+E) cycle guard,
+    // so nothing in the document is consumed.
     let two = br##"<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20"><pattern id="p1" width="4" height="4" patternUnits="userSpaceOnUse"><rect width="4" height="4" fill="url(#p2)"/></pattern><pattern id="p2" width="4" height="4" patternUnits="userSpaceOnUse"><rect width="4" height="4" fill="url(#p1)"/></pattern><rect width="20" height="20" fill="url(#p1)"/><rect width="5" height="5" fill="#00f"/></svg>"##;
+    assert!(render_bytes(two).is_err());
     let inv = inventory(two);
     let blue = leaf_at(&inv, find(two, b"#00f") as u64);
+    assert_eq!(blue.disposition(), Disposition::Dropped, "{inv}");
+    // Shared non-cyclic `<defs>` DAG reuse is still accepted and drawn.
+    let dag = br##"<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20"><defs><linearGradient id="g"><stop offset="0" stop-color="#f00"/></linearGradient><pattern id="p1" width="4" height="4" patternUnits="userSpaceOnUse"><rect width="4" height="4" fill="url(#g)"/></pattern><pattern id="p2" width="4" height="4" patternUnits="userSpaceOnUse"><rect width="4" height="4" fill="url(#g)"/></pattern></defs><rect width="10" height="10" fill="url(#p1)"/><rect x="10" width="10" height="10" fill="url(#p2)"/><rect width="5" height="5" fill="#00f"/></svg>"##;
+    assert!(render_bytes(dag).is_ok());
+    let inv = inventory(dag);
+    let blue = leaf_at(&inv, find(dag, b"#00f") as u64);
     assert_eq!(blue.disposition(), Disposition::ImageData, "{inv}");
 }
 
@@ -744,11 +751,12 @@ fn an_href_chain_looping_past_its_origin_does_not_hang() {
         assert!(detail(rect).contains(chain), "{name}: {rect:?}");
         assert!(detail(rect).contains("zenextras#42"), "{name}: {rect:?}");
     }
-    // A single-stop gradient is a solid colour: usvg resolves nothing else
-    // through the chain, finishes and draws it.
+    // Any href cycle — including a 1-stop gradient lasso and a 2-cycle
+    // returning to its origin — is rejected by the pre-parse O(V+E) check.
     let solid = wrap(
         r##"<linearGradient id="g1" href="#g2"/><linearGradient id="g2" href="#g3"/><linearGradient id="g3" href="#g2"><stop offset="0" stop-color="#00f"/></linearGradient><rect width="20" height="20" fill="url(#g1)"/>"##,
     );
+    assert!(render_bytes(&solid).is_err());
     let inv = within(20, {
         let d = solid.clone();
         move || inventory(&d)
@@ -757,16 +765,33 @@ fn an_href_chain_looping_past_its_origin_does_not_hang() {
         &inv,
         find(&solid, br#"<rect width="20" height="20""#) as u64,
     );
-    assert_eq!(rect.disposition(), Disposition::ImageData, "{inv}");
-    // A chain that ends, or loops back to its origin, is drawn as before.
-    let fine = wrap(
+    assert_eq!(rect.disposition(), Disposition::Dropped, "{inv}");
+    let cycle_two = wrap(
         r##"<pattern id="q1" width="4" height="4" patternUnits="userSpaceOnUse" href="#q2"/><pattern id="q2" width="4" height="4" patternUnits="userSpaceOnUse" href="#q1"><rect width="4" height="4" fill="#00f"/></pattern><rect width="20" height="20" fill="url(#q1)"/>"##,
     );
+    assert!(render_bytes(&cycle_two).is_err());
     let inv = within(20, {
-        let d = fine.clone();
+        let d = cycle_two.clone();
         move || inventory(&d)
     });
-    let rect = leaf_at(&inv, find(&fine, br#"<rect width="20" height="20""#) as u64);
+    let rect = leaf_at(
+        &inv,
+        find(&cycle_two, br#"<rect width="20" height="20""#) as u64,
+    );
+    assert_eq!(rect.disposition(), Disposition::Dropped, "{inv}");
+    // A non-cyclic href inheritance chain that ends cleanly is drawn as before.
+    let acyclic = wrap(
+        r##"<pattern id="q1" width="4" height="4" patternUnits="userSpaceOnUse" href="#q2"/><pattern id="q2" width="4" height="4" patternUnits="userSpaceOnUse"><rect width="4" height="4" fill="#00f"/></pattern><rect width="20" height="20" fill="url(#q1)"/>"##,
+    );
+    assert!(render_bytes(&acyclic).is_ok());
+    let inv = within(20, {
+        let d = acyclic.clone();
+        move || inventory(&d)
+    });
+    let rect = leaf_at(
+        &inv,
+        find(&acyclic, br#"<rect width="20" height="20""#) as u64,
+    );
     assert_eq!(rect.disposition(), Disposition::ImageData, "{inv}");
 }
 

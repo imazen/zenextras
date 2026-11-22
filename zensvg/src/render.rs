@@ -83,9 +83,17 @@ const MAX_SVGZ_DECOMPRESSED_BYTES: u64 = crate::inventory::MAX_INNER as u64;
 
 /// Parse an SVG from bytes, returning the usvg tree and the font database used.
 pub fn parse_svg(data: &[u8], options: &RenderOptions) -> Result<usvg::Tree, SvgError> {
+    parse_svg_with_memory_limit(data, options, None)
+}
+
+pub(crate) fn parse_svg_with_memory_limit(
+    data: &[u8],
+    options: &RenderOptions,
+    max_memory_bytes: Option<u64>,
+) -> Result<usvg::Tree, SvgError> {
     let mut usvg_options = usvg::Options {
         dpi: options.dpi,
-        image_href_resolver: safe_image_href_resolver(),
+        image_href_resolver: safe_image_href_resolver(max_memory_bytes, 0),
         ..usvg::Options::default()
     };
 
@@ -98,13 +106,17 @@ pub fn parse_svg(data: &[u8], options: &RenderOptions) -> Result<usvg::Tree, Svg
         .expect("fontdb Arc should be uniquely owned at this point");
     load_fonts(fontdb, options);
 
-    parse_tree_safe(data, &usvg_options)
+    parse_tree_safe(data, &usvg_options, max_memory_bytes)
 }
 
 /// Decompress (if SVGZ, capped at [`MAX_SVGZ_DECOMPRESSED_BYTES`]) and
 /// validate XML nesting, DTD entity expansion, resource cycles, and `href`
 /// chains before running `usvg::Tree::from_xmltree`.
-fn parse_tree_safe(data: &[u8], usvg_options: &usvg::Options) -> Result<usvg::Tree, SvgError> {
+fn parse_tree_safe(
+    data: &[u8],
+    usvg_options: &usvg::Options,
+    max_memory_bytes: Option<u64>,
+) -> Result<usvg::Tree, SvgError> {
     let xml_bytes: std::borrow::Cow<'_, [u8]> = if data.starts_with(&[0x1f, 0x8b]) {
         use std::io::Read as _;
         let mut decoder = flate2::read::GzDecoder::new(data).take(MAX_SVGZ_DECOMPRESSED_BYTES + 1);
@@ -123,13 +135,47 @@ fn parse_tree_safe(data: &[u8], usvg_options: &usvg::Options) -> Result<usvg::Tr
         std::borrow::Cow::Borrowed(data)
     };
 
-    let text = std::str::from_utf8(&xml_bytes).map_err(|_| SvgError::NotSvg)?;
-    let tree = crate::inventory::xml::lex(&xml_bytes);
-    let Some(bound) = crate::inventory::xml::nesting_bound(&xml_bytes, &tree) else {
-        return Err(SvgError::Parse(
-            "entity reference loop, nesting depth, or expansion size limit exceeded".into(),
-        ));
-    };
+    parse_xml_bytes(&xml_bytes, usvg_options, max_memory_bytes)
+}
+
+/// Validate UTF-8, XML nesting, internal entity expansion budget, and
+/// resource/`href` cycles in O(V+E) before calling `usvg::Tree::from_xmltree`.
+fn parse_xml_bytes(
+    xml_bytes: &[u8],
+    usvg_options: &usvg::Options,
+    max_memory_bytes: Option<u64>,
+) -> Result<usvg::Tree, SvgError> {
+    use crate::inventory::xml::PrecheckFailure;
+
+    let text = std::str::from_utf8(xml_bytes).map_err(|_| SvgError::NotSvg)?;
+    let tree = crate::inventory::xml::lex(xml_bytes);
+    let bound =
+        match crate::inventory::xml::check_preparse_bounds(xml_bytes, &tree, max_memory_bytes) {
+            Ok(b) => b,
+            Err(PrecheckFailure::EntityLoopOrDepth) => {
+                return Err(SvgError::Parse(
+                    "entity reference loop or nesting depth limit exceeded".into(),
+                ));
+            }
+            Err(PrecheckFailure::EntityExpansionTooLarge {
+                estimated,
+                input_budget,
+                max_memory_bytes,
+            }) => {
+                if estimated <= input_budget
+                    && let Some(max_mem) = max_memory_bytes
+                {
+                    return Err(zencodec::LimitExceeded::Memory {
+                        actual: estimated,
+                        max: max_mem,
+                    }
+                    .into());
+                }
+                return Err(SvgError::Parse(format!(
+                    "entity expansion ({estimated} bytes) exceeds limit ({input_budget} bytes)"
+                )));
+            }
+        };
     if bound > crate::inventory::MAX_PARSE_NESTING {
         return Err(SvgError::TooManyElements);
     }
@@ -143,7 +189,7 @@ fn parse_tree_safe(data: &[u8], usvg_options: &usvg::Options) -> Result<usvg::Tr
             };
             let doc = usvg::roxmltree::Document::parse_with_options(text, xml_opt)
                 .map_err(usvg::Error::ParsingFailed)?;
-            crate::inventory::model::check_cycles_and_loops(&doc)?;
+            crate::graph_guard::validate_acyclic(&doc)?;
             usvg::Tree::from_xmltree(&doc, usvg_options).map_err(SvgError::from)
         })
     })
@@ -162,11 +208,18 @@ fn has_raster_magic(data: &[u8]) -> bool {
 /// Build an [`usvg::ImageHrefResolver`] that disables local file loading
 /// (zenextras#31) and routes nested `data:image/svg+xml` payloads through
 /// [`parse_tree_safe`].
-fn safe_image_href_resolver() -> usvg::ImageHrefResolver<'static> {
+fn safe_image_href_resolver(
+    max_memory_bytes: Option<u64>,
+    depth: usize,
+) -> usvg::ImageHrefResolver<'static> {
+    const MAX_NESTED_DATA_SVG: usize = 32;
     let default_data = usvg::ImageHrefResolver::default_data_resolver();
     usvg::ImageHrefResolver {
         resolve_data: Box::new(move |mime, data, opts| {
             if mime == "image/svg+xml" || (mime == "text/plain" && !has_raster_magic(&data)) {
+                if depth >= MAX_NESTED_DATA_SVG {
+                    return None;
+                }
                 let nested_opt = usvg::Options {
                     resources_dir: None,
                     dpi: opts.dpi,
@@ -176,12 +229,7 @@ fn safe_image_href_resolver() -> usvg::ImageHrefResolver<'static> {
                     text_rendering: opts.text_rendering,
                     image_rendering: opts.image_rendering,
                     default_size: opts.default_size,
-                    image_href_resolver: usvg::ImageHrefResolver {
-                        resolve_data: Box::new(|a, b, c| {
-                            (opts.image_href_resolver.resolve_data)(a, b, c)
-                        }),
-                        resolve_string: Box::new(|_, _| None),
-                    },
+                    image_href_resolver: safe_image_href_resolver(max_memory_bytes, depth + 1),
                     #[cfg(feature = "text")]
                     fontdb: opts.fontdb.clone(),
                     #[cfg(feature = "text")]
@@ -195,7 +243,7 @@ fn safe_image_href_resolver() -> usvg::ImageHrefResolver<'static> {
                     },
                     ..usvg::Options::default()
                 };
-                return parse_tree_safe(&data, &nested_opt)
+                return parse_tree_safe(&data, &nested_opt, max_memory_bytes)
                     .ok()
                     .map(usvg::ImageKind::SVG);
             }
@@ -265,7 +313,15 @@ fn guard_panic<T>(f: impl FnOnce() -> Result<T, SvgError>) -> Result<T, SvgError
 
 /// Query the intrinsic dimensions of an SVG without rendering.
 pub fn svg_dimensions(data: &[u8], options: &RenderOptions) -> Result<(u32, u32), SvgError> {
-    let tree = parse_svg(data, options)?;
+    svg_dimensions_with_memory_limit(data, options, None)
+}
+
+pub(crate) fn svg_dimensions_with_memory_limit(
+    data: &[u8],
+    options: &RenderOptions,
+    max_memory_bytes: Option<u64>,
+) -> Result<(u32, u32), SvgError> {
+    let tree = parse_svg_with_memory_limit(data, options, max_memory_bytes)?;
     let size = tree.size();
     let w = (size.width() * options.scale).ceil() as u32;
     let h = (size.height() * options.scale).ceil() as u32;
@@ -287,7 +343,15 @@ pub fn render(data: &[u8], options: &RenderOptions) -> Result<RenderOutput, SvgE
 
 /// Render a pre-parsed usvg tree to RGBA8 pixels with straight alpha.
 pub fn render_tree(tree: &usvg::Tree, options: &RenderOptions) -> Result<RenderOutput, SvgError> {
-    let (out_w, out_h, transform) = output_plan(tree, options)?;
+    render_tree_with_memory_limit(tree, options, None)
+}
+
+pub(crate) fn render_tree_with_memory_limit(
+    tree: &usvg::Tree,
+    options: &RenderOptions,
+    max_memory_bytes: Option<u64>,
+) -> Result<RenderOutput, SvgError> {
+    let (out_w, out_h, transform) = output_plan(tree, options, max_memory_bytes)?;
 
     // Create pixmap
     let mut pixmap = Pixmap::new(out_w, out_h).ok_or(SvgError::AllocationFailed {
@@ -324,6 +388,7 @@ pub fn render_tree(tree: &usvg::Tree, options: &RenderOptions) -> Result<RenderO
 fn output_plan(
     tree: &usvg::Tree,
     options: &RenderOptions,
+    max_memory_bytes: Option<u64>,
 ) -> Result<(u32, u32, Transform), SvgError> {
     let svg_size = tree.size();
     let svg_w = svg_size.width();
@@ -343,7 +408,7 @@ fn output_plan(
     let (out_w, out_h, transform) = compute_output(svg_w, svg_h, options)?;
 
     // Check resource limits
-    check_limits(out_w, out_h, options)?;
+    check_limits(out_w, out_h, options, max_memory_bytes)?;
     Ok((out_w, out_h, transform))
 }
 
@@ -354,7 +419,11 @@ fn output_plan(
 /// them reads files (the structural inventory asks whether the document is
 /// drawn). `data` is an uncompressed document.
 #[cfg(feature = "inventory")]
-pub(crate) fn check_render(data: &[u8], options: &RenderOptions) -> Result<(), SvgError> {
+pub(crate) fn check_render(
+    data: &[u8],
+    options: &RenderOptions,
+    max_memory_bytes: Option<u64>,
+) -> Result<(), SvgError> {
     let usvg_options = usvg::Options {
         dpi: options.dpi,
         image_href_resolver: usvg::ImageHrefResolver {
@@ -363,8 +432,8 @@ pub(crate) fn check_render(data: &[u8], options: &RenderOptions) -> Result<(), S
         },
         ..usvg::Options::default()
     };
-    let tree = guard_panic(|| usvg::Tree::from_data(data, &usvg_options).map_err(SvgError::from))?;
-    output_plan(&tree, options).map(|_| ())
+    let tree = parse_xml_bytes(data, &usvg_options, max_memory_bytes)?;
+    output_plan(&tree, options, max_memory_bytes).map(|_| ())
 }
 
 /// Whether usvg parses an SVG embedded in an `<image>` `data:` URI
@@ -372,7 +441,11 @@ pub(crate) fn check_render(data: &[u8], options: &RenderOptions) -> Result<(), S
 /// `Tree::from_data_nested`): the nested tree resolves no files. Nested
 /// images and fonts are not loaded; neither changes whether it parses.
 #[cfg(feature = "inventory")]
-pub(crate) fn check_nested(data: &[u8], options: &RenderOptions) -> Result<(), SvgError> {
+pub(crate) fn check_nested(
+    data: &[u8],
+    options: &RenderOptions,
+    max_memory_bytes: Option<u64>,
+) -> Result<(), SvgError> {
     let usvg_options = usvg::Options {
         dpi: options.dpi,
         image_href_resolver: usvg::ImageHrefResolver {
@@ -381,7 +454,7 @@ pub(crate) fn check_nested(data: &[u8], options: &RenderOptions) -> Result<(), S
         },
         ..usvg::Options::default()
     };
-    guard_panic(|| usvg::Tree::from_data(data, &usvg_options).map_err(SvgError::from)).map(|_| ())
+    parse_xml_bytes(data, &usvg_options, max_memory_bytes).map(|_| ())
 }
 
 /// Compute output dimensions and transform from SVG size + render options.
@@ -451,7 +524,12 @@ fn compute_output(
     }
 }
 
-fn check_limits(w: u32, h: u32, options: &RenderOptions) -> Result<(), SvgError> {
+fn check_limits(
+    w: u32,
+    h: u32,
+    options: &RenderOptions,
+    max_memory_bytes: Option<u64>,
+) -> Result<(), SvgError> {
     if let Some(max) = options.max_width {
         if w > max {
             return Err(zencodec::LimitExceeded::Width { actual: w, max }.into());
@@ -466,6 +544,12 @@ fn check_limits(w: u32, h: u32, options: &RenderOptions) -> Result<(), SvgError>
         let actual = w as u64 * h as u64;
         if actual > max {
             return Err(zencodec::LimitExceeded::Pixels { actual, max }.into());
+        }
+    }
+    if let Some(max) = max_memory_bytes {
+        let actual = (w as u64).saturating_mul(h as u64).saturating_mul(4);
+        if actual > max {
+            return Err(zencodec::LimitExceeded::Memory { actual, max }.into());
         }
     }
     Ok(())

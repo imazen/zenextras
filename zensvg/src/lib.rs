@@ -10,6 +10,7 @@ mod alloc_util;
 
 pub mod error;
 pub mod format;
+mod graph_guard;
 mod inventory;
 pub mod render;
 

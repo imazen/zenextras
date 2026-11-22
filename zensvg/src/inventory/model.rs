@@ -2215,7 +2215,7 @@ struct St {
 }
 
 /// `XmlNode`: simplecss matching on roxmltree, as `svgtree/parse.rs` does.
-struct XmlNode<'a, 'i>(rx::Node<'a, 'i>);
+pub(crate) struct XmlNode<'a, 'i>(pub(crate) rx::Node<'a, 'i>);
 
 impl simplecss::Element for XmlNode<'_, '_> {
     fn parent_element(&self) -> Option<Self> {

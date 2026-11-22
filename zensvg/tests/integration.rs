@@ -11,6 +11,9 @@
 //! suite as `tests/integration/<name>.rs` plus a `#[path] mod <name>;` line
 //! here. Run one suite with e.g. `cargo test --test integration truncation_series::`.
 
+#[path = "integration/dos_guards.rs"]
+mod dos_guards;
+
 #[path = "integration/truncation_series.rs"]
 mod truncation_series;
 
