@@ -1,8 +1,11 @@
 # Shared contract dependency graph
 
 The workspace and standalone fuzz manifests use registry requirements for the
-shared interfaces. Their root patches select zencodec `f02a17ec` (the verified
-main merge) and the paired zenpixels/zenpixels-convert `283655c5`. TIFF, IVF and
+shared interfaces. Their optional-control root patches select zencodec `feb09f9f` and the paired
+zenpixels/zenpixels-convert `283655c5`. Native JPEG is `e0bb92b4`, with the
+version-edge Ultra HDR `7e9d296c`. These new manifests and the unchanged old
+locks still need resolution and qualification. The measured results below refer
+to the preceding `f02a17ec` graph, not these source changes. TIFF, IVF and
 WebM no longer carry direct git edges to a different zencodec family.
 
 A downstream application must provide its own patches while these versions are
@@ -36,3 +39,18 @@ unchanged public API snapshots pass on the
 paired graph. [Qualification receipt](../benchmarks/shared_contract_graph_2026-10-28.json)
 records exact source identities, counts and all initial failures. These are local
 validation results; platform CI follows the push.
+
+
+## Optional call controls (source follow-up)
+
+The IVF and WebM demux/mux boundaries now accept `Option<&dyn Pulse>`.
+`None` disables only the extra call control; packet validation and container
+limits still run. These containers have no retained job Pulse. Local checks
+resolve absence to `NoPulse`; no artificial control is forwarded to another
+owner. Existing byte, timing and seek controls use `None` without changed
+assertions. The isolated core-path bridge passed 27 IVF/WebM controls, including timeout
+before effects. Portable paired-graph resolution, builds and native tests remain
+unrun for this follow-up; the old locks are intentionally retained.
+
+The earlier container PR 53 is superseded: its source, tests and examples were
+already present byte-for-byte on main `a5e79261` when this follow-up started.
