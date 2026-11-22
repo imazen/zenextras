@@ -8,6 +8,8 @@ member entries here reference those files.
 
 ### [Unreleased]
 
+- Bump `enough` to `0.4.5`, `zenbench` to `0.1.11`, and `zenutils-apidoc` to `0.1.1` across workspace members, standalone fuzz crates, `apidoc`, and `tools/exr-decode-bench`; refresh root and fuzz `Cargo.lock` files while preserving the shared `zencodec`/`zenpixels`/`ultrahdr-core` contract pins.
+- Remove `macos-26-intel` from inert member workflow matrices (`zenpdf/.github/workflows/ci.yml`, `zentiff/.github/workflows/ci.yml`) and align matrix platform count comments.
 - Merge `research/media-codec-qualification` (fae597bf): the media-codec
   qualification lane lands under [`research/media-codecs/`](research/media-codecs/README.md)
   — H.264/audio/VP8/VP9 candidate audits, probes and evidence, port briefs,

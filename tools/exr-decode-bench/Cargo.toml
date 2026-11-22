@@ -14,7 +14,7 @@ description = "Decode-speed comparison of EXR lossy compressions: zenexr / exr v
 [dependencies]
 zenexr = { path = "../../zenexr" }
 exr = "1.74.2"
-enough = "0.4.4"
+enough = "0.4.5"
 rayon = "1.12.0"
 
 [lints.rust]

@@ -28,8 +28,8 @@ flate2 = { version = "1.1.10", default-features = false, features = ["zlib-rs"],
 zenpixels = { version = ">=0.2.10, <0.4.0", default-features = false, features = ["rgb", "std"] }
 
 [dev-dependencies]
-zenbench = "0.1.10"
-enough = "0.4.4"
+zenbench = "0.1.11"
+enough = "0.4.5"
 # zencodec conformance harness carrying the truncation-series check.
 zencodec-testkit = ">=0.2.0, <0.4.0"
 

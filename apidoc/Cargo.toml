@@ -9,7 +9,7 @@ edition = "2024"
 publish = false
 
 [dependencies]
-zenutils-apidoc = "0.1.0"
+zenutils-apidoc = "0.1.1"
 
 # Self-contained: keeps this runner out of the enclosing zenextras workspace
 # (which would otherwise try to build it on every `--workspace` command).

@@ -18,7 +18,7 @@ hayro-jpeg2000 = { version = "0.4.1", default-features = false, features = ["std
 zencodec = { optional = true, version = ">=0.2.0, <0.4.0" }
 zenpixels = { version = ">=0.2.10, <0.4.0", default-features = false }
 whereat = { version = "0.1.5", default-features = false }
-enough = { version = "0.4.4", default-features = false }
+enough = { version = "0.4.5", default-features = false }
 thiserror = { version = "2.0.21", default-features = false }
 
 [features]
@@ -28,7 +28,7 @@ zencodec = ["dep:zencodec"]
 inventory = ["zencodec"]
 
 [dev-dependencies]
-zenbench = "0.1.10"
+zenbench = "0.1.11"
 codec-corpus = "1.1.0"
 # zencodec conformance harness. Provides check_decode_truncation_series /
 # check_decode_error_envelope (EOF/truncation + envelope-survives-erasure

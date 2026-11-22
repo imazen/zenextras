@@ -26,7 +26,7 @@ tiny-skia = "0.12.0"
 # zencodec integration
 zencodec = ">=0.2.0, <0.4.0"
 zenpixels = ">=0.2.10, <0.4.0"
-enough = "0.4.4"
+enough = "0.4.5"
 whereat = "0.1.5"
 
 # Shared by pre-parse validation and the structural inventory.
@@ -49,7 +49,7 @@ optimize = ["dep:quick-xml"]
 inventory = ["dep:data-url", "dep:imagesize"]
 
 [dev-dependencies]
-zenbench = "0.1.10"
+zenbench = "0.1.11"
 # zencodec conformance harness. Provides check_decode_truncation_series
 # (EOF/truncation).
 zencodec-testkit = ">=0.2.0, <0.4.0"
