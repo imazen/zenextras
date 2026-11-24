@@ -1190,7 +1190,7 @@ pub(crate) const fn pixel_spec(order: ChannelOrder, sample: SampleType) -> Image
     ImageSpec::new(SampleLayout::new(sample, order), color)
 }
 
-fn descriptor_for(ct: tiff::ColorType, is_float: bool) -> ImageSpec {
+pub(crate) fn descriptor_for(ct: tiff::ColorType, is_float: bool) -> ImageSpec {
     use tiff::ColorType;
     let order = match ct {
         ColorType::Gray(_) | ColorType::Multiband { num_samples: 1, .. } => ChannelOrder::Gray,

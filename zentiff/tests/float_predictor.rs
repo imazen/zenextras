@@ -81,12 +81,13 @@ fn default_float_prediction_preserves_samples_and_stride() {
 
 #[cfg(feature = "zencodec")]
 #[test]
+#[expect(deprecated, reason = "exercise TIFF best-effort metadata retention")]
 fn float_shared_job_with_metadata_preserves_samples() {
     use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
     use zencodec::{Metadata, MetadataPolicy};
-    use zenpixels_legacy::{PixelDescriptor, PixelSlice};
+    use zenpixels::{ImageSpec, PixelView};
     use zentiff::codec::TiffEncoderCodecConfig;
-    let desc = PixelDescriptor::RGBF32_LINEAR;
+    let desc = ImageSpec::rgbf32_linear();
     let (input, expected, stride) = fixture(3, true);
     let config = TiffEncoderCodecConfig::new();
     let one = config
@@ -94,7 +95,7 @@ fn float_shared_job_with_metadata_preserves_samples() {
         .job()
         .encoder()
         .unwrap()
-        .encode(PixelSlice::new(&input, 3, 2, stride, desc).unwrap())
+        .encode(PixelView::new(&input, 3, 2, stride, desc.clone()).unwrap())
         .unwrap();
     let metadata = Metadata::none().with_xmp(b"<xmp>float predictor</xmp>".as_slice());
     let tagged = config
@@ -102,7 +103,7 @@ fn float_shared_job_with_metadata_preserves_samples() {
         .with_metadata_policy(metadata, MetadataPolicy::PreserveExact)
         .encoder()
         .unwrap()
-        .encode(PixelSlice::new(&input, 3, 2, stride, desc).unwrap())
+        .encode(PixelView::new(&input, 3, 2, stride, desc).unwrap())
         .unwrap();
     for bytes in [one.data(), tagged.data()] {
         let decoded = decode(bytes, &TiffDecodeConfig::default(), &Unstoppable).unwrap();

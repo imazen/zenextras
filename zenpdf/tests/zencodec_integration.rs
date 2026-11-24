@@ -137,7 +137,7 @@ fn limits_accept_within_bounds() {
 #[test]
 fn push_decoder() {
     use zencodec::decode::{DecodeRowSink, SinkError};
-    use zenpixels_legacy::{PixelDescriptor, PixelSliceMut};
+    use zenpixels::{ImageSpec, PixelViewMut};
 
     struct CollectSink {
         data: Vec<u8>,
@@ -150,7 +150,7 @@ fn push_decoder() {
             &mut self,
             width: u32,
             height: u32,
-            _descriptor: PixelDescriptor,
+            _descriptor: ImageSpec,
         ) -> Result<(), SinkError> {
             self.width = width;
             self.height = height;
@@ -164,14 +164,14 @@ fn push_decoder() {
             y: u32,
             height: u32,
             width: u32,
-            descriptor: PixelDescriptor,
-        ) -> Result<PixelSliceMut<'_>, SinkError> {
+            descriptor: ImageSpec,
+        ) -> Result<PixelViewMut<'_>, SinkError> {
             let bpp = 4usize;
             let stride = width as usize * bpp;
             let start = y as usize * stride;
             let end = start + height as usize * stride;
             let slice = &mut self.data[start..end];
-            PixelSliceMut::new(slice, width, height, stride, descriptor)
+            PixelViewMut::new(slice, width, height, stride, descriptor)
                 .map_err(|e| -> SinkError { e.to_string().into() })
         }
     }
@@ -219,7 +219,7 @@ fn render_bytes_under(pref: zencodec::AllocPreference) -> Vec<u8> {
         .expect("decoder construction succeeds")
         .decode()
         .expect("render succeeds");
-    out.pixels().contiguous_bytes().into_owned()
+    out.pixels().try_contiguous_bytes().unwrap().into_owned()
 }
 
 /// Rendering the same PDF page under all three allocation modes must produce
@@ -239,8 +239,8 @@ fn alloc_pref_modes_render_byte_identical() {
 #[test]
 fn estimate_decode_resources_scales_with_output() {
     use zencodec::estimate::{ComputeEnvironment, ImageCharacteristics, ThreadingInformation};
-    use zenpixels_legacy::PixelDescriptor;
-    let img = ImageCharacteristics::new(595, 841, PixelDescriptor::RGBA8_SRGB);
+    use zenpixels::ImageSpec;
+    let img = ImageCharacteristics::new(595, 841, ImageSpec::rgba8_srgb());
     let env = ComputeEnvironment::conservative().with_cores(8);
     let est = PdfDecoderConfig::new().estimate_decode_resources(&img, &env);
     let output = 595u64 * 841 * 4;

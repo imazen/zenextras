@@ -46,7 +46,7 @@ fn render_with(cfg: SvgDecoderConfig, d: &[u8]) -> Result<Vec<u8>, String> {
     cfg.job()
         .decoder(Cow::Borrowed(d), &[])
         .and_then(|x| x.decode())
-        .map(|o| o.pixels().contiguous_bytes().into_owned())
+        .map(|o| o.pixels().try_contiguous_bytes().unwrap().into_owned())
         .map_err(|e| format!("{e}"))
 }
 

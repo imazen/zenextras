@@ -14,10 +14,7 @@ use zencodec::decode::{
     DecoderConfig, OutputInfo,
 };
 use zencodec::{CodecError, ImageFormat, ImageInfo, ResourceLimits, SharedPulse, Unsupported};
-use zenpixels::{ChannelOrder, ImageSpec, SampleType};
-use zenpixels_legacy::{
-    ChannelLayout, ChannelType, PixelBuffer, PixelDescriptor, TransferFunction,
-};
+use zenpixels::ImageSpec;
 
 use crate::alloc_util::AllocPref;
 use crate::error::PsdError;
@@ -34,18 +31,29 @@ fn alloc_pref_from_zencodec(pref: zencodec::AllocPreference) -> AllocPref {
     }
 }
 
-static DECODE_DESCRIPTORS: &[PixelDescriptor] = &[
-    PixelDescriptor::RGB8_SRGB,
-    PixelDescriptor::RGBA8_SRGB,
-    PixelDescriptor::GRAY8_SRGB,
-    PixelDescriptor::GRAYA8_SRGB,
-    PixelDescriptor::RGB16_SRGB,
-    PixelDescriptor::RGBA16_SRGB,
-    PixelDescriptor::GRAY16_SRGB,
-    PixelDescriptor::GRAYA16_SRGB,
-    PixelDescriptor::RGBF32_LINEAR,
-    PixelDescriptor::RGBAF32_LINEAR,
-    PixelDescriptor::GRAYF32_LINEAR,
+static DECODE_DESCRIPTORS: &[ImageSpec] = &[
+    ImageSpec::rgb8_srgb(),
+    ImageSpec::rgba8_srgb(),
+    ImageSpec::gray8_srgb(),
+    ImageSpec::graya8_srgb(),
+    ImageSpec::rgb16_srgb(),
+    ImageSpec::rgba16_srgb(),
+    ImageSpec::gray16_srgb(),
+    zenpixels::ImageSpec::new(
+        zenpixels::SampleLayout::new(
+            zenpixels::SampleType::U16,
+            zenpixels::ChannelOrder::GrayAlpha,
+        ),
+        zenpixels::ColorSpace::Gray {
+            transfer: zenpixels::Transfer::Srgb,
+            range: zenpixels::SignalRange::Full,
+            alpha: zenpixels::AlphaMode::Straight,
+            white: None,
+        },
+    ),
+    ImageSpec::rgbf32_linear(),
+    ImageSpec::rgbaf32_linear(),
+    ImageSpec::grayf32_linear(),
 ];
 
 static PSD_DECODE_CAPS: DecodeCapabilities = DecodeCapabilities::new()
@@ -107,7 +115,7 @@ impl DecoderConfig for PsdDecoderConfig {
         &*FORMATS
     }
 
-    fn supported_descriptors() -> &'static [PixelDescriptor] {
+    fn supported_descriptors() -> &'static [ImageSpec] {
         DECODE_DESCRIPTORS
     }
 
@@ -121,7 +129,7 @@ impl DecoderConfig for PsdDecoderConfig {
         compute: &zencodec::estimate::ComputeEnvironment,
     ) -> zencodec::estimate::ResourceEstimate {
         use zencodec::estimate::{ResourceEstimate, ThreadingInformation};
-        let bpp = image.descriptor().bytes_per_pixel() as u64;
+        let bpp = image.descriptor().layout.bytes_per_pixel() as u64;
         let output = image.pixels().saturating_mul(bpp);
         // Planar channel buffer + interleaved output buffer.
         let typ = output.saturating_mul(2).saturating_add(64 << 10);
@@ -236,8 +244,7 @@ impl<'a> DecodeJob<'a> for PsdDecodeJob {
     fn output_info(&self, data: &[u8]) -> CodecResult<OutputInfo> {
         let layout = parser::parse_layout(data).map_err(CodecError::of)?;
         check_limits(&layout.info.header, &layout.info, self.limits.as_ref())?;
-        let descriptor =
-            legacy_descriptor(&layout.info.header.output_descriptor(&layout.info.metadata))?;
+        let descriptor = layout.info.header.output_descriptor(&layout.info.metadata);
         Ok(OutputInfo::full_decode(
             layout.info.header.width,
             layout.info.header.height,
@@ -249,18 +256,14 @@ impl<'a> DecodeJob<'a> for PsdDecodeJob {
         self,
         data: Cow<'a, [u8]>,
         sink: &mut dyn DecodeRowSink,
-        preferred: &[PixelDescriptor],
+        preferred: &[ImageSpec],
     ) -> CodecResult<OutputInfo> {
         zencodec::helpers::copy_decode_to_sink(self, data, sink, preferred, |e| {
             PsdError::Sink(e).into()
         })
     }
 
-    fn decoder(
-        self,
-        data: Cow<'a, [u8]>,
-        _preferred: &[PixelDescriptor],
-    ) -> CodecResult<Self::Dec> {
+    fn decoder(self, data: Cow<'a, [u8]>, _preferred: &[ImageSpec]) -> CodecResult<Self::Dec> {
         if let Some(ref limits) = self.limits {
             limits
                 .check_input_size(data.len() as u64)
@@ -285,7 +288,7 @@ impl<'a> DecodeJob<'a> for PsdDecodeJob {
     fn streaming_decoder(
         self,
         _data: Cow<'a, [u8]>,
-        _preferred: &[PixelDescriptor],
+        _preferred: &[ImageSpec],
     ) -> CodecResult<Self::StreamDec> {
         Err(PsdError::UnsupportedOperation(zencodec::UnsupportedOperation::RowLevelDecode).into())
     }
@@ -293,14 +296,14 @@ impl<'a> DecodeJob<'a> for PsdDecodeJob {
     fn animation_frame_decoder(
         self,
         _data: Cow<'a, [u8]>,
-        _preferred: &[PixelDescriptor],
+        _preferred: &[ImageSpec],
     ) -> CodecResult<Self::AnimationFrameDec> {
         Err(PsdError::UnsupportedOperation(zencodec::UnsupportedOperation::AnimationDecode).into())
     }
 
     fn dyn_incremental_decoder(
         self,
-        preferred: &[PixelDescriptor],
+        preferred: &[ImageSpec],
     ) -> Result<
         alloc::boxed::Box<zencodec::decode::DynIncrementalDecoder>,
         zencodec::decode::BoxedError,
@@ -351,23 +354,6 @@ impl Decode for PsdDecoder<'_> {
         let mut info = psd_info_to_image_info(&layout.info);
         apply_policy_to_info(&mut info, self.policy.as_ref());
 
-        // The parser produces byte-owned storage for every current output.
-        let descriptor = legacy_descriptor(pixels.spec())?;
-        let (width, height) = (pixels.width(), pixels.height());
-        let pixels = match pixels.try_into_vec_zero_copy::<u8>() {
-            Ok(bytes) => PixelBuffer::from_vec(bytes, width, height, descriptor)
-                .map_err(pixel_buffer_error)?,
-            Err(pixels) => {
-                let mut buffer =
-                    PixelBuffer::try_new(width, height, descriptor).map_err(pixel_buffer_error)?;
-                let input = pixels.as_view();
-                let mut output = buffer.as_slice_mut();
-                for y in 0..height {
-                    output.row_mut(y).copy_from_slice(input.row(y));
-                }
-                buffer
-            }
-        };
         Ok(DecodeOutput::new(pixels, info).with_source_encoding_details(PsdSourceEncoding))
     }
 }
@@ -431,31 +417,6 @@ pub(crate) fn check_limits(
         }
     }
     Ok(())
-}
-
-fn pixel_buffer_error(error: impl core::fmt::Display) -> At<CodecError> {
-    PsdError::PixelBuffer(alloc::format!("{error}")).into()
-}
-
-// Remove with the zencodec pixel contract upgrade.
-fn legacy_descriptor(spec: &ImageSpec) -> CodecResult<PixelDescriptor> {
-    let order = match spec.layout.order {
-        ChannelOrder::Gray => ChannelLayout::Gray,
-        ChannelOrder::GrayAlpha => ChannelLayout::GrayAlpha,
-        ChannelOrder::Rgb => ChannelLayout::Rgb,
-        ChannelOrder::Rgba => ChannelLayout::Rgba,
-        _ => return Err(pixel_buffer_error("unsupported PSD channel order")),
-    };
-    let (sample, transfer) = match spec.layout.sample {
-        SampleType::U8 => (ChannelType::U8, TransferFunction::Srgb),
-        SampleType::U16 => (ChannelType::U16, TransferFunction::Srgb),
-        SampleType::F32 => (ChannelType::F32, TransferFunction::Linear),
-        _ => return Err(pixel_buffer_error("unsupported PSD sample type")),
-    };
-    let alpha = order
-        .has_alpha()
-        .then_some(zenpixels_legacy::AlphaMode::Straight);
-    Ok(PixelDescriptor::new(sample, order, alpha, transfer))
 }
 
 fn psd_info_to_image_info(psd: &PsdInfo) -> ImageInfo {

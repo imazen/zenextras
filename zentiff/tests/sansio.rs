@@ -4,16 +4,16 @@
 
 use zencodec::decode::DecoderConfig as _;
 use zencodec::encode::{EncodeJob as _, EncoderConfig as _};
-use zenpixels_legacy::{PixelDescriptor, PixelSlice};
+use zenpixels::{ImageSpec, PixelView};
 use zentiff::codec::{TiffDecoderCodecConfig as D, TiffEncoderCodecConfig as E};
 
-fn encoded(desc: PixelDescriptor, width: u32, height: u32) -> Vec<u8> {
-    let bpp = desc.bytes_per_pixel();
+fn encoded(desc: ImageSpec, width: u32, height: u32) -> Vec<u8> {
+    let bpp = desc.layout.bytes_per_pixel();
     let stride = width as usize * bpp;
     let bytes: Vec<u8> = (0..stride * height as usize)
         .map(|i| (i * 7 + i / stride * 13) as u8)
         .collect();
-    let pixels = PixelSlice::new(&bytes, width, height, stride, desc).unwrap();
+    let pixels = PixelView::new(&bytes, width, height, stride, desc).unwrap();
     E::new().job().encode(pixels).unwrap().data().to_vec()
 }
 
@@ -21,12 +21,12 @@ fn encoded(desc: PixelDescriptor, width: u32, height: u32) -> Vec<u8> {
 fn incremental_contract_holds() {
     assert!(D::capabilities().incremental());
     for (desc, width, height) in [
-        (PixelDescriptor::RGB8_SRGB, 64, 48),
-        (PixelDescriptor::RGBA8_SRGB, 33, 17),
-        (PixelDescriptor::GRAY8_SRGB, 1, 1),
-        (PixelDescriptor::RGB16_SRGB, 40, 300),
+        (ImageSpec::rgb8_srgb(), 64, 48),
+        (ImageSpec::rgba8_srgb(), 33, 17),
+        (ImageSpec::gray8_srgb(), 1, 1),
+        (ImageSpec::rgb16_srgb(), 40, 300),
     ] {
-        let data = encoded(desc, width, height);
+        let data = encoded(desc.clone(), width, height);
         zencodec_testkit::check_incremental_capability_honesty(D::new(), &data)
             .unwrap_or_else(|e| panic!("{desc:?} {width}x{height}: {e:?}"));
     }

@@ -10,7 +10,7 @@ use zencodec::decode::{DecodeJob, DecodePolicy, DecoderConfig};
 use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
 use zencodec::inventory::{Disposition, Inventory, MetadataKind, Part, PartKind, PartTag};
 use zencodec::{Metadata, MetadataPolicy};
-use zenpixels_legacy::{PixelBuffer, PixelDescriptor};
+use zenpixels::{ImageSpec, PixelBuf};
 use zentiff::codec::{TiffDecoderCodecConfig, TiffEncoderCodecConfig};
 
 fn inventory(data: &[u8]) -> Inventory {
@@ -650,13 +650,14 @@ fn exif_blob() -> Vec<u8> {
 }
 
 #[test]
+#[expect(deprecated, reason = "exercise TIFF best-effort metadata retention")]
 fn encoder_output_passes_check_inventory() {
     let rgb: Vec<u8> = (0..24 * 16 * 3).map(|i| (i * 7 % 251) as u8).collect();
-    let rgb = PixelBuffer::from_vec(rgb, 24, 16, PixelDescriptor::RGB8_SRGB).unwrap();
+    let rgb = PixelBuf::from_vec(rgb, 24, 16, ImageSpec::rgb8_srgb()).unwrap();
     let rgba16: Vec<u8> = (0..9 * 5 * 8).map(|i| (i * 13 % 256) as u8).collect();
-    let rgba16 = PixelBuffer::from_vec(rgba16, 9, 5, PixelDescriptor::RGBA16_SRGB).unwrap();
+    let rgba16 = PixelBuf::from_vec(rgba16, 9, 5, ImageSpec::rgba16_srgb()).unwrap();
     let gray: Vec<u8> = (0..31 * 3).map(|i| (i * 3 % 256) as u8).collect();
-    let gray = PixelBuffer::from_vec(gray, 31, 3, PixelDescriptor::GRAY8_SRGB).unwrap();
+    let gray = PixelBuf::from_vec(gray, 31, 3, ImageSpec::gray8_srgb()).unwrap();
     let mut icc = vec![0u8; 132];
     icc[36..40].copy_from_slice(b"acsp");
     let meta = Metadata::none()
@@ -686,7 +687,7 @@ fn encoder_output_passes_check_inventory() {
                 let bytes = job
                     .encoder()
                     .unwrap()
-                    .encode(buf.as_slice())
+                    .encode(buf.as_view())
                     .unwrap()
                     .into_vec();
                 zencodec_testkit::check_inventory(TiffDecoderCodecConfig::new(), &bytes)

@@ -23,7 +23,7 @@ use zencodec::{
     CodecError, ImageFormat, ImageFormatDefinition, ImageInfo, ImageSequence, ResourceLimits,
     SharedPulse, Unsupported, UnsupportedOperation,
 };
-use zenpixels_legacy::{PixelBuffer, PixelDescriptor};
+use zenpixels::ImageSpec;
 
 use crate::alloc_util::AllocPref;
 use crate::error::PdfError;
@@ -147,7 +147,7 @@ impl Default for PdfDecoderConfig {
     }
 }
 
-static DECODE_DESCRIPTORS: &[PixelDescriptor] = &[PixelDescriptor::RGBA8_SRGB];
+static DECODE_DESCRIPTORS: &[ImageSpec] = &[ImageSpec::rgba8_srgb()];
 
 impl zencodec::decode::DecoderConfig for PdfDecoderConfig {
     type Error = At<CodecError>;
@@ -157,7 +157,7 @@ impl zencodec::decode::DecoderConfig for PdfDecoderConfig {
         &PDF_FORMATS
     }
 
-    fn supported_descriptors() -> &'static [PixelDescriptor] {
+    fn supported_descriptors() -> &'static [ImageSpec] {
         DECODE_DESCRIPTORS
     }
 
@@ -174,7 +174,7 @@ impl zencodec::decode::DecoderConfig for PdfDecoderConfig {
     /// transparency groups), not just the output width × height. The output
     /// raster is a firm lower bound — the final RGBA8 buffer is W × H × 4 — and
     /// zenpdf's `pixmap_to_buffer` briefly holds the hayro pixmap and the
-    /// converted [`PixelBuffer`] concurrently (≈ 2× the raster). On top of that,
+    /// converted [`PixelBuf`] concurrently (≈ 2× the raster). On top of that,
     /// this estimate budgets a generous working-set multiple for the parsed
     /// document and embedded resources, and reports a wide `peak_max`.
     /// Rendering is single-threaded. Treat the numbers as a structural floor,
@@ -251,7 +251,7 @@ impl PdfDecodeJob {
             (0.0, 0.0)
         };
         let (w, h) = compute_output_dims(&self.config.bounds, page_w, page_h)?;
-        let info = OutputInfo::full_decode(w, h, PixelDescriptor::RGBA8_SRGB);
+        let info = OutputInfo::full_decode(w, h, ImageSpec::rgba8_srgb());
         self.check_limits_on_output(&info)?;
         Ok(SelectedPage {
             page,
@@ -376,7 +376,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for PdfDecodeJob {
     fn decoder(
         self,
         data: Cow<'a, [u8]>,
-        _preferred: &[PixelDescriptor],
+        _preferred: &[ImageSpec],
     ) -> Result<PdfDecoder, At<CodecError>> {
         self.check_input_size(&data)?;
         check_pulse(&self.pulse)?;
@@ -405,7 +405,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for PdfDecodeJob {
         self,
         data: Cow<'a, [u8]>,
         sink: &mut dyn zencodec::decode::DecodeRowSink,
-        preferred: &[PixelDescriptor],
+        preferred: &[ImageSpec],
     ) -> Result<OutputInfo, At<CodecError>> {
         zencodec::helpers::copy_decode_to_sink(self, data, sink, preferred, |e| {
             PdfError::Sink(e).into()
@@ -415,7 +415,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for PdfDecodeJob {
     fn streaming_decoder(
         self,
         _data: Cow<'a, [u8]>,
-        _preferred: &[PixelDescriptor],
+        _preferred: &[ImageSpec],
     ) -> Result<Unsupported<At<CodecError>>, At<CodecError>> {
         Err(PdfError::Unsupported(UnsupportedOperation::RowLevelDecode).into())
     }
@@ -423,7 +423,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for PdfDecodeJob {
     fn animation_frame_decoder(
         self,
         _data: Cow<'a, [u8]>,
-        _preferred: &[PixelDescriptor],
+        _preferred: &[ImageSpec],
     ) -> Result<Unsupported<At<CodecError>>, At<CodecError>> {
         Err(PdfError::Unsupported(UnsupportedOperation::AnimationDecode).into())
     }
@@ -433,7 +433,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for PdfDecodeJob {
     /// file is offered. A PDF's cross-reference table sits at the end of the file.
     fn dyn_incremental_decoder(
         self,
-        preferred: &[PixelDescriptor],
+        preferred: &[ImageSpec],
     ) -> Result<
         alloc::boxed::Box<zencodec::decode::DynIncrementalDecoder>,
         zencodec::decode::BoxedError,
@@ -500,22 +500,7 @@ impl zencodec::decode::Decode for PdfDecoder {
                 random_access: true,
             });
 
-        // The current trait still owns a legacy buffer. Move the RGBA8 bytes
-        // across the boundary without rerendering or copying the raster.
-        let bytes = rendered
-            .buffer
-            .try_into_vec::<u8>()
-            .map_err(PdfError::from)?;
-        let pixels =
-            PixelBuffer::from_vec(bytes, w, h, PixelDescriptor::RGBA8_SRGB).map_err(|err| {
-                PdfError::Buffer(err.map_error(|cause| match cause {
-                    zenpixels_legacy::BufferError::InvalidDimensions => {
-                        zenpixels::BufferError::InvalidDimensions
-                    }
-                    _ => zenpixels::BufferError::InsufficientData,
-                }))
-            })?;
-        Ok(DecodeOutput::new(pixels, info))
+        Ok(DecodeOutput::new(rendered.buffer, info))
     }
 }
 

@@ -458,9 +458,11 @@ impl Demuxer for IvfDemuxer {
     fn step(
         &mut self,
         input: Input<'_>,
-        pulse: &dyn zencodec::Pulse,
+        pulse: Option<&dyn zencodec::Pulse>,
     ) -> Result<DemuxProgress, SessionError<IvfError>> {
-        pulse.check()?;
+        if let Some(pulse) = pulse {
+            pulse.check()?;
+        }
         self.requests.clear();
         match self.state {
             State::Header => self.header(input),
@@ -585,9 +587,11 @@ impl Muxer for IvfMuxer {
     fn write_packet(
         &mut self,
         mut packet: Packet,
-        pulse: &dyn zencodec::Pulse,
+        pulse: Option<&dyn zencodec::Pulse>,
     ) -> Result<(), SessionError<IvfError>> {
-        pulse.check()?;
+        if let Some(pulse) = pulse {
+            pulse.check()?;
+        }
         if !self.begun {
             return Err(SessionError::Protocol(ProtocolViolation::NoBegin));
         }
@@ -636,8 +640,13 @@ impl Muxer for IvfMuxer {
         self.out.take_into(into);
     }
 
-    fn finish(self, pulse: &dyn zencodec::Pulse) -> Result<MuxFinish, SessionError<IvfError>> {
-        pulse.check()?;
+    fn finish(
+        self,
+        pulse: Option<&dyn zencodec::Pulse>,
+    ) -> Result<MuxFinish, SessionError<IvfError>> {
+        if let Some(pulse) = pulse {
+            pulse.check()?;
+        }
         if !self.begun {
             return Err(SessionError::Protocol(ProtocolViolation::NoBegin));
         }

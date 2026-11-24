@@ -10,13 +10,11 @@ import json
 from pathlib import Path
 import shutil
 import subprocess
-import tomllib
 
-CORE = "f02a17ec6001a9efcad1267f92a3ea928ed06e57"
-PIXELS = "283655c5424e0ad7ebc6d2acd94670fac1e29158"
+CORE = "037ef59b57ae003f853a5b6624b173edfee22d6a"
+PIXELS = "42a0c5c83c5c418950eb528d92d57788f6700bcf"
 FAMILY = {"zencodec", "zencodec-testkit", "zencodec-io", "zencodec-media",
           "zencodec-media-testkit", "zencodec-coroutine", "zenmeta"}
-NATIVE_PIXELS = "42a0c5c83c5c418950eb528d92d57788f6700bcf"
 PIXEL_FAMILY = {"zenpixels", "zenpixels-convert"}
 GRAPHS = [".", "zentiff/fuzz", "zenpdf/fuzz", "zensvg/fuzz", "zenjp2/fuzz", "zenexr/fuzz"]
 
@@ -36,20 +34,6 @@ def main():
         lock = root / directory / "Cargo.lock"
         if lock.exists():
             shutil.copyfile(lock, out / "before.lock")
-        # Explicitly unlock the paired pixels family; Cargo otherwise retains
-        # the registry 0.2.16 selection even though the new core needs 0.2.17.
-        if lock.exists():
-            packages = tomllib.loads(lock.read_text())["package"]
-            selected = sorted(
-                f"{p['name']}@{p['version']}" for p in packages if p["name"] in PIXEL_FAMILY
-            )
-            if selected:
-                update = ["cargo", "update", "--manifest-path", str(root / directory / "Cargo.toml")]
-                for crate in selected:
-                    update += ["-p", crate]
-                with (out / "paired-update.log").open("w") as log:
-                    subprocess.run(update, cwd=root / directory, stdout=log, stderr=log,
-                                   check=True, timeout=600)
         command = ["cargo", "metadata", "--all-features", "--format-version", "1",
                    "--manifest-path", str(root / directory / "Cargo.toml")]
         with (out / "metadata.json").open("w") as stdout, (out / "resolution.log").open("w") as stderr:
@@ -63,12 +47,9 @@ def main():
                 shared.setdefault(package["name"], []).append({
                     "version": package["version"], "source": package["source"]})
         for crate, entries in shared.items():
-            expected = [CORE] if crate in FAMILY else [PIXELS] if crate in PIXEL_FAMILY else [None]
-            if crate == "zenpixels" and directory != "zensvg/fuzz":
-                expected.append(NATIVE_PIXELS)
-            sources = [(entry["source"] or "").split("#")[-1] for entry in entries]
-            if len(sources) != len(expected) or any(
-                rev is not None and rev not in sources for rev in expected
+            expected = CORE if crate in FAMILY else PIXELS if crate in PIXEL_FAMILY else None
+            if len(entries) != 1 or (
+                expected and not (entries[0]["source"] or "").endswith("#" + expected)
             ):
                 raise RuntimeError(f"{directory}: unexpected source for {crate}: {entries}")
         results.append({"graph": directory, "shared": shared})

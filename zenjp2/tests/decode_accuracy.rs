@@ -8,7 +8,7 @@
 use std::borrow::Cow;
 use zencodec::decode::{Decode, DecodeJob, DecoderConfig};
 use zenjp2::Jp2DecoderConfig;
-use zenpixels_legacy::PixelDescriptor;
+use zenpixels::ImageSpec;
 
 const J2K: &[u8] = include_bytes!("fixtures/test.j2k");
 const JP2: &[u8] = include_bytes!("fixtures/test.jp2");
@@ -20,7 +20,7 @@ fn bx(ty: &[u8; 4], payload: &[u8]) -> Vec<u8> {
     v
 }
 
-fn decode_bytes(data: &[u8]) -> (u32, u32, PixelDescriptor, Vec<u8>) {
+fn decode_bytes(data: &[u8]) -> (u32, u32, ImageSpec, Vec<u8>) {
     let out = Jp2DecoderConfig::new()
         .job()
         .decoder(Cow::Borrowed(data), &[])
@@ -29,15 +29,15 @@ fn decode_bytes(data: &[u8]) -> (u32, u32, PixelDescriptor, Vec<u8>) {
         .expect("decode");
     let px = out.pixels();
     let bytes: Vec<u8> = (0..px.rows()).flat_map(|y| px.row(y).to_vec()).collect();
-    (out.width(), out.height(), px.descriptor(), bytes)
+    (out.width(), out.height(), px.spec().clone(), bytes)
 }
 
 #[test]
 fn jp2_and_j2k_match_each_other_and_ffmpeg_oracle() {
     let (w1, h1, d1, px_jp2) = decode_bytes(JP2);
     let (w2, h2, d2, px_j2k) = decode_bytes(J2K);
-    assert_eq!((w1, h1, d1), (16, 16, PixelDescriptor::RGB8_SRGB));
-    assert_eq!((w2, h2, d2), (16, 16, PixelDescriptor::RGB8_SRGB));
+    assert_eq!((w1, h1, d1), (16, 16, ImageSpec::rgb8_srgb()));
+    assert_eq!((w2, h2, d2), (16, 16, ImageSpec::rgb8_srgb()));
     assert_eq!(
         px_jp2, px_j2k,
         "JP2 container and raw J2K codestream must decode identically"
@@ -98,7 +98,7 @@ fn cdef_reorders_channels_accurately() {
     f.extend(bx(b"jp2c", J2K));
 
     let (w, h, desc, swapped_rgb) = decode_bytes(&f);
-    assert_eq!((w, h, desc), (16, 16, PixelDescriptor::RGB8_SRGB));
+    assert_eq!((w, h, desc), (16, 16, ImageSpec::rgb8_srgb()));
     for (base_px, swap_px) in base_rgb
         .as_chunks::<3>()
         .0
@@ -154,7 +154,7 @@ fn pclr_and_cmap_12bit_palette_scales_to_8bit() {
     f.extend(bx(b"jp2c", J2K));
 
     let (w, h, desc, pal_rgb) = decode_bytes(&f);
-    assert_eq!((w, h, desc), (16, 16, PixelDescriptor::RGB8_SRGB));
+    assert_eq!((w, h, desc), (16, 16, ImageSpec::rgb8_srgb()));
 
     for (base_px, pal_px) in base_rgb
         .as_chunks::<3>()
@@ -207,7 +207,7 @@ fn gray_plus_alpha_expands_to_rgba8() {
     f.extend(bx(b"jp2c", J2K));
 
     let (w, h, desc, rgba) = decode_bytes(&f);
-    assert_eq!((w, h, desc), (16, 16, PixelDescriptor::RGBA8_SRGB));
+    assert_eq!((w, h, desc), (16, 16, ImageSpec::rgba8_srgb()));
     for (base_px, out_px) in base_rgb
         .as_chunks::<3>()
         .0

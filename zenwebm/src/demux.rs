@@ -15,7 +15,7 @@ use zencodec_media::container::{
 use zencodec_media::limits::{MediaLimitExceeded, MediaLimits};
 use zencodec_media::packet::{Discard, Packet, PacketAddition, PacketPayload, RandomAccess};
 use zencodec_media::session::{SessionError, UnsupportedMedia};
-use zencodec_media::track::{AudioTrackInfo, ChannelLayout, TrackInfo, TrackKind, VideoTrackInfo};
+use zencodec_media::track::{AudioTrackInfo, ChannelOrder, TrackInfo, TrackKind, VideoTrackInfo};
 
 use crate::ebml::{self, Header, MAX_HEADER_LEN, id};
 use crate::{WebmError, codec_from_id};
@@ -1044,7 +1044,7 @@ fn build_track(index: u32, t: &RawTrack, tb: TimeBase) -> Res<TrackInfo> {
             if !integral {
                 return err(WebmError::BadAudio);
             }
-            let info = AudioTrackInfo::new(rate as u32, ChannelLayout::new(channels));
+            let info = AudioTrackInfo::new(rate as u32, ChannelOrder::new(channels));
             TrackInfo::audio(index, codec, tb, info)
         }
         (17, _, _) => TrackInfo::other(index, TrackKind::Subtitle, codec, tb),
@@ -1072,8 +1072,14 @@ fn build_track(index: u32, t: &RawTrack, tb: TimeBase) -> Res<TrackInfo> {
 impl Demuxer for WebmDemuxer {
     type Error = WebmError;
 
-    fn step(&mut self, input: Input<'_>, pulse: &dyn zencodec::Pulse) -> Res<DemuxProgress> {
-        pulse.check()?;
+    fn step(
+        &mut self,
+        input: Input<'_>,
+        pulse: Option<&dyn zencodec::Pulse>,
+    ) -> Res<DemuxProgress> {
+        if let Some(pulse) = pulse {
+            pulse.check()?;
+        }
         self.requests.clear();
         if input.total_len.is_some() {
             self.total = input.total_len;

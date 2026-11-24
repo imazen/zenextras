@@ -26,7 +26,7 @@ use zencodec::how_far::{
     Child, Execution, PhaseSpec, PlanError, Pulse, Report, SharedPulse, StopOnly, Total,
 };
 use zencodec::{CategorizedError as _, CodecErrorExt as _, ErrorCategory};
-use zenpixels_legacy::{PixelBuffer, PixelDescriptor, PixelSlice};
+use zenpixels::{ImageSpec, PixelBuf, PixelView};
 use zentiff::codec::{TiffDecoderCodecConfig, TiffEncoderCodecConfig};
 use zentiff::{TiffDecodeConfig, TiffEncodeConfig};
 
@@ -38,9 +38,9 @@ const DECODE_CHECKPOINTS: usize = 2;
 /// the pixels are gathered, before image-tiff compresses and writes them.
 const ENCODE_CHECKPOINTS: usize = 2;
 
-fn rgb8(w: u32, h: u32) -> PixelBuffer {
+fn rgb8(w: u32, h: u32) -> PixelBuf {
     let data = (0..w * h * 3).map(|i| (i * 7 % 251) as u8).collect();
-    PixelBuffer::from_vec(data, w, h, PixelDescriptor::RGB8_SRGB).unwrap()
+    PixelBuf::from_vec(data, w, h, ImageSpec::rgb8_srgb()).unwrap()
 }
 
 /// Counts its polls; poll number `at` (from 0) returns `reason` and every
@@ -115,11 +115,11 @@ enum Arm {
 
 const ARMS: [Arm; 4] = [Arm::Quiet, Arm::Reporting, Arm::Legacy, Arm::Erased];
 
-type Image = (u32, u32, PixelDescriptor, Vec<u8>);
+type Image = (u32, u32, ImageSpec, Vec<u8>);
 
-fn image(px: PixelSlice<'_>) -> Image {
+fn image(px: PixelView<'_>) -> Image {
     let bytes = (0..px.rows()).flat_map(|y| px.row(y).to_vec()).collect();
-    (px.width(), px.rows(), px.descriptor(), bytes)
+    (px.width(), px.rows(), px.spec().clone(), bytes)
 }
 
 /// Decodes `data` with `stop` installed through `arm`.
@@ -148,7 +148,7 @@ fn decode(data: &[u8], arm: Arm, stop: AtPoll) -> Result<Image, ErrorCategory> {
 }
 
 /// Encodes `pixels` with `stop` installed through `arm`.
-fn encode(pixels: PixelSlice<'_>, arm: Arm, stop: AtPoll) -> Result<Vec<u8>, ErrorCategory> {
+fn encode(pixels: PixelView<'_>, arm: Arm, stop: AtPoll) -> Result<Vec<u8>, ErrorCategory> {
     let config = TiffEncoderCodecConfig::new();
     if let Arm::Erased = arm {
         let dynamic: &dyn DynEncoderConfig = &config;
@@ -172,17 +172,13 @@ fn encode(pixels: PixelSlice<'_>, arm: Arm, stop: AtPoll) -> Result<Vec<u8>, Err
         .map_err(|e| e.category())
 }
 
-fn native_tiff(pixels: &PixelBuffer) -> Vec<u8> {
-    let slice = pixels.as_slice();
-    let native = zenpixels::PixelView::new(
-        slice.as_strided_bytes(),
-        slice.width(),
-        slice.rows(),
-        slice.stride(),
-        zenpixels::ImageSpec::rgb8_srgb(),
+fn native_tiff(pixels: &PixelBuf) -> Vec<u8> {
+    zentiff::encode(
+        &pixels.as_view(),
+        &TiffEncodeConfig::default(),
+        &Unstoppable,
     )
-    .unwrap();
-    zentiff::encode(&native, &TiffEncodeConfig::default(), &Unstoppable).unwrap()
+    .unwrap()
 }
 
 #[test]
@@ -198,7 +194,7 @@ fn a_stopped_job_decodes_and_encodes_nothing() {
                 "decode {arm:?} {reason:?}"
             );
             assert_eq!(
-                encode(pixels.as_slice(), arm, AtPoll::new(0, reason)).map(|_| ()),
+                encode(pixels.as_view(), arm, AtPoll::new(0, reason)).map(|_| ()),
                 stopped,
                 "encode {arm:?} {reason:?}"
             );
@@ -227,7 +223,7 @@ fn every_poll_keeps_a_one_shot_stop() {
             );
         }
         let unstopped = AtPoll::new(usize::MAX, StopReason::TimedOut);
-        encode(pixels.as_slice(), arm, unstopped.clone()).expect("an unstopped encode");
+        encode(pixels.as_view(), arm, unstopped.clone()).expect("an unstopped encode");
         assert_eq!(
             unstopped.polls(),
             ENCODE_CHECKPOINTS,
@@ -235,12 +231,7 @@ fn every_poll_keeps_a_one_shot_stop() {
         );
         for at in 0..ENCODE_CHECKPOINTS {
             assert_eq!(
-                encode(
-                    pixels.as_slice(),
-                    arm,
-                    AtPoll::new(at, StopReason::TimedOut)
-                )
-                .map(|_| ()),
+                encode(pixels.as_view(), arm, AtPoll::new(at, StopReason::TimedOut)).map(|_| ()),
                 timed_out,
                 "encode {arm:?} poll {at} of {ENCODE_CHECKPOINTS}"
             );
@@ -258,7 +249,7 @@ fn strip_pages_poll_only_between_native_calls() {
             let decoded = AtPoll::new(usize::MAX, StopReason::TimedOut);
             decode(&tiff, arm, decoded.clone()).expect("an unstopped decode");
             let encoded = AtPoll::new(usize::MAX, StopReason::TimedOut);
-            encode(pixels.as_slice(), arm, encoded.clone()).expect("an unstopped encode");
+            encode(pixels.as_view(), arm, encoded.clone()).expect("an unstopped encode");
             println!(
                 "{arm:?} {w}x{h}: decode {} polls, encode {} polls",
                 decoded.polls(),
@@ -279,26 +270,20 @@ fn an_unstopped_pulse_changes_nothing() {
     let pixels = rgb8(64, 48);
     let tiff = native_tiff(&pixels);
     let native = zentiff::decode(&tiff, &TiffDecodeConfig::default(), &Unstoppable).unwrap();
-    let view = native.pixels.as_view();
+    let expected = image(native.pixels.as_view());
     assert!(matches!(
-        view.spec().color,
+        expected.2.color,
         zenpixels::ColorSpace::Rgb {
             transfer: zenpixels::Transfer::Unknown,
             ..
         }
     ));
-    let expected = (
-        view.width(),
-        view.rows(),
-        PixelDescriptor::RGB8,
-        view.as_contiguous_bytes().unwrap().to_vec(),
-    );
     // TIFF carries no transfer function, so the decode labels it unknown;
     // the samples come back exactly.
-    let (w, h, _, bytes) = image(pixels.as_slice());
+    let (w, h, _, bytes) = image(pixels.as_view());
     assert_eq!(
-        (expected.0, expected.1, expected.2.format, &expected.3),
-        (w, h, PixelDescriptor::RGB8_SRGB.format, &bytes),
+        (expected.0, expected.1, expected.2.layout, &expected.3),
+        (w, h, ImageSpec::rgb8_srgb().layout, &bytes),
         "lossless round trip"
     );
     for arm in ARMS {
@@ -310,7 +295,7 @@ fn an_unstopped_pulse_changes_nothing() {
         );
         let stop = AtPoll::new(usize::MAX, StopReason::TimedOut);
         assert_eq!(
-            encode(pixels.as_slice(), arm, stop).as_ref(),
+            encode(pixels.as_view(), arm, stop).as_ref(),
             Ok(&tiff),
             "encode {arm:?}"
         );

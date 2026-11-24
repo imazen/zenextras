@@ -3,12 +3,12 @@ use std::borrow::Cow;
 use zencodec::Metadata;
 use zencodec::decode::{Decode, DecodeJob, DecodePolicy, DecoderConfig};
 use zencodec::encode::{EncodeJob, EncodePolicy, EncoderConfig};
-use zenpixels_legacy::{PixelDescriptor, PixelSlice};
+use zenpixels::{ImageSpec, PixelView};
 use zentiff::codec::{TiffDecoderCodecConfig as D, TiffEncoderCodecConfig as E};
 #[test]
 fn strided_fixture_policy_and_inventory_contracts() {
     let bytes = [1, 2, 3, 4, 5, 6, 255, 255, 255, 7, 8, 9, 10, 11, 12];
-    let pixels = PixelSlice::new(&bytes, 2, 2, 9, PixelDescriptor::RGB8_SRGB).unwrap();
+    let pixels = PixelView::new(&bytes, 2, 2, 9, ImageSpec::rgb8_srgb()).unwrap();
     let encoded = E::new().job().encode(pixels.clone()).unwrap();
     let expected = D::new()
         .job()

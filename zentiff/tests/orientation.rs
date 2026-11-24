@@ -26,7 +26,7 @@ use tiff::tags::Tag;
 
 use zencodec::decode::{Decode, DecodeJob, DecoderConfig};
 use zencodec::{Orientation, OrientationHint};
-use zenpixels_legacy::PixelDescriptor;
+use zenpixels::ImageSpec;
 use zentiff::codec::TiffDecoderCodecConfig;
 
 /// Stored (coded) dimensions of the synthesized fixture.
@@ -69,13 +69,13 @@ fn fixture_with_orientation(orientation: u16) -> Vec<u8> {
 }
 
 /// Read an RGB pixel from a decoded RGB8 output. zentiff decodes 8-bit RGB to
-/// `PixelDescriptor::RGB8` (bare, transfer `Unknown`) — the byte layout is
+/// `ImageSpec::rgb8_srgb()` (bare, transfer `Unknown`) — the byte layout is
 /// R/G/B at 3 bytes/pixel regardless of the color-metadata fields, which is all
 /// the orientation oracle needs.
 fn px(out: &zencodec::decode::DecodeOutput, x: u32, y: u32) -> [u8; 3] {
     let ps = out.pixels();
     assert_eq!(
-        ps.descriptor().bytes_per_pixel(),
+        ps.spec().layout.bytes_per_pixel(),
         3,
         "fixture is 8-bit RGB (3 bytes/pixel)"
     );
@@ -88,7 +88,7 @@ fn decode_with_hint(data: &[u8], hint: OrientationHint) -> zencodec::decode::Dec
     TiffDecoderCodecConfig::new()
         .job()
         .with_orientation(hint)
-        .decoder(Cow::Borrowed(data), &[PixelDescriptor::RGB8_SRGB])
+        .decoder(Cow::Borrowed(data), &[ImageSpec::rgb8_srgb()])
         .expect("decoder")
         .decode()
         .expect("decode")

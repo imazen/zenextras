@@ -147,7 +147,7 @@ const ARMS: [Arm; 4] = [Arm::Quiet, Arm::Reporting, Arm::Legacy, Arm::Erased];
 
 type Image = (u32, u32, Vec<u8>);
 
-fn image(px: zenpixels_legacy::PixelSlice<'_>) -> Image {
+fn image(px: zenpixels::PixelView<'_>) -> Image {
     let bytes = (0..px.rows()).flat_map(|y| px.row(y).to_vec()).collect();
     (px.width(), px.rows(), bytes)
 }
