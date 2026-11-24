@@ -4,7 +4,7 @@
 
 use zencodec::decode::DecoderConfig as _;
 use zencodec::encode::{EncodeJob as _, EncoderConfig as _};
-use zenpixels::{PixelDescriptor, PixelSlice};
+use zenpixels_legacy::{PixelDescriptor, PixelSlice};
 use zentiff::codec::{TiffDecoderCodecConfig as D, TiffEncoderCodecConfig as E};
 
 fn encoded(desc: PixelDescriptor, width: u32, height: u32) -> Vec<u8> {

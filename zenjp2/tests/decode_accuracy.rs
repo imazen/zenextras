@@ -8,7 +8,7 @@
 use std::borrow::Cow;
 use zencodec::decode::{Decode, DecodeJob, DecoderConfig};
 use zenjp2::Jp2DecoderConfig;
-use zenpixels::PixelDescriptor;
+use zenpixels_legacy::PixelDescriptor;
 
 const J2K: &[u8] = include_bytes!("fixtures/test.j2k");
 const JP2: &[u8] = include_bytes!("fixtures/test.jp2");

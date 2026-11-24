@@ -851,7 +851,12 @@ fn hidden_optional_content_is_not_drawn() {
     assert_eq!(entry.disposition(), Disposition::Dropped, "{inv}");
     // The decoder agrees: the page is white except the visible black pixel.
     let page = zenpdf::render_page(&data, 0, &zenpdf::RenderBounds::Scale(1.0)).unwrap();
-    let px = page.buffer.as_contiguous_bytes().unwrap().to_vec();
+    let px = page
+        .buffer
+        .as_view()
+        .as_contiguous_bytes()
+        .unwrap()
+        .to_vec();
     let gray_or_dark_grey = px
         .chunks(4)
         .filter(|p| p[0] == 0x80 || p[0] == 0x40)
@@ -956,7 +961,7 @@ fn only_the_decoded_page_is_drawn() {
     // page 0 change nothing when overwritten; a consumed image byte does.
     let render = |d: &[u8], page: u32| {
         let p = zenpdf::render_page(d, page, &zenpdf::RenderBounds::Scale(1.0)).unwrap();
-        p.buffer.as_contiguous_bytes().unwrap().to_vec()
+        p.buffer.as_view().as_contiguous_bytes().unwrap().to_vec()
     };
     let page0 = render(&data, 0);
     let mut other = data.clone();
@@ -1032,7 +1037,7 @@ fn a_page_hayro_finds_by_scanning_is_drawn() {
     b.end_revision("/Root 1 0 R");
     let data = b.finish();
     let page = zenpdf::render_page(&data, 0, &zenpdf::RenderBounds::Scale(1.0)).unwrap();
-    let px = page.buffer.as_contiguous_bytes().unwrap();
+    let px = page.buffer.as_view().as_contiguous_bytes().unwrap();
     assert!(
         px.chunks(4).all(|p| p[0] == 1),
         "hayro draws the scanned page"
@@ -1502,7 +1507,7 @@ const RED: &[u8] = b"1 0 0 rg 0 0 10 10 re f";
 /// The page-0 decode's pixels.
 fn render0(data: &[u8]) -> Vec<u8> {
     let p = zenpdf::render_page(data, 0, &zenpdf::RenderBounds::Scale(1.0)).unwrap();
-    p.buffer.as_contiguous_bytes().unwrap().to_vec()
+    p.buffer.as_view().as_contiguous_bytes().unwrap().to_vec()
 }
 
 /// `marker` sits in an unconsumed part, and changing it leaves the decode

@@ -597,7 +597,7 @@ dependencies = [
  "whereat",
  "zencodec",
  "zenmeta",
- "zenpixels",
+ "zenpixels 0.2.17",
 ]
 
 [[package]]
@@ -643,7 +643,7 @@ dependencies = [
  "how-far",
  "spin",
  "whereat",
- "zenpixels",
+ "zenpixels 0.2.17",
 ]
 
 [[package]]
@@ -669,7 +669,7 @@ dependencies = [
  "whereat",
  "zencodec",
  "zenmeta",
- "zenpixels",
+ "zenpixels 0.2.17",
  "zenyuv",
 ]
 
@@ -679,7 +679,7 @@ version = "0.1.0"
 source = "git+https://github.com/imazen/zencodec?rev=f02a17ec6001a9efcad1267f92a3ea928ed06e57#f02a17ec6001a9efcad1267f92a3ea928ed06e57"
 dependencies = [
  "zencodec",
- "zenpixels",
+ "zenpixels 0.2.17",
 ]
 
 [[package]]
@@ -690,6 +690,15 @@ dependencies = [
  "bytemuck",
  "imgref",
  "rgb",
+ "whereat",
+]
+
+[[package]]
+name = "zenpixels"
+version = "0.5.0"
+source = "git+https://github.com/imazen/zenpixels?rev=42a0c5c83c5c418950eb528d92d57788f6700bcf#42a0c5c83c5c418950eb528d92d57788f6700bcf"
+dependencies = [
+ "bytemuck",
  "whereat",
 ]
 
@@ -708,7 +717,7 @@ dependencies = [
  "once_cell",
  "paste",
  "whereat",
- "zenpixels",
+ "zenpixels 0.2.17",
 ]
 
 [[package]]
@@ -723,7 +732,8 @@ dependencies = [
  "zencodec",
  "zenjpeg",
  "zenmeta",
- "zenpixels",
+ "zenpixels 0.2.17",
+ "zenpixels 0.5.0",
  "zenpixels-convert",
 ]
 
@@ -820,6 +830,21 @@ dependencies = [
 ]
 
 [[patch.unused]]
+name = "garb"
+version = "0.2.9"
+source = "git+https://github.com/imazen/garb?rev=457ff8b9153e9d675a39dc098052b2ffeb6206fa#457ff8b9153e9d675a39dc098052b2ffeb6206fa"
+
+[[patch.unused]]
+name = "linear-srgb"
+version = "0.6.13"
+source = "git+https://github.com/imazen/linear-srgb?rev=ae83f19426737635fee3dd16f228681019f52585#ae83f19426737635fee3dd16f228681019f52585"
+
+[[patch.unused]]
 name = "zenanalyze"
 version = "0.2.0"
 source = "git+https://github.com/imazen/zenanalyze?rev=8ca647c525cf488c61bbf35475ca8ba3db6b628e#8ca647c525cf488c61bbf35475ca8ba3db6b628e"
+
+[[patch.unused]]
+name = "zenpixels-convert"
+version = "0.5.0"
+source = "git+https://github.com/imazen/zenpixels?rev=42a0c5c83c5c418950eb528d92d57788f6700bcf#42a0c5c83c5c418950eb528d92d57788f6700bcf"

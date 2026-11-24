@@ -113,8 +113,8 @@ fn decoded(bytes: &[u8]) -> Result<Decoded, String> {
             Ok(Decoded {
                 width: pixels.width(),
                 height: pixels.height(),
-                descriptor: format!("{:?}", pixels.descriptor()),
-                pixels: pixels.copy_to_contiguous_bytes(),
+                descriptor: format!("{:?}", pixels.spec()),
+                pixels: pixels.as_view().as_contiguous_bytes().unwrap().to_vec(),
             })
         }
     }

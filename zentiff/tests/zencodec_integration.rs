@@ -8,7 +8,7 @@ use std::borrow::Cow;
 use zencodec::decode::{Decode, DecodeJob, DecoderConfig};
 use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
 use zencodec::{Metadata, MetadataPolicy, Orientation, ResourceLimits};
-use zenpixels::{PixelBuffer, PixelDescriptor};
+use zenpixels_legacy::{PixelBuffer, PixelDescriptor};
 
 use zentiff::codec::{TiffDecoderCodecConfig, TiffEncoderCodecConfig};
 
@@ -237,10 +237,10 @@ fn roundtrip_graya8_via_traits_stays_two_channel() {
     let desc = decoded.pixels().descriptor();
     assert_eq!(
         desc.layout(),
-        zenpixels::ChannelLayout::GrayAlpha,
+        zenpixels_legacy::ChannelLayout::GrayAlpha,
         "GrayAlpha must round-trip as 2-channel, not RGBA"
     );
-    assert_eq!(desc.channel_type(), zenpixels::ChannelType::U8);
+    assert_eq!(desc.channel_type(), zenpixels_legacy::ChannelType::U8);
     assert_eq!(
         decoded.pixels().contiguous_bytes().as_ref(),
         original.as_contiguous_bytes().unwrap(),
@@ -295,8 +295,8 @@ fn roundtrip_graya8_with_metadata_stays_two_channel() {
         .unwrap();
 
     let desc = decoded.pixels().descriptor();
-    assert_eq!(desc.layout(), zenpixels::ChannelLayout::GrayAlpha);
-    assert_eq!(desc.channel_type(), zenpixels::ChannelType::U8);
+    assert_eq!(desc.layout(), zenpixels_legacy::ChannelLayout::GrayAlpha);
+    assert_eq!(desc.channel_type(), zenpixels_legacy::ChannelType::U8);
     assert_eq!(
         decoded.pixels().contiguous_bytes().as_ref(),
         original.as_contiguous_bytes().unwrap()
@@ -796,7 +796,10 @@ fn cicp_only_source_synthesizes_icc_on_encode() {
         expected.as_ref(),
         "embedded ICC must equal the synthesized P3 profile"
     );
-    assert_eq!(zenpixels::icc::extract_cicp(icc), Some(Cicp::DISPLAY_P3));
+    assert_eq!(
+        zenpixels_legacy::icc::extract_cicp(icc),
+        Some(Cicp::DISPLAY_P3)
+    );
     assert_eq!(
         decoded.pixels().contiguous_bytes().as_ref(),
         buf.as_contiguous_bytes().unwrap()
@@ -833,7 +836,7 @@ fn pq_cicp_only_source_synthesizes_a_pq_icc() {
         .icc_profile
         .clone()
         .expect("a PQ source needs an ICC in TIFF");
-    let id = zenpixels::icc::identify_common(&icc).expect("a known profile");
+    let id = zenpixels_legacy::icc::identify_common(&icc).expect("a known profile");
     let cicp = id.to_cicp().expect("CICP for the profile");
     assert_eq!(
         (cicp.color_primaries, cicp.transfer_characteristics),
@@ -878,8 +881,15 @@ fn metadata_default_no_metadata_is_byte_identical() {
     let buf = make_rgb8(8, 6);
     let with_traits = encode_via_trait(&buf);
 
+    let view = zenpixels::PixelView::from_packed(
+        buf.as_contiguous_bytes().unwrap(),
+        buf.width(),
+        buf.height(),
+        zenpixels::ImageSpec::rgb8_srgb(),
+    )
+    .unwrap();
     let plain = zentiff::encode(
-        &buf.as_slice(),
+        &view,
         &zentiff::TiffEncodeConfig::default(),
         &enough::Unstoppable,
     )

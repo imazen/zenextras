@@ -15,7 +15,7 @@ use zencodec::{
     ImageSequence, Metadata, Orientation, OrientationHint, Resolution, ResolutionUnit,
     ResourceLimits, SourceColor, resolve_color_emit,
 };
-use zenpixels::{PixelDescriptor, PixelSlice};
+use zenpixels_legacy::{PixelDescriptor, PixelSlice};
 
 use whereat::At;
 #[allow(unused_imports)]
@@ -91,6 +91,98 @@ static TIFF_DECODE_CAPS: DecodeCapabilities = DecodeCapabilities::new()
     .with_enforces_max_pixels(true)
     .with_enforces_max_memory(true)
     .with_inventory(cfg!(feature = "inventory"));
+
+// The pinned shared codec traits still use zenpixels 0.2. Borrow legacy
+// encode rows directly and adapt native decode storage only at trait ingress.
+fn native_view<'a>(pixels: &PixelSlice<'a>) -> crate::Result<zenpixels::PixelView<'a>> {
+    use zenpixels::{ChannelOrder, SampleType};
+    use zenpixels_legacy::{ChannelLayout, ChannelType};
+
+    let descriptor = pixels.descriptor();
+    let order = match descriptor.layout() {
+        ChannelLayout::Gray => ChannelOrder::Gray,
+        ChannelLayout::GrayAlpha => ChannelOrder::GrayAlpha,
+        ChannelLayout::Rgb => ChannelOrder::Rgb,
+        ChannelLayout::Rgba => ChannelOrder::Rgba,
+        _ => {
+            return Err(at!(TiffError::InvalidInput(
+                "unsupported TIFF channel layout".into()
+            )));
+        }
+    };
+    let sample = match descriptor.channel_type() {
+        ChannelType::U8 => SampleType::U8,
+        ChannelType::U16 => SampleType::U16,
+        ChannelType::F32 => SampleType::F32,
+        _ => {
+            return Err(at!(TiffError::InvalidInput(
+                "unsupported TIFF sample type".into()
+            )));
+        }
+    };
+    let spec = crate::decode::pixel_spec(order, sample);
+    zenpixels::PixelView::new(
+        pixels.as_strided_bytes(),
+        pixels.width(),
+        pixels.rows(),
+        pixels.stride(),
+        spec,
+    )
+    .map_err(|err| err.map_error(TiffError::from))
+}
+
+fn legacy_pixels(pixels: zenpixels::PixelBuf) -> crate::Result<zenpixels_legacy::PixelBuffer> {
+    use zenpixels::{AlphaMode, ChannelOrder, SampleType};
+    use zenpixels_legacy::{ChannelLayout, ChannelType, PixelBuffer, TransferFunction};
+
+    let layout = pixels.spec().layout;
+    let order = match layout.order {
+        ChannelOrder::Gray => ChannelLayout::Gray,
+        ChannelOrder::GrayAlpha => ChannelLayout::GrayAlpha,
+        ChannelOrder::Rgb => ChannelLayout::Rgb,
+        ChannelOrder::Rgba => ChannelLayout::Rgba,
+        _ => {
+            return Err(at!(TiffError::InvalidInput(
+                "unsupported TIFF channel layout".into()
+            )));
+        }
+    };
+    let sample = match layout.sample {
+        SampleType::U8 => ChannelType::U8,
+        SampleType::U16 => ChannelType::U16,
+        SampleType::F32 => ChannelType::F32,
+        _ => {
+            return Err(at!(TiffError::InvalidInput(
+                "unsupported TIFF sample type".into()
+            )));
+        }
+    };
+    let alpha = match pixels.spec().color.alpha() {
+        AlphaMode::Premultiplied => Some(zenpixels_legacy::AlphaMode::Premultiplied),
+        AlphaMode::Straight => Some(zenpixels_legacy::AlphaMode::Straight),
+        _ => None,
+    };
+    let descriptor = PixelDescriptor::new(sample, order, alpha, TransferFunction::Unknown);
+    let (width, height) = (pixels.width(), pixels.height());
+    if layout.sample == SampleType::U8 {
+        let bytes = pixels
+            .try_into_vec::<u8>()
+            .map_err(|err| err.map_error(TiffError::from))?;
+        return PixelBuffer::from_vec(bytes, width, height, descriptor)
+            .map_err(|err| at!(TiffError::InvalidInput(alloc::format!("{err}"))));
+    }
+
+    // The legacy owner needs an aligned offset inside Vec<u8>. Native
+    // Vec<u16>/Vec<f32> allocations cannot be deallocated as Vec<u8>.
+    let mut output = PixelBuffer::try_new(width, height, descriptor)
+        .map_err(|err| at!(TiffError::InvalidInput(alloc::format!("{err}"))))?;
+    let input = pixels.as_view();
+    let mut output_view = output.as_slice_mut();
+    for y in 0..height {
+        output_view.row_mut(y).copy_from_slice(input.row(y));
+    }
+    Ok(output)
+}
 
 /// Pixel formats the TIFF encoder accepts.
 ///
@@ -362,8 +454,12 @@ impl TiffCodecEncoder {
         let channel_count = pixels.descriptor().channels() as u8;
         let encode_meta = lower_metadata(self.metadata.as_ref(), &self.policy, channel_count)?;
 
-        let encoded =
-            crate::encode::encode_with_meta(&pixels, &self.config.inner, &encode_meta, stop)?;
+        let encoded = crate::encode::encode_with_meta(
+            &native_view(&pixels)?,
+            &self.config.inner,
+            &encode_meta,
+            stop,
+        )?;
         Ok(EncodeOutput::new(encoded, ImageFormat::Tiff))
     }
 }
@@ -863,8 +959,9 @@ impl TiffCodecDecoder<'_> {
         let mut info = tiff_info_to_image_info(&output.info);
         self.apply_policy_to_info(&mut info);
 
+        let pixels = legacy_pixels(output.pixels)?;
         let decoded =
-            DecodeOutput::new(output.pixels, info).with_source_encoding_details(TiffSourceEncoding);
+            DecodeOutput::new(pixels, info).with_source_encoding_details(TiffSourceEncoding);
         // `Preserve` (default) returns the decoded output unchanged: stored
         // pixels + stored dims + intrinsic EXIF tag. A bake hint physically
         // rotates the buffer and rewrites the reported dims/tag to match.
@@ -1076,7 +1173,7 @@ fn descriptor_for_probe(tiff: &TiffInfo) -> PixelDescriptor {
     let descriptor = descriptor_for_color_type(tiff);
     // Associated alpha decodes as premultiplied (see `decode::decode`).
     if tiff.associated_alpha && descriptor.alpha().is_some() {
-        descriptor.with_alpha(Some(zenpixels::AlphaMode::Premultiplied))
+        descriptor.with_alpha(Some(zenpixels_legacy::AlphaMode::Premultiplied))
     } else {
         descriptor
     }
@@ -1155,7 +1252,7 @@ mod tests {
     use super::*;
     use zencodec::decode::{Decode, DecodeJob, DecoderConfig};
     use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
-    use zenpixels::PixelBuffer;
+    use zenpixels_legacy::PixelBuffer;
 
     /// Helper: encode via the zencodec trait flow.
     fn encode_pixels(slice: PixelSlice<'_>) -> EncodeOutput {

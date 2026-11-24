@@ -14,7 +14,10 @@ use zencodec::decode::{
     DecoderConfig, OutputInfo,
 };
 use zencodec::{CodecError, ImageFormat, ImageInfo, ResourceLimits, SharedPulse, Unsupported};
-use zenpixels::PixelDescriptor;
+use zenpixels::{ChannelOrder, ImageSpec, SampleType};
+use zenpixels_legacy::{
+    ChannelLayout, ChannelType, PixelBuffer, PixelDescriptor, TransferFunction,
+};
 
 use crate::alloc_util::AllocPref;
 use crate::error::PsdError;
@@ -233,7 +236,8 @@ impl<'a> DecodeJob<'a> for PsdDecodeJob {
     fn output_info(&self, data: &[u8]) -> CodecResult<OutputInfo> {
         let layout = parser::parse_layout(data).map_err(CodecError::of)?;
         check_limits(&layout.info.header, &layout.info, self.limits.as_ref())?;
-        let descriptor = layout.info.header.output_descriptor(&layout.info.metadata);
+        let descriptor =
+            legacy_descriptor(&layout.info.header.output_descriptor(&layout.info.metadata))?;
         Ok(OutputInfo::full_decode(
             layout.info.header.width,
             layout.info.header.height,
@@ -347,6 +351,23 @@ impl Decode for PsdDecoder<'_> {
         let mut info = psd_info_to_image_info(&layout.info);
         apply_policy_to_info(&mut info, self.policy.as_ref());
 
+        // The parser produces byte-owned storage for every current output.
+        let descriptor = legacy_descriptor(pixels.spec())?;
+        let (width, height) = (pixels.width(), pixels.height());
+        let pixels = match pixels.try_into_vec_zero_copy::<u8>() {
+            Ok(bytes) => PixelBuffer::from_vec(bytes, width, height, descriptor)
+                .map_err(pixel_buffer_error)?,
+            Err(pixels) => {
+                let mut buffer =
+                    PixelBuffer::try_new(width, height, descriptor).map_err(pixel_buffer_error)?;
+                let input = pixels.as_view();
+                let mut output = buffer.as_slice_mut();
+                for y in 0..height {
+                    output.row_mut(y).copy_from_slice(input.row(y));
+                }
+                buffer
+            }
+        };
         Ok(DecodeOutput::new(pixels, info).with_source_encoding_details(PsdSourceEncoding))
     }
 }
@@ -391,7 +412,10 @@ pub(crate) fn check_limits(
         .into());
     }
     if let Some(max_mem) = limits.max_memory_bytes {
-        let bpp = header.output_descriptor(&info.metadata).bytes_per_pixel() as u64;
+        let bpp = header
+            .output_descriptor(&info.metadata)
+            .layout
+            .bytes_per_pixel() as u64;
         let row_bytes = header.depth.scanline_bytes(width).unwrap_or(0) as u64;
         let plane_mem = row_bytes
             .saturating_mul(height as u64)
@@ -407,6 +431,31 @@ pub(crate) fn check_limits(
         }
     }
     Ok(())
+}
+
+fn pixel_buffer_error(error: impl core::fmt::Display) -> At<CodecError> {
+    PsdError::PixelBuffer(alloc::format!("{error}")).into()
+}
+
+// Remove with the zencodec pixel contract upgrade.
+fn legacy_descriptor(spec: &ImageSpec) -> CodecResult<PixelDescriptor> {
+    let order = match spec.layout.order {
+        ChannelOrder::Gray => ChannelLayout::Gray,
+        ChannelOrder::GrayAlpha => ChannelLayout::GrayAlpha,
+        ChannelOrder::Rgb => ChannelLayout::Rgb,
+        ChannelOrder::Rgba => ChannelLayout::Rgba,
+        _ => return Err(pixel_buffer_error("unsupported PSD channel order")),
+    };
+    let (sample, transfer) = match spec.layout.sample {
+        SampleType::U8 => (ChannelType::U8, TransferFunction::Srgb),
+        SampleType::U16 => (ChannelType::U16, TransferFunction::Srgb),
+        SampleType::F32 => (ChannelType::F32, TransferFunction::Linear),
+        _ => return Err(pixel_buffer_error("unsupported PSD sample type")),
+    };
+    let alpha = order
+        .has_alpha()
+        .then_some(zenpixels_legacy::AlphaMode::Straight);
+    Ok(PixelDescriptor::new(sample, order, alpha, transfer))
 }
 
 fn psd_info_to_image_info(psd: &PsdInfo) -> ImageInfo {

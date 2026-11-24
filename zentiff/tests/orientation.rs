@@ -26,7 +26,7 @@ use tiff::tags::Tag;
 
 use zencodec::decode::{Decode, DecodeJob, DecoderConfig};
 use zencodec::{Orientation, OrientationHint};
-use zenpixels::PixelDescriptor;
+use zenpixels_legacy::PixelDescriptor;
 use zentiff::codec::TiffDecoderCodecConfig;
 
 /// Stored (coded) dimensions of the synthesized fixture.

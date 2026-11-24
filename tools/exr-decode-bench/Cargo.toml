@@ -19,3 +19,6 @@ rayon = "1.12.0"
 
 [lints.rust]
 unsafe_code = "forbid"
+
+[patch.crates-io]
+zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "42a0c5c83c5c418950eb528d92d57788f6700bcf" }

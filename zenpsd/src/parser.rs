@@ -7,7 +7,9 @@ use core::ops::Range;
 
 use enough::Stop;
 use whereat::at;
-use zenpixels::{PixelBuffer, PixelDescriptor};
+use zenpixels::{
+    AlphaMode, ChannelOrder, ColorSpace, ImageSpec, PixelBuf, SampleLayout, SampleType,
+};
 
 use crate::alloc_util::{AllocPref, alloc_zeroed};
 use crate::error::{PsdError, Result};
@@ -247,46 +249,39 @@ impl PsdHeader {
         }
     }
 
-    /// Output [`PixelDescriptor`] produced when decoding this PSD/PSB.
-    pub fn output_descriptor(&self, metadata: &PsdMetadata) -> PixelDescriptor {
+    /// Output [`ImageSpec`] produced when decoding this PSD/PSB.
+    pub fn output_descriptor(&self, metadata: &PsdMetadata) -> ImageSpec {
         let alpha = self.has_alpha(metadata);
         match (self.color_mode, self.depth, alpha) {
-            (ColorMode::Bitmap, _, _) => PixelDescriptor::GRAY8_SRGB,
+            (ColorMode::Bitmap, _, _) => ImageSpec::gray8_srgb(),
             (ColorMode::Grayscale | ColorMode::Duotone, BitDepth::Eight, false) => {
-                PixelDescriptor::GRAY8_SRGB
+                ImageSpec::gray8_srgb()
             }
             (ColorMode::Grayscale | ColorMode::Duotone, BitDepth::Eight, true) => {
-                PixelDescriptor::GRAYA8_SRGB
+                ImageSpec::graya8_srgb()
             }
             (ColorMode::Grayscale | ColorMode::Duotone, BitDepth::Sixteen, false) => {
-                PixelDescriptor::GRAY16_SRGB
+                ImageSpec::gray16_srgb()
             }
-            (ColorMode::Grayscale | ColorMode::Duotone, BitDepth::Sixteen, true) => {
-                PixelDescriptor::GRAYA16_SRGB
-            }
+            (ColorMode::Grayscale | ColorMode::Duotone, BitDepth::Sixteen, true) => ImageSpec::new(
+                SampleLayout::new(SampleType::U16, ChannelOrder::GrayAlpha),
+                ColorSpace::GRAY_SRGB.with_alpha(AlphaMode::Straight),
+            ),
             (ColorMode::Grayscale | ColorMode::Duotone, BitDepth::ThirtyTwo, false) => {
-                PixelDescriptor::GRAYF32_LINEAR
+                ImageSpec::grayf32_linear()
             }
             (ColorMode::Grayscale | ColorMode::Duotone, BitDepth::ThirtyTwo, true) => {
-                PixelDescriptor::RGBAF32_LINEAR
+                ImageSpec::rgbaf32_linear()
             }
-            (ColorMode::Indexed, _, false) => PixelDescriptor::RGB8_SRGB,
-            (ColorMode::Indexed, _, true) => PixelDescriptor::RGBA8_SRGB,
-            (ColorMode::Rgb | ColorMode::Cmyk, BitDepth::Eight, false) => {
-                PixelDescriptor::RGB8_SRGB
-            }
-            (ColorMode::Rgb | ColorMode::Cmyk, BitDepth::Eight, true) => {
-                PixelDescriptor::RGBA8_SRGB
-            }
-            (ColorMode::Rgb | ColorMode::Cmyk, BitDepth::Sixteen, false) => {
-                PixelDescriptor::RGB16_SRGB
-            }
-            (ColorMode::Rgb | ColorMode::Cmyk, BitDepth::Sixteen, true) => {
-                PixelDescriptor::RGBA16_SRGB
-            }
-            (ColorMode::Rgb, BitDepth::ThirtyTwo, false) => PixelDescriptor::RGBF32_LINEAR,
-            (ColorMode::Rgb, BitDepth::ThirtyTwo, true) => PixelDescriptor::RGBAF32_LINEAR,
-            _ => PixelDescriptor::RGBA8_SRGB,
+            (ColorMode::Indexed, _, false) => ImageSpec::rgb8_srgb(),
+            (ColorMode::Indexed, _, true) => ImageSpec::rgba8_srgb(),
+            (ColorMode::Rgb | ColorMode::Cmyk, BitDepth::Eight, false) => ImageSpec::rgb8_srgb(),
+            (ColorMode::Rgb | ColorMode::Cmyk, BitDepth::Eight, true) => ImageSpec::rgba8_srgb(),
+            (ColorMode::Rgb | ColorMode::Cmyk, BitDepth::Sixteen, false) => ImageSpec::rgb16_srgb(),
+            (ColorMode::Rgb | ColorMode::Cmyk, BitDepth::Sixteen, true) => ImageSpec::rgba16_srgb(),
+            (ColorMode::Rgb, BitDepth::ThirtyTwo, false) => ImageSpec::rgbf32_linear(),
+            (ColorMode::Rgb, BitDepth::ThirtyTwo, true) => ImageSpec::rgbaf32_linear(),
+            _ => ImageSpec::rgba8_srgb(),
         }
     }
 }
@@ -340,18 +335,18 @@ pub(crate) struct ParsedLayout {
 /// Decoded PSD/PSB image and metadata.
 #[derive(Debug)]
 pub struct DecodedPsd {
-    pixels: PixelBuffer,
+    pixels: PixelBuf,
     info: PsdInfo,
 }
 
 impl DecodedPsd {
     /// Borrow the decoded pixel buffer.
-    pub fn pixels(&self) -> &PixelBuffer {
+    pub fn pixels(&self) -> &PixelBuf {
         &self.pixels
     }
 
     /// Consume and return the decoded pixel buffer.
-    pub fn into_pixels(self) -> PixelBuffer {
+    pub fn into_pixels(self) -> PixelBuf {
         self.pixels
     }
 
@@ -717,13 +712,13 @@ fn parse_image_resources(res_bytes: &[u8]) -> Result<PsdMetadata> {
 }
 
 /// Decompress and interleave the merged Image Data section.
-/// Returns `(PixelBuffer, end_offset_in_file)`.
+/// Returns `(PixelBuf, end_offset_in_file)`.
 pub(crate) fn decode_merged_image(
     data: &[u8],
     layout: &ParsedLayout,
     stop: &dyn Stop,
     alloc_pref: AllocPref,
-) -> Result<(PixelBuffer, usize)> {
+) -> Result<(PixelBuf, usize)> {
     let header = &layout.info.header;
     let total_channels = header.channels as usize;
     let used_channels = header.used_channels() as usize;
@@ -1029,7 +1024,7 @@ fn apply_zip_prediction(
     Ok(())
 }
 
-/// Convert decoded planar channel data into an interleaved [`PixelBuffer`].
+/// Convert decoded planar channel data into an interleaved [`PixelBuf`].
 fn interleave_planes(
     planes: &mut [u8],
     header: &PsdHeader,
@@ -1038,7 +1033,7 @@ fn interleave_planes(
     row_bytes: usize,
     plane_bytes: usize,
     alloc_pref: AllocPref,
-) -> Result<PixelBuffer> {
+) -> Result<PixelBuf> {
     let width = header.width;
     let height = header.height;
     let w = width as usize;
@@ -1048,7 +1043,7 @@ fn interleave_planes(
         .ok_or_else(|| at!(PsdError::Malformed("pixel count overflow")))?;
     let descriptor = header.output_descriptor(metadata);
     let out_bytes = num_pixels
-        .checked_mul(descriptor.bytes_per_pixel())
+        .checked_mul(descriptor.layout.bytes_per_pixel())
         .ok_or_else(|| at!(PsdError::Malformed("output buffer size overflow")))?;
     let has_alpha = header.has_alpha(metadata);
 
@@ -1384,6 +1379,6 @@ fn interleave_planes(
         }
     };
 
-    PixelBuffer::from_vec(out, width, height, descriptor)
+    PixelBuf::from_vec(out, width, height, descriptor)
         .map_err(|e| at!(PsdError::PixelBuffer(alloc::format!("{e}"))))
 }

@@ -3,7 +3,7 @@ use std::borrow::Cow;
 use zencodec::Metadata;
 use zencodec::decode::{Decode, DecodeJob, DecodePolicy, DecoderConfig};
 use zencodec::encode::{EncodeJob, EncodePolicy, EncoderConfig};
-use zenpixels::{PixelDescriptor, PixelSlice};
+use zenpixels_legacy::{PixelDescriptor, PixelSlice};
 use zentiff::codec::{TiffDecoderCodecConfig as D, TiffEncoderCodecConfig as E};
 #[test]
 fn strided_fixture_policy_and_inventory_contracts() {

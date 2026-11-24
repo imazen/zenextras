@@ -12,8 +12,11 @@ use alloc::vec::Vec;
 use enough::Stop;
 use tiff::decoder::ifd::Value;
 use tiff::tags::Tag;
-use whereat::{ResultAtExt, at};
-use zenpixels::{ChannelType, PixelBuffer, PixelDescriptor};
+use whereat::at;
+use zenpixels::{
+    AlphaMode, ChannelOrder, ColorSpace, ImageSpec, PixelBuf, Primaries, SampleLayout, SampleType,
+    SignalRange, Transfer,
+};
 
 use crate::alloc_util::{AllocPref, vec_with_capacity, vec_zeroed};
 
@@ -87,7 +90,7 @@ pub struct TiffInfo {
 #[non_exhaustive]
 pub struct TiffDecodeOutput {
     /// Decoded pixel data.
-    pub pixels: PixelBuffer,
+    pub pixels: PixelBuf,
     /// Image metadata.
     pub info: TiffInfo,
 }
@@ -968,7 +971,7 @@ pub fn decode(
         )));
     }
 
-    let (pixels, _descriptor) = convert_to_pixel_buffer(
+    let pixels = convert_to_pixel_buffer(
         width,
         height,
         color_type,
@@ -979,8 +982,11 @@ pub fn decode(
 
     // Associated alpha: the color samples are premultiplied. Label them so,
     // rather than as straight alpha.
-    let pixels = if info.associated_alpha && pixels.descriptor().alpha().is_some() {
-        pixels.with_alpha_mode(Some(zenpixels::AlphaMode::Premultiplied))
+    let pixels = if info.associated_alpha && pixels.spec().layout.order.has_alpha_slot() {
+        let spec = pixels.spec().clone().with_alpha(AlphaMode::Premultiplied);
+        pixels
+            .with_spec(spec)
+            .map_err(|err| err.map_error(TiffError::from))?
     } else {
         pixels
     };
@@ -1156,80 +1162,57 @@ fn output_bytes_per_pixel(ct: tiff::ColorType) -> usize {
     channels * bytes_per_channel
 }
 
-/// Map a tiff ColorType to the best-fit PixelDescriptor.
-fn descriptor_for(ct: tiff::ColorType, is_float: bool) -> PixelDescriptor {
-    match ct {
-        tiff::ColorType::Gray(d) => match d {
-            1..=8 => PixelDescriptor::GRAY8,
-            9..=16 if is_float => PixelDescriptor::GRAYF32,
-            9..=16 => PixelDescriptor::GRAY16,
-            _ if is_float => PixelDescriptor::GRAYF32,
-            _ => PixelDescriptor::GRAY16,
-        },
-        tiff::ColorType::GrayA(d) => match d {
-            1..=8 => PixelDescriptor::GRAYA8,
-            9..=16 if is_float => PixelDescriptor::GRAYAF32,
-            9..=16 => PixelDescriptor::GRAYA16,
-            _ if is_float => PixelDescriptor::GRAYAF32,
-            _ => PixelDescriptor::GRAYA16,
-        },
-        tiff::ColorType::RGB(d) | tiff::ColorType::YCbCr(d) | tiff::ColorType::Lab(d) => match d {
-            1..=8 => PixelDescriptor::RGB8,
-            9..=16 if is_float => PixelDescriptor::RGBF32,
-            9..=16 => PixelDescriptor::RGB16,
-            _ if is_float => PixelDescriptor::RGBF32,
-            _ => PixelDescriptor::RGB16,
-        },
-        tiff::ColorType::RGBA(d) => match d {
-            1..=8 => PixelDescriptor::RGBA8,
-            9..=16 if is_float => PixelDescriptor::RGBAF32,
-            9..=16 => PixelDescriptor::RGBA16,
-            _ if is_float => PixelDescriptor::RGBAF32,
-            _ => PixelDescriptor::RGBA16,
-        },
-        tiff::ColorType::Palette(_) => PixelDescriptor::RGB8,
-        // CMYK/CMYKA → convert to RGBA
-        tiff::ColorType::CMYK(d) | tiff::ColorType::CMYKA(d) => match d {
-            1..=8 => PixelDescriptor::RGBA8,
-            9..=16 if is_float => PixelDescriptor::RGBAF32,
-            9..=16 => PixelDescriptor::RGBA16,
-            _ if is_float => PixelDescriptor::RGBAF32,
-            _ => PixelDescriptor::RGBA16,
-        },
-        tiff::ColorType::Multiband {
-            bit_depth,
-            num_samples,
-        } => {
-            match (num_samples, bit_depth) {
-                (1, 1..=8) => PixelDescriptor::GRAY8,
-                (1, _) if is_float => PixelDescriptor::GRAYF32,
-                (1, _) => PixelDescriptor::GRAY16,
-                // 2 channels → GrayAlpha. A gray+alpha image written as Gray +
-                // `ExtraSamples` lands here (BlackIsZero with 2 samples decodes
-                // to `Multiband { num_samples: 2 }`, never `GrayA`), so the float
-                // case must map to GRAYAF32 — otherwise f32 samples would be
-                // mis-typed as u16 and `result_to_bytes` would reject them.
-                (2, 1..=8) => PixelDescriptor::GRAYA8,
-                (2, _) if is_float => PixelDescriptor::GRAYAF32,
-                (2, _) => PixelDescriptor::GRAYA16,
-                (3, 1..=8) => PixelDescriptor::RGB8,
-                (3, _) if is_float => PixelDescriptor::RGBF32,
-                (3, _) => PixelDescriptor::RGB16,
-                (4, 1..=8) => PixelDescriptor::RGBA8,
-                (4, _) if is_float => PixelDescriptor::RGBAF32,
-                (4, _) => PixelDescriptor::RGBA16,
-                // 5+ channels: drop extras, treat as RGBA
-                (_, 1..=8) => PixelDescriptor::RGBA8,
-                _ if is_float => PixelDescriptor::RGBAF32,
-                _ => PixelDescriptor::RGBA16,
-            }
+/// The decoded layout has known channel roles, but TIFF need not declare a
+/// transfer function. Keep the previous BT.709 fallback for RGB; source tags
+/// remain available in TiffInfo.
+pub(crate) const fn pixel_spec(order: ChannelOrder, sample: SampleType) -> ImageSpec {
+    let alpha = if order.has_alpha_slot() {
+        AlphaMode::Straight
+    } else {
+        AlphaMode::None
+    };
+    let color = if order.is_gray_family() {
+        ColorSpace::Gray {
+            transfer: Transfer::Unknown,
+            range: SignalRange::Full,
+            alpha,
+            white: None,
         }
-        // Non-exhaustive fallback
-        _ => PixelDescriptor::RGBA8,
-    }
+    } else {
+        ColorSpace::Rgb {
+            primaries: Primaries::Bt709,
+            transfer: Transfer::Unknown,
+            range: SignalRange::Full,
+            alpha,
+            white: None,
+        }
+    };
+    ImageSpec::new(SampleLayout::new(sample, order), color)
 }
 
-/// Convert tiff DecodingResult into a PixelBuffer.
+fn descriptor_for(ct: tiff::ColorType, is_float: bool) -> ImageSpec {
+    use tiff::ColorType;
+    let order = match ct {
+        ColorType::Gray(_) | ColorType::Multiband { num_samples: 1, .. } => ChannelOrder::Gray,
+        ColorType::GrayA(_) | ColorType::Multiband { num_samples: 2, .. } => {
+            ChannelOrder::GrayAlpha
+        }
+        ColorType::RGB(_)
+        | ColorType::YCbCr(_)
+        | ColorType::Palette(_)
+        | ColorType::Multiband { num_samples: 3, .. } => ChannelOrder::Rgb,
+        _ => ChannelOrder::Rgba,
+    };
+    let sample = match ct {
+        ColorType::Palette(_) => SampleType::U8,
+        _ if ct.bit_depth() <= 8 => SampleType::U8,
+        _ if is_float => SampleType::F32,
+        _ => SampleType::U16,
+    };
+    pixel_spec(order, sample)
+}
+
+/// Convert tiff DecodingResult into a PixelBuf.
 #[track_caller]
 fn convert_to_pixel_buffer(
     width: u32,
@@ -1239,49 +1222,43 @@ fn convert_to_pixel_buffer(
     #[cfg(feature = "_palette")] color_map: Option<&[u16]>,
     #[cfg(not(feature = "_palette"))] _color_map: Option<&[u16]>,
     alloc_pref: AllocPref,
-) -> Result<(PixelBuffer, PixelDescriptor)> {
+) -> Result<PixelBuf> {
     use tiff::decoder::DecodingResult as DR;
 
     let is_float = matches!(&result, DR::F16(_) | DR::F32(_) | DR::F64(_));
 
     let descriptor = descriptor_for(color_type, is_float);
 
-    let raw_bytes: Vec<u8> = match color_type {
+    match color_type {
         #[cfg(feature = "_palette")]
         tiff::ColorType::Palette(bits) => {
             let map = color_map
                 .ok_or_else(|| at!(TiffError::Decode("palette image missing color map".into())))?;
-            return expand_palette(width, height, bits, result, map, alloc_pref);
+            expand_palette(width, height, bits, result, map, alloc_pref)
         }
         #[cfg(not(feature = "_palette"))]
-        tiff::ColorType::Palette(_) => {
-            return Err(at!(TiffError::UnsupportedFeature(
-                "palette TIFF decoding requires the `_palette` feature \
+        tiff::ColorType::Palette(_) => Err(at!(TiffError::UnsupportedFeature(
+            "palette TIFF decoding requires the `_palette` feature \
                  (blocked on tiff crate 0.12+ release)"
-                    .into(),
-            )));
-        }
+                .into(),
+        ))),
         tiff::ColorType::CMYK(_) => {
-            return convert_cmyk(width, height, color_type, result, false, alloc_pref);
+            convert_cmyk(width, height, color_type, result, false, alloc_pref)
         }
         tiff::ColorType::CMYKA(_) => {
-            return convert_cmyk(width, height, color_type, result, true, alloc_pref);
+            convert_cmyk(width, height, color_type, result, true, alloc_pref)
         }
-        _ => result_to_bytes(width, height, color_type, result, descriptor, alloc_pref)?,
-    };
-
-    let buf =
-        PixelBuffer::from_vec(raw_bytes, width, height, descriptor).map_err_at(TiffError::from)?;
-    Ok((buf, descriptor))
+        _ => result_to_buffer(width, height, color_type, result, descriptor, alloc_pref),
+    }
 }
 
-/// Cast a `Vec<T>` to `Vec<u8>`, falling back to a copy if alignment prevents
-/// zero-copy reinterpretation.
-fn vec_to_bytes<T: bytemuck::Pod>(v: Vec<T>) -> Vec<u8> {
-    match bytemuck::try_cast_vec(v) {
-        Ok(bytes) => bytes,
-        Err((_err, v)) => bytemuck::cast_slice::<T, u8>(&v).to_vec(),
-    }
+fn adopt_samples<T: bytemuck::Pod>(
+    samples: Vec<T>,
+    width: u32,
+    height: u32,
+    spec: ImageSpec,
+) -> Result<PixelBuf> {
+    PixelBuf::from_vec(samples, width, height, spec).map_err(|err| err.map_error(TiffError::from))
 }
 
 /// Unpack sub-byte samples (1, 2, 4, 6-bit) packed into bytes to one byte per sample.
@@ -1458,24 +1435,24 @@ fn interleave_planes(
 ///
 /// Handles sub-byte unpacking, type conversion, and channel count adjustment.
 #[track_caller]
-fn result_to_bytes(
+fn result_to_buffer(
     width: u32,
     height: u32,
     color_type: tiff::ColorType,
     result: tiff::decoder::DecodingResult,
-    descriptor: PixelDescriptor,
+    descriptor: ImageSpec,
     alloc_pref: AllocPref,
-) -> Result<Vec<u8>> {
+) -> Result<PixelBuf> {
     use tiff::decoder::DecodingResult as DR;
 
-    let target_ct = descriptor.channel_type();
-    let target_channels = descriptor.channels();
+    let target_ct = descriptor.layout.sample;
+    let target_channels = descriptor.layout.channels();
     let bit_depth = color_type.bit_depth();
     let src_channels = color_type.num_samples();
 
     // Handle sub-byte packed data (1, 2, 4, 6-bit depths)
     if bit_depth < 8
-        && target_ct == ChannelType::U8
+        && target_ct == SampleType::U8
         && let DR::U8(packed) = result
     {
         let mut expanded =
@@ -1502,17 +1479,17 @@ fn result_to_bytes(
             )?;
         }
 
-        return Ok(expanded);
+        return adopt_samples(expanded, width, height, descriptor);
     }
 
     // Handle Multiband channel count mismatch (e.g., 5-channel source → 4-channel RGBA)
     let needs_channel_adjust = matches!(color_type, tiff::ColorType::Multiband { .. })
         && (src_channels as usize) != target_channels;
 
-    let bytes = match (result, target_ct) {
+    match (result, target_ct) {
         // Direct 8-bit passthrough
-        (DR::U8(v), ChannelType::U8) => {
-            if needs_channel_adjust {
+        (DR::U8(v), SampleType::U8) => {
+            let samples = if needs_channel_adjust {
                 adjust_channels_u8(
                     v,
                     src_channels as usize,
@@ -1523,100 +1500,100 @@ fn result_to_bytes(
                 )?
             } else {
                 v
-            }
+            };
+            adopt_samples(samples, width, height, descriptor)
         }
 
         // Direct 16-bit passthrough
-        (DR::U16(v), ChannelType::U16) => {
-            if needs_channel_adjust {
-                vec_to_bytes(adjust_channels_u16(
+        (DR::U16(v), SampleType::U16) => {
+            let samples = if needs_channel_adjust {
+                adjust_channels_u16(
                     v,
                     src_channels as usize,
                     target_channels,
                     width,
                     height,
                     alloc_pref,
-                )?)
+                )?
             } else {
-                vec_to_bytes(v)
-            }
+                v
+            };
+            adopt_samples(samples, width, height, descriptor)
         }
 
         // Direct f32 passthrough
-        (DR::F32(v), ChannelType::F32) => vec_to_bytes(v),
+        (DR::F32(v), SampleType::F32) => adopt_samples(v, width, height, descriptor),
 
         // Signed 8-bit → unsigned 8-bit (offset)
-        (DR::I8(v), ChannelType::U8) => v
-            .into_iter()
-            .map(|s| s.wrapping_add(i8::MIN) as u8)
-            .collect(),
+        (DR::I8(v), SampleType::U8) => {
+            let samples: Vec<u8> = v
+                .into_iter()
+                .map(|s| s.wrapping_add(i8::MIN) as u8)
+                .collect();
+            adopt_samples(samples, width, height, descriptor)
+        }
 
         // 16-bit signed → unsigned 16-bit (offset)
-        (DR::I16(v), ChannelType::U16) => {
+        (DR::I16(v), SampleType::U16) => {
             let u: Vec<u16> = v
                 .into_iter()
                 .map(|s| s.wrapping_add(i16::MIN) as u16)
                 .collect();
-            vec_to_bytes(u)
+            adopt_samples(u, width, height, descriptor)
         }
 
         // 32-bit unsigned → 16-bit (scale down)
-        (DR::U32(v), ChannelType::U16) => {
+        (DR::U32(v), SampleType::U16) => {
             let u: Vec<u16> = v.into_iter().map(|s| (s >> 16) as u16).collect();
-            vec_to_bytes(u)
+            adopt_samples(u, width, height, descriptor)
         }
 
         // 64-bit unsigned → 16-bit (scale down)
-        (DR::U64(v), ChannelType::U16) => {
+        (DR::U64(v), SampleType::U16) => {
             let u: Vec<u16> = v.into_iter().map(|s| (s >> 48) as u16).collect();
-            vec_to_bytes(u)
+            adopt_samples(u, width, height, descriptor)
         }
 
         // 32-bit signed → 16-bit (offset + scale)
-        (DR::I32(v), ChannelType::U16) => {
+        (DR::I32(v), SampleType::U16) => {
             let u: Vec<u16> = v
                 .into_iter()
                 .map(|s| ((s as i64 - i32::MIN as i64) >> 16) as u16)
                 .collect();
-            vec_to_bytes(u)
+            adopt_samples(u, width, height, descriptor)
         }
 
         // 64-bit signed → 16-bit (offset + scale)
-        (DR::I64(v), ChannelType::U16) => {
+        (DR::I64(v), SampleType::U16) => {
             let u: Vec<u16> = v
                 .into_iter()
                 .map(|s| ((s as i128 - i64::MIN as i128) >> 48) as u16)
                 .collect();
-            vec_to_bytes(u)
+            adopt_samples(u, width, height, descriptor)
         }
 
         // f16 → f32
-        (DR::F16(v), ChannelType::F32) => {
+        (DR::F16(v), SampleType::F32) => {
             let f: Vec<f32> = v.into_iter().map(|h| h.to_f32()).collect();
-            vec_to_bytes(f)
+            adopt_samples(f, width, height, descriptor)
         }
 
         // f64 → f32
-        (DR::F64(v), ChannelType::F32) => {
+        (DR::F64(v), SampleType::F32) => {
             let f: Vec<f32> = v.into_iter().map(|d| d as f32).collect();
-            vec_to_bytes(f)
+            adopt_samples(f, width, height, descriptor)
         }
 
         // 32-bit unsigned → f32 (normalize)
-        (DR::U32(v), ChannelType::F32) => {
+        (DR::U32(v), SampleType::F32) => {
             let f: Vec<f32> = v.into_iter().map(|u| u as f32 / u32::MAX as f32).collect();
-            vec_to_bytes(f)
+            adopt_samples(f, width, height, descriptor)
         }
 
-        // Catch-all
-        (_other, _) => {
-            return Err(at!(TiffError::UnsupportedFeature(alloc::format!(
-                "cannot convert TIFF sample type to {target_ct:?}"
-            ))));
-        }
-    };
-
-    Ok(bytes)
+        _ => Err(at!(TiffError::UnsupportedFeature(alloc::format!(
+            "cannot convert TIFF sample type to {target_ct:?}"
+        )))),
+    }
 }
 
 /// Compute `pixel_count * dst_ch` with an overflow guard (defensive; the inputs
@@ -1746,7 +1723,7 @@ fn convert_cmyk(
     result: tiff::decoder::DecodingResult,
     has_alpha: bool,
     alloc_pref: AllocPref,
-) -> Result<(PixelBuffer, PixelDescriptor)> {
+) -> Result<PixelBuf> {
     use tiff::decoder::DecodingResult as DR;
 
     match result {
@@ -1778,10 +1755,8 @@ fn convert_cmyk(
                 out[3] = if has_alpha { px[4] } else { 255 };
             }
 
-            let desc = PixelDescriptor::RGBA8;
-            let buf =
-                PixelBuffer::from_vec(rgba, width, height, desc).map_err_at(TiffError::from)?;
-            Ok((buf, desc))
+            let desc = pixel_spec(ChannelOrder::Rgba, SampleType::U8);
+            adopt_samples(rgba, width, height, desc)
         }
         DR::I8(data) => {
             // Signed CMYK: offset to unsigned first, then convert
@@ -1809,10 +1784,8 @@ fn convert_cmyk(
                 };
             }
 
-            let desc = PixelDescriptor::RGBA8;
-            let buf =
-                PixelBuffer::from_vec(rgba, width, height, desc).map_err_at(TiffError::from)?;
-            Ok((buf, desc))
+            let desc = pixel_spec(ChannelOrder::Rgba, SampleType::U8);
+            adopt_samples(rgba, width, height, desc)
         }
         DR::U16(data) => {
             let src_channels: usize = if has_alpha { 5 } else { 4 };
@@ -1837,10 +1810,8 @@ fn convert_cmyk(
                 out[3] = if has_alpha { px[4] } else { u16::MAX };
             }
 
-            let desc = PixelDescriptor::RGBA16;
-            let buf = PixelBuffer::from_vec(vec_to_bytes(rgba), width, height, desc)
-                .map_err_at(TiffError::from)?;
-            Ok((buf, desc))
+            let desc = pixel_spec(ChannelOrder::Rgba, SampleType::U16);
+            adopt_samples(rgba, width, height, desc)
         }
         DR::F32(data) => {
             let src_channels: usize = if has_alpha { 5 } else { 4 };
@@ -1864,10 +1835,8 @@ fn convert_cmyk(
                 out[3] = if has_alpha { px[4] } else { 1.0 };
             }
 
-            let desc = PixelDescriptor::RGBAF32;
-            let buf = PixelBuffer::from_vec(vec_to_bytes(rgba), width, height, desc)
-                .map_err_at(TiffError::from)?;
-            Ok((buf, desc))
+            let desc = pixel_spec(ChannelOrder::Rgba, SampleType::F32);
+            adopt_samples(rgba, width, height, desc)
         }
         _ => Err(at!(TiffError::UnsupportedFeature(
             "unsupported sample type for CMYK conversion".into(),
@@ -1888,7 +1857,7 @@ fn expand_palette(
     result: tiff::decoder::DecodingResult,
     color_map: &[u16],
     alloc_pref: AllocPref,
-) -> Result<(PixelBuffer, PixelDescriptor)> {
+) -> Result<PixelBuf> {
     use tiff::decoder::DecodingResult as DR;
 
     let num_entries = 1usize << bits;
@@ -1952,9 +1921,8 @@ fn expand_palette(
         out[2] = (color_map[2 * num_entries + idx] >> 8) as u8;
     }
 
-    let desc = PixelDescriptor::RGB8;
-    let buf = PixelBuffer::from_vec(rgb, width, height, desc).map_err_at(TiffError::from)?;
-    Ok((buf, desc))
+    let desc = pixel_spec(ChannelOrder::Rgb, SampleType::U8);
+    adopt_samples(rgb, width, height, desc)
 }
 
 /// Extract raw palette indices from sub-byte packed data (no scaling).
@@ -2008,7 +1976,6 @@ fn unpack_palette_indices(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use zenpixels::ChannelLayout;
 
     #[test]
     fn default_config_has_limits() {
@@ -2039,34 +2006,34 @@ mod tests {
     #[test]
     fn descriptor_for_gray8() {
         let d = descriptor_for(tiff::ColorType::Gray(8), false);
-        assert_eq!(d.channel_type(), ChannelType::U8);
-        assert_eq!(d.layout(), ChannelLayout::Gray);
+        assert_eq!(d.layout.sample, SampleType::U8);
+        assert_eq!(d.layout.order, ChannelOrder::Gray);
     }
 
     #[test]
     fn descriptor_for_rgb16() {
         let d = descriptor_for(tiff::ColorType::RGB(16), false);
-        assert_eq!(d.channel_type(), ChannelType::U16);
-        assert_eq!(d.layout(), ChannelLayout::Rgb);
+        assert_eq!(d.layout.sample, SampleType::U16);
+        assert_eq!(d.layout.order, ChannelOrder::Rgb);
     }
 
     #[test]
     fn descriptor_for_rgba_float() {
         let d = descriptor_for(tiff::ColorType::RGBA(32), true);
-        assert_eq!(d.channel_type(), ChannelType::F32);
-        assert_eq!(d.layout(), ChannelLayout::Rgba);
+        assert_eq!(d.layout.sample, SampleType::F32);
+        assert_eq!(d.layout.order, ChannelOrder::Rgba);
     }
 
     #[test]
     fn descriptor_for_cmyk() {
         let d = descriptor_for(tiff::ColorType::CMYK(8), false);
-        assert_eq!(d.layout(), ChannelLayout::Rgba);
+        assert_eq!(d.layout.order, ChannelOrder::Rgba);
     }
 
     #[test]
     fn descriptor_for_palette() {
         let d = descriptor_for(tiff::ColorType::Palette(8), false);
-        assert_eq!(d, PixelDescriptor::RGB8);
+        assert_eq!(d, pixel_spec(ChannelOrder::Rgb, SampleType::U8));
     }
 
     #[test]
@@ -2078,8 +2045,8 @@ mod tests {
             },
             false,
         );
-        assert_eq!(d.layout(), ChannelLayout::GrayAlpha);
-        assert_eq!(d.channel_type(), ChannelType::U8);
+        assert_eq!(d.layout.order, ChannelOrder::GrayAlpha);
+        assert_eq!(d.layout.sample, SampleType::U8);
     }
 
     /// Untrusted dims against a short packed buffer must error, not panic

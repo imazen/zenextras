@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check independently resolved root/fuzz graphs for one shared contract family.
+"""Check independently resolved root/fuzz graphs for the pinned contract families.
 
 Run in an isolated export (outside workspace path overrides) through run-heavy.
 Resolution preserves existing lock selections where constraints permit. Keep the
@@ -16,6 +16,7 @@ CORE = "f02a17ec6001a9efcad1267f92a3ea928ed06e57"
 PIXELS = "283655c5424e0ad7ebc6d2acd94670fac1e29158"
 FAMILY = {"zencodec", "zencodec-testkit", "zencodec-io", "zencodec-media",
           "zencodec-media-testkit", "zencodec-coroutine", "zenmeta"}
+NATIVE_PIXELS = "42a0c5c83c5c418950eb528d92d57788f6700bcf"
 PIXEL_FAMILY = {"zenpixels", "zenpixels-convert"}
 GRAPHS = [".", "zentiff/fuzz", "zenpdf/fuzz", "zensvg/fuzz", "zenjp2/fuzz", "zenexr/fuzz"]
 
@@ -38,8 +39,10 @@ def main():
         # Explicitly unlock the paired pixels family; Cargo otherwise retains
         # the registry 0.2.16 selection even though the new core needs 0.2.17.
         if lock.exists():
-            names = {p["name"] for p in tomllib.loads(lock.read_text())["package"]}
-            selected = sorted(names & PIXEL_FAMILY)
+            packages = tomllib.loads(lock.read_text())["package"]
+            selected = sorted(
+                f"{p['name']}@{p['version']}" for p in packages if p["name"] in PIXEL_FAMILY
+            )
             if selected:
                 update = ["cargo", "update", "--manifest-path", str(root / directory / "Cargo.toml")]
                 for crate in selected:
@@ -60,14 +63,17 @@ def main():
                 shared.setdefault(package["name"], []).append({
                     "version": package["version"], "source": package["source"]})
         for crate, entries in shared.items():
-            if len(entries) != 1:
-                raise RuntimeError(f"{directory}: duplicate {crate}: {entries}")
-            expected = CORE if crate in FAMILY else PIXELS if crate in PIXEL_FAMILY else None
-            if expected and not (entries[0]["source"] or "").endswith("#" + expected):
+            expected = [CORE] if crate in FAMILY else [PIXELS] if crate in PIXEL_FAMILY else [None]
+            if crate == "zenpixels" and directory != "zensvg/fuzz":
+                expected.append(NATIVE_PIXELS)
+            sources = [(entry["source"] or "").split("#")[-1] for entry in entries]
+            if len(sources) != len(expected) or any(
+                rev is not None and rev not in sources for rev in expected
+            ):
                 raise RuntimeError(f"{directory}: unexpected source for {crate}: {entries}")
         results.append({"graph": directory, "shared": shared})
         (receipts / "graphs.json").write_text(json.dumps(results, indent=2) + "\n")
-        print(f"{directory}: one source for each of {len(shared)} present shared crates", flush=True)
+        print(f"{directory}: verified sources for {len(shared)} shared crate names", flush=True)
 
 
 if __name__ == "__main__":

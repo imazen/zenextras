@@ -134,7 +134,11 @@ fn invalid_pdf() {
 fn white_background() {
     // Render at tiny scale for speed; mostly-empty page should be white.
     let page = render_page(&test_pdf(), 0, &RenderBounds::Scale(0.1)).unwrap();
-    let bytes = page.buffer.as_contiguous_bytes().expect("contiguous");
+    let bytes = page
+        .buffer
+        .as_view()
+        .as_contiguous_bytes()
+        .expect("contiguous");
     // Spot-check: last row should be all-white (no content at bottom of page).
     let bpp = 4;
     let row_bytes = page.buffer.width() as usize * bpp;

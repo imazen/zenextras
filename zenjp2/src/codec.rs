@@ -15,7 +15,8 @@ use zencodec::decode::{
     DecoderConfig, OutputInfo,
 };
 use zencodec::{CodecError, ImageFormat, ImageInfo, ResourceLimits, SharedPulse, Unsupported};
-use zenpixels::{PixelBuffer, PixelDescriptor};
+use zenpixels::{ImageSpec, PixelBuf};
+use zenpixels_legacy::{PixelBuffer, PixelDescriptor};
 
 use crate::alloc_util::AllocPref;
 use crate::error::Jp2Error;
@@ -412,8 +413,22 @@ impl Decode for Jp2Decoder<'_> {
             raw_u8
         };
 
-        let pixel_buffer = PixelBuffer::from_vec(pixels_u8, width, height, descriptor)
-            .map_err(|e| Jp2Error::PixelBuffer(alloc::format!("{e}")))?;
+        let spec = match descriptor.layout() {
+            zenpixels_legacy::ChannelLayout::Gray => ImageSpec::gray8_srgb(),
+            zenpixels_legacy::ChannelLayout::Rgb => ImageSpec::rgb8_srgb(),
+            _ => ImageSpec::rgba8_srgb(),
+        };
+        let buffer_error =
+            |error: &dyn core::fmt::Display| Jp2Error::PixelBuffer(alloc::format!("{error}"));
+        let pixels = PixelBuf::from_bytes(pixels_u8, width, height, spec)
+            .map_err(|err| buffer_error(&err))?;
+        // The trait still takes a 0.2 buffer. Both owners can adopt this
+        // byte allocation without a raster copy.
+        let bytes = pixels
+            .try_into_vec::<u8>()
+            .map_err(|err| buffer_error(&err))?;
+        let pixel_buffer = PixelBuffer::from_vec(bytes, width, height, descriptor)
+            .map_err(|err| buffer_error(&err))?;
 
         let mut info = ImageInfo::new(width, height, ImageFormat::Jp2).with_alpha(has_alpha);
 

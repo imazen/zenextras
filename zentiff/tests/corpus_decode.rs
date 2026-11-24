@@ -5,7 +5,7 @@
 #![allow(deprecated)]
 
 use enough::Unstoppable;
-use zenpixels::PixelDescriptor;
+use zenpixels::{AlphaMode, ChannelOrder, ColorSpace, ImageSpec, SampleLayout, SampleType};
 use zentiff::{TiffDecodeConfig, decode, probe};
 
 fn try_all_files_in(dir: &std::path::Path, results: &mut Vec<(String, Result<String, String>)>) {
@@ -44,13 +44,13 @@ fn try_all_files_in(dir: &std::path::Path, results: &mut Vec<(String, Result<Str
         let config = TiffDecodeConfig::none();
         match decode(&data, &config, &Unstoppable) {
             Ok(output) => {
-                let desc = output.pixels.descriptor();
+                let desc = output.pixels.spec();
                 let info = format!(
                     "{}x{} {:?}/{:?} ch={} bd={}",
                     output.info.width,
                     output.info.height,
-                    desc.layout(),
-                    desc.channel_type(),
+                    desc.layout.order,
+                    desc.layout.sample,
                     output.info.channels,
                     output.info.bit_depth,
                 );
@@ -116,9 +116,9 @@ fn diagnose_buffer_failures(dir: &std::path::Path) {
                 | tiff::decoder::DecodingResult::F64(_)
         );
         let descriptor = descriptor_for_diag(ct, is_float);
-        let stride = descriptor.aligned_stride(w);
+        let stride = w as usize * descriptor.layout.bytes_per_pixel();
         let expected = stride * h as usize;
-        let align = descriptor.min_alignment();
+        let align = descriptor.layout.min_alignment();
 
         // Simulate align_offset with a hypothetical vec
         let test_vec: Vec<u8> = vec![0u8; decoded_bytes];
@@ -142,7 +142,7 @@ fn diagnose_buffer_failures(dir: &std::path::Path) {
                 ct,
                 variant,
                 samples,
-                w as usize * h as usize * descriptor.bytes_per_pixel()
+                w as usize * h as usize * descriptor.layout.bytes_per_pixel()
             );
         }
     }
@@ -200,58 +200,70 @@ fn decoding_result_info(r: &tiff::decoder::DecodingResult) -> (usize, &'static s
 }
 
 /// Replicate zentiff's descriptor_for logic for diagnosis.
-fn descriptor_for_diag(ct: tiff::ColorType, is_float: bool) -> PixelDescriptor {
+fn descriptor_for_diag(ct: tiff::ColorType, is_float: bool) -> ImageSpec {
     match ct {
         tiff::ColorType::Gray(d) => match d {
-            1..=8 => PixelDescriptor::GRAY8,
-            9..=16 if is_float => PixelDescriptor::GRAYF32,
-            9..=16 => PixelDescriptor::GRAY16,
-            _ if is_float => PixelDescriptor::GRAYF32,
-            _ => PixelDescriptor::GRAY16,
+            1..=8 => ImageSpec::gray8_srgb(),
+            9..=16 if is_float => ImageSpec::grayf32_linear(),
+            9..=16 => ImageSpec::gray16_srgb(),
+            _ if is_float => ImageSpec::grayf32_linear(),
+            _ => ImageSpec::gray16_srgb(),
         },
         tiff::ColorType::GrayA(d) => match d {
-            1..=8 => PixelDescriptor::GRAYA8,
-            9..=16 if is_float => PixelDescriptor::GRAYAF32,
-            9..=16 => PixelDescriptor::GRAYA16,
-            _ if is_float => PixelDescriptor::GRAYAF32,
-            _ => PixelDescriptor::GRAYA16,
+            1..=8 => ImageSpec::graya8_srgb(),
+            9..=16 if is_float => ImageSpec::new(
+                SampleLayout::new(SampleType::F32, ChannelOrder::GrayAlpha),
+                ColorSpace::GRAY_LINEAR.with_alpha(AlphaMode::Straight),
+            ),
+            9..=16 => ImageSpec::new(
+                SampleLayout::new(SampleType::U16, ChannelOrder::GrayAlpha),
+                ColorSpace::GRAY_SRGB.with_alpha(AlphaMode::Straight),
+            ),
+            _ if is_float => ImageSpec::new(
+                SampleLayout::new(SampleType::F32, ChannelOrder::GrayAlpha),
+                ColorSpace::GRAY_LINEAR.with_alpha(AlphaMode::Straight),
+            ),
+            _ => ImageSpec::new(
+                SampleLayout::new(SampleType::U16, ChannelOrder::GrayAlpha),
+                ColorSpace::GRAY_SRGB.with_alpha(AlphaMode::Straight),
+            ),
         },
         tiff::ColorType::RGB(d) | tiff::ColorType::YCbCr(d) | tiff::ColorType::Lab(d) => match d {
-            1..=8 => PixelDescriptor::RGB8,
-            9..=16 if is_float => PixelDescriptor::RGBF32,
-            9..=16 => PixelDescriptor::RGB16,
-            _ if is_float => PixelDescriptor::RGBF32,
-            _ => PixelDescriptor::RGB16,
+            1..=8 => ImageSpec::rgb8_srgb(),
+            9..=16 if is_float => ImageSpec::rgbf32_linear(),
+            9..=16 => ImageSpec::rgb16_srgb(),
+            _ if is_float => ImageSpec::rgbf32_linear(),
+            _ => ImageSpec::rgb16_srgb(),
         },
         tiff::ColorType::RGBA(d) => match d {
-            1..=8 => PixelDescriptor::RGBA8,
-            9..=16 if is_float => PixelDescriptor::RGBAF32,
-            9..=16 => PixelDescriptor::RGBA16,
-            _ if is_float => PixelDescriptor::RGBAF32,
-            _ => PixelDescriptor::RGBA16,
+            1..=8 => ImageSpec::rgba8_srgb(),
+            9..=16 if is_float => ImageSpec::rgbaf32_linear(),
+            9..=16 => ImageSpec::rgba16_srgb(),
+            _ if is_float => ImageSpec::rgbaf32_linear(),
+            _ => ImageSpec::rgba16_srgb(),
         },
-        tiff::ColorType::Palette(_) => PixelDescriptor::RGB8,
+        tiff::ColorType::Palette(_) => ImageSpec::rgb8_srgb(),
         tiff::ColorType::CMYK(d) | tiff::ColorType::CMYKA(d) => match d {
-            1..=8 => PixelDescriptor::RGBA8,
-            9..=16 if is_float => PixelDescriptor::RGBAF32,
-            9..=16 => PixelDescriptor::RGBA16,
-            _ if is_float => PixelDescriptor::RGBAF32,
-            _ => PixelDescriptor::RGBA16,
+            1..=8 => ImageSpec::rgba8_srgb(),
+            9..=16 if is_float => ImageSpec::rgbaf32_linear(),
+            9..=16 => ImageSpec::rgba16_srgb(),
+            _ if is_float => ImageSpec::rgbaf32_linear(),
+            _ => ImageSpec::rgba16_srgb(),
         },
         tiff::ColorType::Multiband {
             bit_depth,
             num_samples,
         } => match (num_samples, bit_depth) {
-            (1, 1..=8) => PixelDescriptor::GRAY8,
-            (1, _) => PixelDescriptor::GRAY16,
-            (3, 1..=8) => PixelDescriptor::RGB8,
-            (3, _) => PixelDescriptor::RGB16,
-            (4, 1..=8) => PixelDescriptor::RGBA8,
-            (4, _) => PixelDescriptor::RGBA16,
-            (_, 1..=8) => PixelDescriptor::RGBA8,
-            _ => PixelDescriptor::RGBA16,
+            (1, 1..=8) => ImageSpec::gray8_srgb(),
+            (1, _) => ImageSpec::gray16_srgb(),
+            (3, 1..=8) => ImageSpec::rgb8_srgb(),
+            (3, _) => ImageSpec::rgb16_srgb(),
+            (4, 1..=8) => ImageSpec::rgba8_srgb(),
+            (4, _) => ImageSpec::rgba16_srgb(),
+            (_, 1..=8) => ImageSpec::rgba8_srgb(),
+            _ => ImageSpec::rgba16_srgb(),
         },
-        _ => PixelDescriptor::RGBA8,
+        _ => ImageSpec::rgba8_srgb(),
     }
 }
 

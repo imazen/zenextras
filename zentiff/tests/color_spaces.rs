@@ -90,7 +90,7 @@ fn rationals(values: &[(u32, u32)]) -> Vec<u8> {
 
 fn decode_rgb8(data: &[u8]) -> Vec<u8> {
     let out = decode(data, &TiffDecodeConfig::default(), &Unstoppable).unwrap();
-    out.pixels.copy_to_contiguous_bytes()
+    out.pixels.try_into_vec::<u8>().unwrap()
 }
 
 fn assert_close(got: &[u8], want: &[u8]) {
@@ -165,8 +165,11 @@ fn associated_alpha_is_labelled_premultiplied() {
             &[],
         );
         let out = decode(&data, &TiffDecodeConfig::default(), &Unstoppable).unwrap();
-        assert_eq!(out.pixels.descriptor().alpha(), Some(mode));
-        assert_eq!(out.pixels.copy_to_contiguous_bytes(), [64, 32, 16, 128]);
+        assert_eq!(out.pixels.spec().color.alpha(), mode);
+        assert_eq!(
+            out.pixels.as_view().as_contiguous_bytes().unwrap(),
+            [64, 32, 16, 128]
+        );
     }
 }
 

@@ -23,7 +23,7 @@ use zencodec::{
     CodecError, ImageFormat, ImageFormatDefinition, ImageInfo, ImageSequence, ResourceLimits,
     SharedPulse, Unsupported, UnsupportedOperation,
 };
-use zenpixels::{PixelBuffer, PixelDescriptor};
+use zenpixels_legacy::{PixelBuffer, PixelDescriptor};
 
 use crate::alloc_util::AllocPref;
 use crate::error::PdfError;
@@ -500,7 +500,21 @@ impl zencodec::decode::Decode for PdfDecoder {
                 random_access: true,
             });
 
-        let pixels: PixelBuffer = rendered.buffer.erase();
+        // The current trait still owns a legacy buffer. Move the RGBA8 bytes
+        // across the boundary without rerendering or copying the raster.
+        let bytes = rendered
+            .buffer
+            .try_into_vec::<u8>()
+            .map_err(PdfError::from)?;
+        let pixels =
+            PixelBuffer::from_vec(bytes, w, h, PixelDescriptor::RGBA8_SRGB).map_err(|err| {
+                PdfError::Buffer(err.map_error(|cause| match cause {
+                    zenpixels_legacy::BufferError::InvalidDimensions => {
+                        zenpixels::BufferError::InvalidDimensions
+                    }
+                    _ => zenpixels::BufferError::InsufficientData,
+                }))
+            })?;
         Ok(DecodeOutput::new(pixels, info))
     }
 }

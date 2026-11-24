@@ -19,6 +19,8 @@
 //! [`check_decode_error_envelope`]: zencodec_testkit::check_decode_error_envelope
 //! [`check_decode_truncation_series`]: zencodec_testkit::check_decode_truncation_series
 
+#![cfg(feature = "zencodec")]
+
 use zenjp2::Jp2DecoderConfig;
 
 const VALID_JP2: &[u8] = include_bytes!("fixtures/test.jp2");

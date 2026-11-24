@@ -1,10 +1,12 @@
 //! Round-trip encode/decode tests for zentiff.
 
 use enough::Unstoppable;
-use zenpixels::{ChannelLayout, ChannelType, PixelBuffer, PixelDescriptor};
+use zenpixels::{
+    AlphaMode, ChannelOrder, ColorSpace, ImageSpec, PixelBuf, SampleLayout, SampleType,
+};
 use zentiff::{Compression, Predictor, TiffDecodeConfig, TiffEncodeConfig, decode, encode, probe};
 
-fn make_gradient_rgb8(width: u32, height: u32) -> PixelBuffer {
+fn make_gradient_rgb8(width: u32, height: u32) -> PixelBuf {
     let pixel_count = (width * height) as usize;
     let mut data = Vec::with_capacity(pixel_count * 3);
     for y in 0..height {
@@ -14,10 +16,10 @@ fn make_gradient_rgb8(width: u32, height: u32) -> PixelBuffer {
             data.push(128u8);
         }
     }
-    PixelBuffer::from_vec(data, width, height, PixelDescriptor::RGB8).unwrap()
+    PixelBuf::from_vec(data, width, height, ImageSpec::rgb8_srgb()).unwrap()
 }
 
-fn make_gradient_rgba8(width: u32, height: u32) -> PixelBuffer {
+fn make_gradient_rgba8(width: u32, height: u32) -> PixelBuf {
     let pixel_count = (width * height) as usize;
     let mut data = Vec::with_capacity(pixel_count * 4);
     for y in 0..height {
@@ -28,10 +30,10 @@ fn make_gradient_rgba8(width: u32, height: u32) -> PixelBuffer {
             data.push(255u8);
         }
     }
-    PixelBuffer::from_vec(data, width, height, PixelDescriptor::RGBA8).unwrap()
+    PixelBuf::from_vec(data, width, height, ImageSpec::rgba8_srgb()).unwrap()
 }
 
-fn make_gradient_gray8(width: u32, height: u32) -> PixelBuffer {
+fn make_gradient_gray8(width: u32, height: u32) -> PixelBuf {
     let pixel_count = (width * height) as usize;
     let mut data = Vec::with_capacity(pixel_count);
     for y in 0..height {
@@ -39,10 +41,10 @@ fn make_gradient_gray8(width: u32, height: u32) -> PixelBuffer {
             data.push(((x + y) * 255 / (width + height).max(1)) as u8);
         }
     }
-    PixelBuffer::from_vec(data, width, height, PixelDescriptor::GRAY8).unwrap()
+    PixelBuf::from_vec(data, width, height, ImageSpec::gray8_srgb()).unwrap()
 }
 
-fn make_gradient_rgb16(width: u32, height: u32) -> PixelBuffer {
+fn make_gradient_rgb16(width: u32, height: u32) -> PixelBuf {
     let pixel_count = (width * height) as usize;
     let mut data: Vec<u16> = Vec::with_capacity(pixel_count * 3);
     for y in 0..height {
@@ -53,24 +55,24 @@ fn make_gradient_rgb16(width: u32, height: u32) -> PixelBuffer {
         }
     }
     let bytes: Vec<u8> = bytemuck::cast_slice::<u16, u8>(&data).to_vec();
-    PixelBuffer::from_vec(bytes, width, height, PixelDescriptor::RGB16).unwrap()
+    PixelBuf::from_vec(bytes, width, height, ImageSpec::rgb16_srgb()).unwrap()
 }
 
 #[test]
 fn roundtrip_rgb8_lzw() {
     let buf = make_gradient_rgb8(64, 48);
     let config = TiffEncodeConfig::new();
-    let encoded = encode(&buf.as_slice(), &config, &Unstoppable).unwrap();
+    let encoded = encode(&buf.as_view(), &config, &Unstoppable).unwrap();
 
     let output = decode(&encoded, &TiffDecodeConfig::default(), &Unstoppable).unwrap();
     assert_eq!(output.info.width, 64);
     assert_eq!(output.info.height, 48);
-    assert_eq!(output.pixels.descriptor().layout(), ChannelLayout::Rgb);
-    assert_eq!(output.pixels.descriptor().channel_type(), ChannelType::U8);
+    assert_eq!(output.pixels.spec().layout.order, ChannelOrder::Rgb);
+    assert_eq!(output.pixels.spec().layout.sample, SampleType::U8);
 
     // Lossless — pixel data should match exactly
-    let original = buf.as_slice().contiguous_bytes();
-    let decoded = output.pixels.as_slice().contiguous_bytes();
+    let original = buf.as_view().try_contiguous_bytes().unwrap();
+    let decoded = output.pixels.as_view().try_contiguous_bytes().unwrap();
     assert_eq!(original.as_ref(), decoded.as_ref());
 }
 
@@ -80,16 +82,16 @@ fn roundtrip_rgba8_deflate() {
     let config = TiffEncodeConfig::new()
         .with_compression(Compression::Deflate)
         .with_predictor(Predictor::None);
-    let encoded = encode(&buf.as_slice(), &config, &Unstoppable).unwrap();
+    let encoded = encode(&buf.as_view(), &config, &Unstoppable).unwrap();
 
     let output = decode(&encoded, &TiffDecodeConfig::default(), &Unstoppable).unwrap();
     assert_eq!(output.info.width, 32);
     assert_eq!(output.info.height, 32);
-    assert_eq!(output.pixels.descriptor().layout(), ChannelLayout::Rgba);
-    assert_eq!(output.pixels.descriptor().channel_type(), ChannelType::U8);
+    assert_eq!(output.pixels.spec().layout.order, ChannelOrder::Rgba);
+    assert_eq!(output.pixels.spec().layout.sample, SampleType::U8);
 
-    let original = buf.as_slice().contiguous_bytes();
-    let decoded = output.pixels.as_slice().contiguous_bytes();
+    let original = buf.as_view().try_contiguous_bytes().unwrap();
+    let decoded = output.pixels.as_view().try_contiguous_bytes().unwrap();
     assert_eq!(original.as_ref(), decoded.as_ref());
 }
 
@@ -99,16 +101,16 @@ fn roundtrip_gray8_uncompressed() {
     let config = TiffEncodeConfig::new()
         .with_compression(Compression::Uncompressed)
         .with_predictor(Predictor::None);
-    let encoded = encode(&buf.as_slice(), &config, &Unstoppable).unwrap();
+    let encoded = encode(&buf.as_view(), &config, &Unstoppable).unwrap();
 
     let output = decode(&encoded, &TiffDecodeConfig::default(), &Unstoppable).unwrap();
     assert_eq!(output.info.width, 16);
     assert_eq!(output.info.height, 16);
-    assert_eq!(output.pixels.descriptor().layout(), ChannelLayout::Gray);
-    assert_eq!(output.pixels.descriptor().channel_type(), ChannelType::U8);
+    assert_eq!(output.pixels.spec().layout.order, ChannelOrder::Gray);
+    assert_eq!(output.pixels.spec().layout.sample, SampleType::U8);
 
-    let original = buf.as_slice().contiguous_bytes();
-    let decoded = output.pixels.as_slice().contiguous_bytes();
+    let original = buf.as_view().try_contiguous_bytes().unwrap();
+    let decoded = output.pixels.as_view().try_contiguous_bytes().unwrap();
     assert_eq!(original.as_ref(), decoded.as_ref());
 }
 
@@ -118,16 +120,16 @@ fn roundtrip_rgb16_packbits() {
     let config = TiffEncodeConfig::new()
         .with_compression(Compression::PackBits)
         .with_predictor(Predictor::None);
-    let encoded = encode(&buf.as_slice(), &config, &Unstoppable).unwrap();
+    let encoded = encode(&buf.as_view(), &config, &Unstoppable).unwrap();
 
     let output = decode(&encoded, &TiffDecodeConfig::default(), &Unstoppable).unwrap();
     assert_eq!(output.info.width, 24);
     assert_eq!(output.info.height, 24);
-    assert_eq!(output.pixels.descriptor().layout(), ChannelLayout::Rgb);
-    assert_eq!(output.pixels.descriptor().channel_type(), ChannelType::U16);
+    assert_eq!(output.pixels.spec().layout.order, ChannelOrder::Rgb);
+    assert_eq!(output.pixels.spec().layout.sample, SampleType::U16);
 
-    let original = buf.as_slice().contiguous_bytes();
-    let decoded = output.pixels.as_slice().contiguous_bytes();
+    let original = buf.as_view().try_contiguous_bytes().unwrap();
+    let decoded = output.pixels.as_view().try_contiguous_bytes().unwrap();
     assert_eq!(original.as_ref(), decoded.as_ref());
 }
 
@@ -135,7 +137,7 @@ fn roundtrip_rgb16_packbits() {
 fn probe_returns_metadata() {
     let buf = make_gradient_rgb8(100, 50);
     let config = TiffEncodeConfig::new();
-    let encoded = encode(&buf.as_slice(), &config, &Unstoppable).unwrap();
+    let encoded = encode(&buf.as_view(), &config, &Unstoppable).unwrap();
 
     let info = probe(&encoded).unwrap();
     assert_eq!(info.width, 100);
@@ -148,7 +150,7 @@ fn probe_returns_metadata() {
 fn limits_reject_oversized() {
     let buf = make_gradient_rgb8(100, 100);
     let config = TiffEncodeConfig::new();
-    let encoded = encode(&buf.as_slice(), &config, &Unstoppable).unwrap();
+    let encoded = encode(&buf.as_view(), &config, &Unstoppable).unwrap();
 
     let decode_config = TiffDecodeConfig::none().with_max_pixels(5_000);
     let result = decode(&encoded, &decode_config, &Unstoppable);
@@ -159,18 +161,18 @@ fn limits_reject_oversized() {
 fn bigtiff_roundtrip() {
     let buf = make_gradient_rgb8(32, 32);
     let config = TiffEncodeConfig::new().with_big_tiff(true);
-    let encoded = encode(&buf.as_slice(), &config, &Unstoppable).unwrap();
+    let encoded = encode(&buf.as_view(), &config, &Unstoppable).unwrap();
 
     let output = decode(&encoded, &TiffDecodeConfig::default(), &Unstoppable).unwrap();
     assert_eq!(output.info.width, 32);
     assert_eq!(output.info.height, 32);
 
-    let original = buf.as_slice().contiguous_bytes();
-    let decoded = output.pixels.as_slice().contiguous_bytes();
+    let original = buf.as_view().try_contiguous_bytes().unwrap();
+    let decoded = output.pixels.as_view().try_contiguous_bytes().unwrap();
     assert_eq!(original.as_ref(), decoded.as_ref());
 }
 
-fn make_gradient_graya8(width: u32, height: u32) -> PixelBuffer {
+fn make_gradient_graya8(width: u32, height: u32) -> PixelBuf {
     let pixel_count = (width * height) as usize;
     let mut data = Vec::with_capacity(pixel_count * 2);
     for y in 0..height {
@@ -179,10 +181,10 @@ fn make_gradient_graya8(width: u32, height: u32) -> PixelBuffer {
             data.push((x * 255 / width.max(1)) as u8);
         }
     }
-    PixelBuffer::from_vec(data, width, height, PixelDescriptor::GRAYA8).unwrap()
+    PixelBuf::from_vec(data, width, height, ImageSpec::graya8_srgb()).unwrap()
 }
 
-fn make_gradient_graya16(width: u32, height: u32) -> PixelBuffer {
+fn make_gradient_graya16(width: u32, height: u32) -> PixelBuf {
     let pixel_count = (width * height) as usize;
     let mut data: Vec<u16> = Vec::with_capacity(pixel_count * 2);
     for y in 0..height {
@@ -192,10 +194,19 @@ fn make_gradient_graya16(width: u32, height: u32) -> PixelBuffer {
         }
     }
     let bytes: Vec<u8> = bytemuck::cast_slice::<u16, u8>(&data).to_vec();
-    PixelBuffer::from_vec(bytes, width, height, PixelDescriptor::GRAYA16).unwrap()
+    PixelBuf::from_vec(
+        bytes,
+        width,
+        height,
+        ImageSpec::new(
+            SampleLayout::new(SampleType::U16, ChannelOrder::GrayAlpha),
+            ColorSpace::GRAY_SRGB.with_alpha(AlphaMode::Straight),
+        ),
+    )
+    .unwrap()
 }
 
-fn make_gradient_grayaf32(width: u32, height: u32) -> PixelBuffer {
+fn make_gradient_grayaf32(width: u32, height: u32) -> PixelBuf {
     let pixel_count = (width * height) as usize;
     let mut data: Vec<f32> = Vec::with_capacity(pixel_count * 2);
     for y in 0..height {
@@ -205,7 +216,16 @@ fn make_gradient_grayaf32(width: u32, height: u32) -> PixelBuffer {
         }
     }
     let bytes: Vec<u8> = bytemuck::cast_slice::<f32, u8>(&data).to_vec();
-    PixelBuffer::from_vec(bytes, width, height, PixelDescriptor::GRAYAF32).unwrap()
+    PixelBuf::from_vec(
+        bytes,
+        width,
+        height,
+        ImageSpec::new(
+            SampleLayout::new(SampleType::F32, ChannelOrder::GrayAlpha),
+            ColorSpace::GRAY_LINEAR.with_alpha(AlphaMode::Straight),
+        ),
+    )
+    .unwrap()
 }
 
 /// GrayAlpha8 must round-trip as a 2-channel image (Gray + ExtraSamples alpha),
@@ -214,7 +234,7 @@ fn make_gradient_grayaf32(width: u32, height: u32) -> PixelBuffer {
 fn roundtrip_graya8_stays_two_channel() {
     let buf = make_gradient_graya8(40, 24);
     let config = TiffEncodeConfig::new();
-    let encoded = encode(&buf.as_slice(), &config, &Unstoppable).unwrap();
+    let encoded = encode(&buf.as_view(), &config, &Unstoppable).unwrap();
 
     // The file must declare 2 samples/pixel, with an ExtraSamples (alpha) entry.
     let info = probe(&encoded).unwrap();
@@ -227,14 +247,11 @@ fn roundtrip_graya8_stays_two_channel() {
     let output = decode(&encoded, &TiffDecodeConfig::default(), &Unstoppable).unwrap();
     assert_eq!(output.info.width, 40);
     assert_eq!(output.info.height, 24);
-    assert_eq!(
-        output.pixels.descriptor().layout(),
-        ChannelLayout::GrayAlpha
-    );
-    assert_eq!(output.pixels.descriptor().channel_type(), ChannelType::U8);
+    assert_eq!(output.pixels.spec().layout.order, ChannelOrder::GrayAlpha);
+    assert_eq!(output.pixels.spec().layout.sample, SampleType::U8);
 
-    let original = buf.as_slice().contiguous_bytes();
-    let decoded = output.pixels.as_slice().contiguous_bytes();
+    let original = buf.as_view().try_contiguous_bytes().unwrap();
+    let decoded = output.pixels.as_view().try_contiguous_bytes().unwrap();
     assert_eq!(
         original.as_ref(),
         decoded.as_ref(),
@@ -249,20 +266,17 @@ fn roundtrip_graya16_stays_two_channel() {
     let config = TiffEncodeConfig::new()
         .with_compression(Compression::Uncompressed)
         .with_predictor(Predictor::None);
-    let encoded = encode(&buf.as_slice(), &config, &Unstoppable).unwrap();
+    let encoded = encode(&buf.as_view(), &config, &Unstoppable).unwrap();
 
     let info = probe(&encoded).unwrap();
     assert_eq!(info.samples_per_pixel, Some(2));
 
     let output = decode(&encoded, &TiffDecodeConfig::default(), &Unstoppable).unwrap();
-    assert_eq!(
-        output.pixels.descriptor().layout(),
-        ChannelLayout::GrayAlpha
-    );
-    assert_eq!(output.pixels.descriptor().channel_type(), ChannelType::U16);
+    assert_eq!(output.pixels.spec().layout.order, ChannelOrder::GrayAlpha);
+    assert_eq!(output.pixels.spec().layout.sample, SampleType::U16);
 
-    let original = buf.as_slice().contiguous_bytes();
-    let decoded = output.pixels.as_slice().contiguous_bytes();
+    let original = buf.as_view().try_contiguous_bytes().unwrap();
+    let decoded = output.pixels.as_view().try_contiguous_bytes().unwrap();
     assert_eq!(original.as_ref(), decoded.as_ref());
 }
 
@@ -275,20 +289,17 @@ fn roundtrip_grayaf32_stays_two_channel() {
     let config = TiffEncodeConfig::new()
         .with_compression(Compression::Uncompressed)
         .with_predictor(Predictor::None);
-    let encoded = encode(&buf.as_slice(), &config, &Unstoppable).unwrap();
+    let encoded = encode(&buf.as_view(), &config, &Unstoppable).unwrap();
 
     let info = probe(&encoded).unwrap();
     assert_eq!(info.samples_per_pixel, Some(2));
 
     let output = decode(&encoded, &TiffDecodeConfig::default(), &Unstoppable).unwrap();
-    assert_eq!(
-        output.pixels.descriptor().layout(),
-        ChannelLayout::GrayAlpha
-    );
-    assert_eq!(output.pixels.descriptor().channel_type(), ChannelType::F32);
+    assert_eq!(output.pixels.spec().layout.order, ChannelOrder::GrayAlpha);
+    assert_eq!(output.pixels.spec().layout.sample, SampleType::F32);
 
-    let original = buf.as_slice().contiguous_bytes();
-    let decoded = output.pixels.as_slice().contiguous_bytes();
+    let original = buf.as_view().try_contiguous_bytes().unwrap();
+    let decoded = output.pixels.as_view().try_contiguous_bytes().unwrap();
     assert_eq!(
         original.as_ref(),
         decoded.as_ref(),
@@ -305,8 +316,9 @@ fn graya8_encodes_smaller_than_rgba_widening() {
     // produced.
     let mut rgba_bytes = Vec::with_capacity(64 * 64 * 4);
     for chunk in graya
-        .as_slice()
-        .contiguous_bytes()
+        .as_view()
+        .try_contiguous_bytes()
+        .unwrap()
         .as_chunks::<2>()
         .0
         .iter()
@@ -314,13 +326,13 @@ fn graya8_encodes_smaller_than_rgba_widening() {
         let (g, a) = (chunk[0], chunk[1]);
         rgba_bytes.extend_from_slice(&[g, g, g, a]);
     }
-    let rgba = PixelBuffer::from_vec(rgba_bytes, 64, 64, PixelDescriptor::RGBA8).unwrap();
+    let rgba = PixelBuf::from_vec(rgba_bytes, 64, 64, ImageSpec::rgba8_srgb()).unwrap();
 
     let config = TiffEncodeConfig::new()
         .with_compression(Compression::Uncompressed)
         .with_predictor(Predictor::None);
-    let graya_enc = encode(&graya.as_slice(), &config, &Unstoppable).unwrap();
-    let rgba_enc = encode(&rgba.as_slice(), &config, &Unstoppable).unwrap();
+    let graya_enc = encode(&graya.as_view(), &config, &Unstoppable).unwrap();
+    let rgba_enc = encode(&rgba.as_view(), &config, &Unstoppable).unwrap();
 
     assert!(
         graya_enc.len() < rgba_enc.len(),
@@ -333,9 +345,9 @@ fn graya8_encodes_smaller_than_rgba_widening() {
 #[test]
 fn encode_1x1_pixel() {
     let data = vec![255u8, 0, 128];
-    let buf = PixelBuffer::from_vec(data, 1, 1, PixelDescriptor::RGB8).unwrap();
+    let buf = PixelBuf::from_vec(data, 1, 1, ImageSpec::rgb8_srgb()).unwrap();
     let encoded = encode(
-        &buf.as_slice(),
+        &buf.as_view(),
         &TiffEncodeConfig::new().with_compression(Compression::Uncompressed),
         &Unstoppable,
     )
@@ -343,6 +355,6 @@ fn encode_1x1_pixel() {
     let output = decode(&encoded, &TiffDecodeConfig::default(), &Unstoppable).unwrap();
     assert_eq!(output.info.width, 1);
     assert_eq!(output.info.height, 1);
-    let decoded = output.pixels.as_slice().contiguous_bytes();
+    let decoded = output.pixels.as_view().try_contiguous_bytes().unwrap();
     assert_eq!(decoded.as_ref(), &[255u8, 0, 128]);
 }

@@ -16,7 +16,8 @@ include = ["/src/**", "/README.crates.md", "/CHANGELOG.md", "/LICENSE*"]
 bytemuck = { version = "1.25.2", default-features = false, features = ["extern_crate_alloc"] }
 hayro-jpeg2000 = { version = "0.4.1", default-features = false, features = ["std"] }
 zencodec = { optional = true, version = ">=0.2.0, <0.4.0" }
-zenpixels = { version = ">=0.2.10, <0.4.0", default-features = false }
+zenpixels = { version = "0.5", default-features = false, optional = true }
+zenpixels-legacy = { package = "zenpixels", version = ">=0.2.10, <0.4.0", default-features = false, optional = true }
 whereat = { version = "0.1.5", default-features = false }
 enough = { version = "0.4.5", default-features = false }
 thiserror = { version = "2.0.21", default-features = false }
@@ -24,7 +25,7 @@ thiserror = { version = "2.0.21", default-features = false }
 [features]
 default = ["std", "zencodec"]
 std = []
-zencodec = ["dep:zencodec"]
+zencodec = ["dep:zencodec", "dep:zenpixels", "dep:zenpixels-legacy"]
 inventory = ["zencodec"]
 
 [dev-dependencies]

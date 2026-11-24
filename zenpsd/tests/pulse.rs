@@ -147,7 +147,7 @@ const ARMS: [Arm; 4] = [Arm::Quiet, Arm::Reporting, Arm::Legacy, Arm::Erased];
 
 type Image = (u32, u32, Vec<u8>);
 
-fn image(px: zenpixels::PixelSlice<'_>) -> Image {
+fn image(px: zenpixels_legacy::PixelSlice<'_>) -> Image {
     let bytes = (0..px.rows()).flat_map(|y| px.row(y).to_vec()).collect();
     (px.width(), px.rows(), bytes)
 }
@@ -232,7 +232,13 @@ fn the_unpack_polls_inside_the_native_decode() {
 fn an_unstopped_pulse_changes_nothing() {
     let data = rle_psd(H);
     let native = zenpsd::parser::decode(&data).unwrap();
-    let expected = image(native.pixels().as_slice());
+    let view = native.pixels().as_view();
+    let expected = (
+        view.width(),
+        view.rows(),
+        view.as_contiguous_bytes().unwrap().to_vec(),
+    );
+    assert_eq!(view.spec(), &zenpixels::ImageSpec::rgb8_srgb());
     assert_eq!((expected.0, expected.1), (W, H));
     let plain = PsdDecoderConfig::new()
         .job()

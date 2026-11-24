@@ -35,10 +35,10 @@ fn jpeg_pages_match_libjpeg_turbo() {
             (width, height),
             "{name}"
         );
-        let rgb = out.pixels.copy_to_contiguous_bytes();
+        let rgb = out.pixels.as_view().as_contiguous_bytes().unwrap();
         assert_eq!(rgb.len(), (width * height * 3) as usize, "{name}");
         assert_eq!(
-            fnv1a64(&rgb),
+            fnv1a64(rgb),
             libtiff,
             "{name}: differs from libtiff + libjpeg-turbo"
         );

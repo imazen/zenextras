@@ -4,13 +4,22 @@ use exr::prelude::*;
 use std::io::Cursor;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use zenexr::{ExrDecoderConfig, ExrError};
-use zenpixels::{AlphaMode, ColorPrimaries};
+use zenpixels::{AlphaMode, ColorSpace, CustomPrimaries, DiffuseWhite, Primaries};
 
 const PIZ: &[u8] = include_bytes!("fixtures/rgb-half-piz.exr");
 const EXPECTED: &[u8] = include_bytes!("fixtures/rgb-half-piz.f32le");
 
 fn rgba(p: Vec2<usize>) -> (f32, f32, f32, f32) {
-    let values = [-0.0, -4.25, f32::from_bits(1), 4000.0, 0.125];
+    let values = [
+        -0.0,
+        -4.25,
+        f32::from_bits(1),
+        4000.0,
+        0.125,
+        f32::INFINITY,
+        f32::NEG_INFINITY,
+        f32::from_bits(0x7fc01234),
+    ];
     (values[p.x() % values.len()], p.y() as f32, -2.0, 0.25)
 }
 
@@ -32,7 +41,9 @@ fn encoded(compression: Compression, blocks: Blocks) -> Vec<u8> {
 fn little_endian_pixels(image: &zenexr::ExrImage) -> Vec<u8> {
     image
         .pixels()
-        .copy_to_contiguous_bytes()
+        .as_view()
+        .as_contiguous_bytes()
+        .unwrap()
         .as_chunks::<4>()
         .0
         .iter()
@@ -44,8 +55,14 @@ fn little_endian_pixels(image: &zenexr::ExrImage) -> Vec<u8> {
 fn independent_openexr_half_piz_fixture() {
     let image = ExrDecoderConfig::new().decode(PIZ, &Unstoppable).unwrap();
     assert_eq!((image.pixels().width(), image.pixels().height()), (31, 33));
-    assert_eq!(image.pixels().descriptor().primaries, ColorPrimaries::Bt709);
-    assert_eq!(image.pixels().descriptor().alpha, None);
+    assert!(matches!(
+        image.pixels().spec().color,
+        ColorSpace::Rgb {
+            primaries: Primaries::Bt709,
+            ..
+        }
+    ));
+    assert_eq!(image.pixels().spec().color.alpha(), AlphaMode::None);
     assert_eq!(little_endian_pixels(&image), EXPECTED);
 }
 
@@ -62,8 +79,8 @@ fn lossless_scanlines_and_tiles_preserve_float_bits_and_associated_alpha() {
             let data = encoded(compression, blocks);
             let image = ExrDecoderConfig::new().decode(&data, &Unstoppable).unwrap();
             assert_eq!(
-                image.pixels().descriptor().alpha,
-                Some(AlphaMode::Premultiplied)
+                image.pixels().spec().color.alpha(),
+                AlphaMode::Premultiplied
             );
             let expected: Vec<u8> = (0..35)
                 .flat_map(|y| {
@@ -110,9 +127,19 @@ fn windows_chromaticities_and_luminance_metadata_are_retained() {
     assert_eq!(probe.shared_attributes.chromaticities, Some(chromaticities));
     assert_eq!(probe.own_attributes.white_luminance, Some(203.0));
     assert_eq!(probe.own_attributes.exposure, Some(0.125));
+    let expected = CustomPrimaries::try_new(
+        (0.708, 0.292),
+        (0.170, 0.797),
+        (0.131, 0.046),
+        (0.3127, 0.3290),
+    )
+    .unwrap();
+    assert!(matches!(decoded.pixels().spec().color, ColorSpace::Rgb {
+        primaries: Primaries::Custom(actual), ..
+    } if actual == expected));
     assert_eq!(
-        decoded.pixels().descriptor().primaries,
-        ColorPrimaries::Unknown
+        decoded.pixels().spec().color.white(),
+        Some(DiffuseWhite::new(203.0))
     );
     // No exposure scaling, primary conversion, unpremultiplication or canvas padding.
     let ordinary = config

@@ -1826,7 +1826,7 @@ dependencies = [
  "whereat",
  "zencodec",
  "zenmeta",
- "zenpixels",
+ "zenpixels 0.2.17",
 ]
 
 [[package]]
@@ -2330,7 +2330,7 @@ dependencies = [
  "how-far",
  "spin",
  "whereat",
- "zenpixels",
+ "zenpixels 0.2.17",
 ]
 
 [[package]]
@@ -2341,7 +2341,7 @@ dependencies = [
  "enough",
  "how-far",
  "zencodec",
- "zenpixels",
+ "zenpixels 0.2.17",
 ]
 
 [[package]]
@@ -2352,7 +2352,7 @@ dependencies = [
  "enough",
  "zencodec",
  "zencodec-io",
- "zenpixels",
+ "zenpixels 0.2.17",
 ]
 
 [[package]]
@@ -2364,7 +2364,7 @@ dependencies = [
  "zencodec",
  "zencodec-io",
  "zencodec-media",
- "zenpixels",
+ "zenpixels 0.2.17",
 ]
 
 [[package]]
@@ -2376,7 +2376,7 @@ dependencies = [
  "whereat",
  "zencodec",
  "zencodec-io",
- "zenpixels",
+ "zenpixels 0.2.17",
 ]
 
 [[package]]
@@ -2389,7 +2389,7 @@ dependencies = [
  "thiserror 2.0.21",
  "whereat",
  "zencodec",
- "zenpixels",
+ "zenpixels 0.5.0",
 ]
 
 [[package]]
@@ -2415,7 +2415,8 @@ dependencies = [
  "zenbench",
  "zencodec",
  "zencodec-testkit",
- "zenpixels",
+ "zenpixels 0.2.17",
+ "zenpixels 0.5.0",
 ]
 
 [[package]]
@@ -2441,7 +2442,7 @@ dependencies = [
  "whereat",
  "zencodec",
  "zenmeta",
- "zenpixels",
+ "zenpixels 0.2.17",
  "zenyuv",
 ]
 
@@ -2451,7 +2452,7 @@ version = "0.1.0"
 source = "git+https://github.com/imazen/zencodec?rev=f02a17ec6001a9efcad1267f92a3ea928ed06e57#f02a17ec6001a9efcad1267f92a3ea928ed06e57"
 dependencies = [
  "zencodec",
- "zenpixels",
+ "zenpixels 0.2.17",
 ]
 
 [[package]]
@@ -2463,13 +2464,13 @@ dependencies = [
  "flate2",
  "hayro",
  "hayro-syntax",
- "rgb",
  "thiserror 2.0.21",
  "whereat",
  "zenbench",
  "zencodec",
  "zencodec-testkit",
- "zenpixels",
+ "zenpixels 0.2.17",
+ "zenpixels 0.5.0",
 ]
 
 [[package]]
@@ -2480,6 +2481,15 @@ dependencies = [
  "bytemuck",
  "imgref",
  "rgb",
+ "whereat",
+]
+
+[[package]]
+name = "zenpixels"
+version = "0.5.0"
+source = "git+https://github.com/imazen/zenpixels?rev=42a0c5c83c5c418950eb528d92d57788f6700bcf#42a0c5c83c5c418950eb528d92d57788f6700bcf"
+dependencies = [
+ "bytemuck",
  "whereat",
 ]
 
@@ -2498,7 +2508,7 @@ dependencies = [
  "once_cell",
  "paste",
  "whereat",
- "zenpixels",
+ "zenpixels 0.2.17",
 ]
 
 [[package]]
@@ -2512,7 +2522,8 @@ dependencies = [
  "zenbench",
  "zencodec",
  "zencodec-testkit",
- "zenpixels",
+ "zenpixels 0.2.17",
+ "zenpixels 0.5.0",
 ]
 
 [[package]]
@@ -2534,7 +2545,7 @@ dependencies = [
  "zenbench",
  "zencodec",
  "zencodec-testkit",
- "zenpixels",
+ "zenpixels 0.2.17",
 ]
 
 [[package]]
@@ -2552,7 +2563,8 @@ dependencies = [
  "zencodec-testkit",
  "zenjpeg",
  "zenmeta",
- "zenpixels",
+ "zenpixels 0.2.17",
+ "zenpixels 0.5.0",
  "zenpixels-convert",
 ]
 
@@ -2683,3 +2695,18 @@ checksum = "27bc9d5b815bc103f142aa054f561d9187d191692ec7c2d1e2b4737f8dbd7296"
 dependencies = [
  "zune-core",
 ]
+
+[[patch.unused]]
+name = "garb"
+version = "0.2.9"
+source = "git+https://github.com/imazen/garb?rev=457ff8b9153e9d675a39dc098052b2ffeb6206fa#457ff8b9153e9d675a39dc098052b2ffeb6206fa"
+
+[[patch.unused]]
+name = "linear-srgb"
+version = "0.6.13"
+source = "git+https://github.com/imazen/linear-srgb?rev=ae83f19426737635fee3dd16f228681019f52585#ae83f19426737635fee3dd16f228681019f52585"
+
+[[patch.unused]]
+name = "zenpixels-convert"
+version = "0.5.0"
+source = "git+https://github.com/imazen/zenpixels?rev=42a0c5c83c5c418950eb528d92d57788f6700bcf#42a0c5c83c5c418950eb528d92d57788f6700bcf"

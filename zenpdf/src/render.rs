@@ -7,8 +7,7 @@ use hayro::hayro_syntax::Pdf;
 use hayro::vello_cpu::color::AlphaColor;
 use hayro::vello_cpu::color::Srgb;
 
-use rgb::Rgba;
-use zenpixels::PixelBuffer;
+use zenpixels::{ImageSpec, PixelBuf};
 
 use crate::error::{PdfError, Result};
 
@@ -121,7 +120,7 @@ pub struct RenderedPage {
     /// Zero-based page index within the document.
     pub index: u32,
     /// Rendered pixel data (straight-alpha RGBA8, sRGB).
-    pub buffer: PixelBuffer<Rgba<u8>>,
+    pub buffer: PixelBuf,
     /// Original page width in PDF points (1/72 inch).
     pub source_width_pt: f32,
     /// Original page height in PDF points (1/72 inch).
@@ -459,17 +458,9 @@ fn compute_render_settings(
     })
 }
 
-fn pixmap_to_buffer(
-    pixmap: hayro::vello_cpu::Pixmap,
-    w: u32,
-    h: u32,
-) -> Result<PixelBuffer<Rgba<u8>>> {
+fn pixmap_to_buffer(pixmap: hayro::vello_cpu::Pixmap, w: u32, h: u32) -> Result<PixelBuf> {
     let bytes = pixmap.take_rgba8(hayro::vello_cpu::peniko::ImageAlphaType::Alpha);
-    Ok(
-        PixelBuffer::from_vec(bytes, w, h, <Rgba<u8> as zenpixels::Pixel>::DESCRIPTOR)?
-            .try_typed::<Rgba<u8>>()
-            .expect("RGBA8 descriptor matches Rgba<u8>"),
-    )
+    Ok(PixelBuf::from_bytes(bytes, w, h, ImageSpec::rgba8_srgb())?)
 }
 
 #[cfg(test)]

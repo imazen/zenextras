@@ -26,7 +26,7 @@ use zencodec::how_far::{
     Child, Execution, PhaseSpec, PlanError, Pulse, Report, SharedPulse, StopOnly, Total,
 };
 use zencodec::{CategorizedError as _, CodecErrorExt as _, ErrorCategory};
-use zenpixels::{PixelBuffer, PixelDescriptor, PixelSlice};
+use zenpixels_legacy::{PixelBuffer, PixelDescriptor, PixelSlice};
 use zentiff::codec::{TiffDecoderCodecConfig, TiffEncoderCodecConfig};
 use zentiff::{TiffDecodeConfig, TiffEncodeConfig};
 
@@ -173,12 +173,16 @@ fn encode(pixels: PixelSlice<'_>, arm: Arm, stop: AtPoll) -> Result<Vec<u8>, Err
 }
 
 fn native_tiff(pixels: &PixelBuffer) -> Vec<u8> {
-    zentiff::encode(
-        &pixels.as_slice(),
-        &TiffEncodeConfig::default(),
-        &Unstoppable,
+    let slice = pixels.as_slice();
+    let native = zenpixels::PixelView::new(
+        slice.as_strided_bytes(),
+        slice.width(),
+        slice.rows(),
+        slice.stride(),
+        zenpixels::ImageSpec::rgb8_srgb(),
     )
-    .unwrap()
+    .unwrap();
+    zentiff::encode(&native, &TiffEncodeConfig::default(), &Unstoppable).unwrap()
 }
 
 #[test]
@@ -275,7 +279,20 @@ fn an_unstopped_pulse_changes_nothing() {
     let pixels = rgb8(64, 48);
     let tiff = native_tiff(&pixels);
     let native = zentiff::decode(&tiff, &TiffDecodeConfig::default(), &Unstoppable).unwrap();
-    let expected = image(native.pixels.as_slice());
+    let view = native.pixels.as_view();
+    assert!(matches!(
+        view.spec().color,
+        zenpixels::ColorSpace::Rgb {
+            transfer: zenpixels::Transfer::Unknown,
+            ..
+        }
+    ));
+    let expected = (
+        view.width(),
+        view.rows(),
+        PixelDescriptor::RGB8,
+        view.as_contiguous_bytes().unwrap().to_vec(),
+    );
     // TIFF carries no transfer function, so the decode labels it unknown;
     // the samples come back exactly.
     let (w, h, _, bytes) = image(pixels.as_slice());

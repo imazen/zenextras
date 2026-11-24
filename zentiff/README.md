@@ -21,13 +21,13 @@ enough = "0.4.3"
 use zentiff::{decode, probe, encode, TiffDecodeConfig, TiffEncodeConfig};
 use enough::Unstoppable;
 
-// Decode TIFF bytes to a native-format PixelBuffer.
+// Decode TIFF bytes to a native-format PixelBuf.
 let data: &[u8] = &[]; // your TIFF bytes
 let output = decode(data, &TiffDecodeConfig::default(), &Unstoppable)?;
 println!("{}x{}", output.info.width, output.info.height);
 
 // Re-encode (LZW by default).
-let encoded = encode(&output.pixels.as_slice(), &TiffEncodeConfig::default(), &Unstoppable)?;
+let encoded = encode(&output.pixels.as_view(), &TiffEncodeConfig::default(), &Unstoppable)?;
 # Ok::<(), whereat::At<zentiff::TiffError>>(())
 ```
 
@@ -36,21 +36,24 @@ let encoded = encode(&output.pixels.as_slice(), &TiffEncodeConfig::default(), &U
 
 ### Getting packed RGBA8 pixels
 
-`output.pixels` is a [`zenpixels::PixelBuffer`](https://docs.rs/zenpixels) in the
+`output.pixels` is a [`zenpixels::PixelBuf`](https://docs.rs/zenpixels) in the
 file's **native** format — TIFF can be Gray8 / RGB8 / RGBA16 / RGBF32 / … — so
 "decode to RGBA8" needs one normalization step via
 [`zenpixels-convert`](https://crates.io/crates/zenpixels-convert):
 
-```toml
-# Cargo.toml — add alongside zentiff
-zenpixels-convert = { version = "0.2.13", features = ["rgb"] }
-```
-
 ```rust,ignore
-use zenpixels_convert::PixelBufferConvertTypedExt; // brings to_rgba8() into scope
+use zenpixels_convert::{ConvertPolicy, ImageSpec, PeakSource, Transfer, convert_buf};
 
-let rgba = output.pixels.to_rgba8();                   // PixelBuffer<Rgba<u8>>, always 8-bit RGBA
-let bytes: Vec<u8> = rgba.copy_to_contiguous_bytes();  // width * height * 4, no row padding
+// Supply a transfer assumption only when the file and its metadata warrant it.
+let spec = output.pixels.spec().clone().with_transfer(Transfer::Srgb);
+let pixels = output.pixels.with_spec(spec)?;
+let rgba = convert_buf(
+    &pixels.as_view(),
+    ImageSpec::rgba8_srgb(),
+    &ConvertPolicy::permissive(),
+    PeakSource::Measured,
+)?;
+let bytes = rgba.try_into_vec::<u8>()?;
 ```
 
 ### Errors and limits (servers)

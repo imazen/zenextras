@@ -6,7 +6,7 @@
 //! palette-ish bands / noise / odd 509×381 (strip/row edge paths) /
 //! tiny.
 
-use zenpixels::{PixelDescriptor, PixelSlice};
+use zenpixels::{ImageSpec, PixelView};
 use zentiff::sweep::{SweepAxes, plan};
 use zentiff::{TiffDecodeConfig, decode, encode};
 
@@ -86,12 +86,12 @@ fn sweep_cells_decode_exactly_and_steps_are_live() {
         let cfg = cell.variant.build();
         let mut row = Vec::new();
         for img in &images {
-            let slice = PixelSlice::new(
+            let slice = PixelView::new(
                 &img.rgb,
                 img.w,
                 img.h,
                 (img.w * 3) as usize,
-                PixelDescriptor::RGB8,
+                ImageSpec::rgb8_srgb(),
             )
             .expect("slice");
             let tif = encode(&slice, &cfg, &enough::Unstoppable)
@@ -100,7 +100,7 @@ fn sweep_cells_decode_exactly_and_steps_are_live() {
             let out = decode(&tif, &TiffDecodeConfig::default(), &enough::Unstoppable)
                 .unwrap_or_else(|e| panic!("UNDECODABLE {} on {}: {e:?}", cell.id, img.name));
             // …and roundtrip EXACTLY.
-            let decoded = out.pixels.as_slice().contiguous_bytes();
+            let decoded = out.pixels.as_view().try_contiguous_bytes().unwrap();
             if decoded.as_ref() != img.rgb.as_slice() {
                 failures.push(format!(
                     "LOSSLESS ROUNDTRIP MISMATCH: {} on {}",

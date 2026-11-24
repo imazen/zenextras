@@ -137,7 +137,7 @@ fn limits_accept_within_bounds() {
 #[test]
 fn push_decoder() {
     use zencodec::decode::{DecodeRowSink, SinkError};
-    use zenpixels::{PixelDescriptor, PixelSliceMut};
+    use zenpixels_legacy::{PixelDescriptor, PixelSliceMut};
 
     struct CollectSink {
         data: Vec<u8>,
@@ -239,7 +239,7 @@ fn alloc_pref_modes_render_byte_identical() {
 #[test]
 fn estimate_decode_resources_scales_with_output() {
     use zencodec::estimate::{ComputeEnvironment, ImageCharacteristics, ThreadingInformation};
-    use zenpixels::PixelDescriptor;
+    use zenpixels_legacy::PixelDescriptor;
     let img = ImageCharacteristics::new(595, 841, PixelDescriptor::RGBA8_SRGB);
     let env = ComputeEnvironment::conservative().with_cores(8);
     let est = PdfDecoderConfig::new().estimate_decode_resources(&img, &env);

@@ -199,8 +199,7 @@ fn an_unstopped_pulse_changes_nothing() {
         ..PdfConfig::default()
     };
     let native = zenpdf::render_pages(PDF, &config).unwrap().remove(0);
-    let native = native.buffer.erase();
-    let px = native.as_slice();
+    let px = native.buffer.as_view();
     let expected: Page = (
         px.width(),
         px.rows(),

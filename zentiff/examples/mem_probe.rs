@@ -53,7 +53,7 @@ fn main() {
     let peak_kb = status_kb("VmHWM:");
 
     let (w, h) = (out.info.width, out.info.height);
-    let out_bytes = out.pixels.as_slice().contiguous_bytes().len();
+    let out_bytes = out.pixels.as_view().as_contiguous_bytes().unwrap().len();
     // w  h  file_bytes  output_bytes  pre_rss_kb  vmhwm_kb
     println!(
         "{w}\t{h}\t{}\t{out_bytes}\t{pre_rss_kb}\t{peak_kb}",

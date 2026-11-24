@@ -1,6 +1,6 @@
 # zenexr
 
-OpenEXR reading into `zenpixels::PixelBuffer`, using the Rust
+OpenEXR reading into `zenpixels::PixelBuf`, using the Rust
 [`exr`](https://docs.rs/exr/1.74.2/exr/) crate for parsing and decompression.
 No custom EXR parser, copied compression algorithms or C runtime dependency.
 

@@ -10,7 +10,7 @@ use zencodec::decode::{DecodeJob, DecodePolicy, DecoderConfig};
 use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
 use zencodec::inventory::{Disposition, Inventory, MetadataKind, Part, PartKind, PartTag};
 use zencodec::{Metadata, MetadataPolicy};
-use zenpixels::{PixelBuffer, PixelDescriptor};
+use zenpixels_legacy::{PixelBuffer, PixelDescriptor};
 use zentiff::codec::{TiffDecoderCodecConfig, TiffEncoderCodecConfig};
 
 fn inventory(data: &[u8]) -> Inventory {
@@ -1168,7 +1168,7 @@ fn decode_with(job: zentiff::codec::TiffDecodeJob, data: &[u8]) -> Result<Summar
         info.embedded_metadata.xmp.as_ref().map(|v| v.to_vec()),
         info.source_color.icc_profile.as_ref().map(|v| v.to_vec()),
     ];
-    let pixels = out.pixels().contiguous_bytes().into_owned();
+    let pixels = out.pixels().as_contiguous_bytes().unwrap().to_vec();
     // `ImageInfo`'s Debug leaves out the resolution.
     Ok((
         pixels,
