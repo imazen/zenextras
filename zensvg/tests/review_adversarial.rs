@@ -600,7 +600,7 @@ fn a27_svgz_fname_longer_than_flate2_allows() {
 }
 
 #[test]
-fn a28_decoder_limits_reject_but_inventory_claims_consumed() {
+fn a28_raster_limit_rejection_and_allowed_control() {
     let d = format!(r##"<svg {NS} width="1000" height="1000"><rect width="20" height="20" fill="#ff0000"/></svg>"##).into_bytes();
     let limits = ResourceLimits::none().with_max_pixels(10_000);
     let job_inv = SvgDecoderConfig::new()
@@ -608,19 +608,50 @@ fn a28_decoder_limits_reject_but_inventory_claims_consumed() {
         .with_limits(limits)
         .inventory(&d)
         .unwrap();
-    let dec = SvgDecoderConfig::new()
+    use zencodec::CodecErrorExt as _;
+    use zenpixels::{ImageSpec, PixelView};
+    let error = SvgDecoderConfig::new()
         .job()
         .with_limits(limits)
-        .decoder(Cow::Borrowed(&d[..]), &[])
-        .and_then(|x| x.decode());
-    let rect = leaf_at(&job_inv, find(&d, b"#ff0000") as u64);
-    println!(
-        "limits: decode {:?}; rect leaf {} detail {:?}",
-        dec.as_ref().err().map(|e| format!("{e}")),
-        rect.disposition(),
-        rect.detail()
+        .decoder(Cow::Borrowed(&d), &[])
+        .and_then(|decoder| decoder.decode())
+        .unwrap_err();
+    assert_eq!(
+        error.limit_exceeded(),
+        Some(&zencodec::LimitExceeded::Pixels {
+            actual: 1_000_000,
+            max: 10_000,
+        })
     );
-    assert!(dec.is_ok() || !rect.disposition().is_consumed());
+    let rect = leaf_at(&job_inv, find(&d, b"#ff0000") as u64);
+    assert!(!rect.disposition().is_consumed());
+    assert!(job_inv.parts().iter().all(|part| {
+        !matches!(
+            part.disposition(),
+            zencodec::inventory::Disposition::ImageData
+        )
+    }));
+
+    let spec = ImageSpec::rgba8_srgb();
+    let mut expected = vec![0; 1000 * 1000 * 4];
+    for row in expected.chunks_exact_mut(4000).take(20) {
+        for pixel in row[..80].as_chunks_mut::<4>().0 {
+            *pixel = [255, 0, 0, 255];
+        }
+    }
+    let expected = PixelView::from_packed(&expected, 1000, 1000, spec.clone()).unwrap();
+    let config = SvgDecoderConfig::new();
+    let decoded = config
+        .clone()
+        .job()
+        .decoder(Cow::Borrowed(&d), &[])
+        .unwrap()
+        .decode()
+        .unwrap();
+    assert_eq!((decoded.width(), decoded.height()), (1000, 1000));
+    assert_eq!(&decoded.pixels().row(7)[28..32], [255, 0, 0, 255]);
+    assert_eq!(&decoded.pixels().row(900)[3600..3604], [0, 0, 0, 0]);
+    zencodec_testkit::check_decode_preferences(config, &d, &[spec], expected).unwrap();
 }
 
 #[test]

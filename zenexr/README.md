@@ -29,10 +29,11 @@ retained, including data/display windows, chromaticities and luminance metadata.
 Output covers the data window; its origin is in the header, not implicitly zero.
 
 No exposure, tone mapping, color conversion or unpremultiplication. EXR color
-samples are linear; alpha follows EXR's associated-alpha convention. Missing
-chromaticities use the EXR BT.709 default; explicitly declared chromaticities
-remain in the header and are conservatively tagged unknown in the pixel buffer.
-There is no assertion that sample magnitudes are absolute nits.
+samples are linear; alpha follows EXR's associated-alpha convention. Explicit
+chromaticities with a finite, invertible RGB-to-XYZ transform describe the
+pixel buffer's primaries, including ACES2065-1 AP0. Missing or uninterpretable
+chromaticities produce `Primaries::Unknown`. The original attributes remain in
+the header. The samples use scene-relative linear light.
 
 ## Resources
 

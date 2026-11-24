@@ -524,7 +524,8 @@ fn legitimate_defs_dag_reuse_and_non_cyclic_chains_succeed() {
         .unwrap()
         .decode()
         .expect("zencodec decode succeeds on DAG");
-    assert_eq!(dec.info().width, 40);
+    assert_eq!((dec.width(), dec.height()), (40, 40));
+    assert_eq!(dec.pixels().as_contiguous_bytes().unwrap(), out.data);
 
     #[cfg(feature = "inventory")]
     {

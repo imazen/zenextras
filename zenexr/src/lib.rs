@@ -151,7 +151,7 @@ impl ExrDecoderConfig {
         let primaries = header
             .shared_attributes
             .chromaticities
-            .map_or(Primaries::Bt709, |c| {
+            .map_or(Primaries::Unknown, |c| {
                 let xy = |v: exr::math::Vec2<f32>| (v.x(), v.y());
                 CustomPrimaries::try_new(xy(c.red), xy(c.green), xy(c.blue), xy(c.white))
                     .map_or(Primaries::Unknown, Primaries::Custom)

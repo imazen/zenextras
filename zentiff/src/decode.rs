@@ -8,14 +8,15 @@
 #![allow(deprecated)]
 
 use alloc::string::String;
+use alloc::sync::Arc;
 use alloc::vec::Vec;
 use enough::Stop;
 use tiff::decoder::ifd::Value;
 use tiff::tags::Tag;
 use whereat::at;
 use zenpixels::{
-    AlphaMode, ChannelOrder, ColorSpace, ImageSpec, PixelBuf, Primaries, SampleLayout, SampleType,
-    SignalRange, Transfer,
+    AlphaMode, ChannelOrder, ColorOrigin, ColorSpace, IccColorSpace, ImageSpec, PixelBuf,
+    Primaries, RenderingIntent, SampleLayout, SampleType, SignalRange, Transfer, TypedElement,
 };
 
 use crate::alloc_util::{AllocPref, vec_with_capacity, vec_zeroed};
@@ -80,9 +81,8 @@ pub struct TiffInfo {
     pub page_count: Option<u32>,
     /// Page name (Tag 285). `None` if not present.
     pub page_name: Option<alloc::string::String>,
-    /// ExtraSamples marks the first extra sample as associated (premultiplied)
-    /// alpha.
-    pub(crate) associated_alpha: bool,
+    /// Explicit ExtraSamples values, in sample order.
+    extra_samples: Vec<u16>,
 }
 
 /// TIFF decode output.
@@ -705,12 +705,18 @@ fn extract_metadata<R: std::io::Read + std::io::Seek>(
     info.compression = read_u16_tag(decoder, Tag::Compression);
     info.photometric = read_u16_tag(decoder, Tag::PhotometricInterpretation);
     info.samples_per_pixel = read_u16_tag(decoder, Tag::SamplesPerPixel);
-    info.associated_alpha = decoder
+    info.extra_samples = decoder
         .find_tag(Tag::ExtraSamples)
         .ok()
         .flatten()
         .and_then(|v| v.into_u16_vec().ok())
-        .is_some_and(|v| v.first() == Some(&1));
+        .unwrap_or_default();
+    let sample_format = decoder
+        .get_tag_u16_vec(Tag::SampleFormat)
+        .ok()
+        .and_then(|formats| formats.first().copied());
+    info.is_float = sample_format == Some(3);
+    info.is_signed = sample_format == Some(2);
 
     // Page name
     info.page_name = read_ascii_tag(decoder, TAG_PAGE_NAME);
@@ -761,7 +767,7 @@ pub fn probe(data: &[u8]) -> Result<TiffInfo> {
             samples_per_pixel: None,
             page_count: None,
             page_name: None,
-            associated_alpha: false,
+            extra_samples: Vec::new(),
         };
 
         extract_metadata(&mut decoder, &mut info);
@@ -869,10 +875,16 @@ pub fn decode(
             samples_per_pixel: None,
             page_count: None,
             page_name: None,
-            associated_alpha: false,
+            extra_samples: Vec::new(),
         };
 
         extract_metadata(&mut decoder, &mut info);
+
+        if info.extra_samples.len() > 1 {
+            return Err(at!(TiffError::UnsupportedFeature(
+                "TIFF has multiple extra samples".into()
+            )));
+        }
 
         // image-tiff decodes old-style JPEG, but zentiff does not take it yet: its tables sit
         // at offsets the inventory's IFD walk cannot yet locate (zenmeta's `jpeg_table` rule,
@@ -964,29 +976,21 @@ pub fn decode(
         ycbcr.convert(&mut result)?;
     }
 
-    if info.associated_alpha && matches!(color_type, tiff::ColorType::CMYKA(_)) {
+    if info.extra_samples == [1] && matches!(color_type, tiff::ColorType::CMYKA(_)) {
         // The CMYK-to-RGB conversion assumes unassociated ink values.
         return Err(at!(TiffError::UnsupportedFeature(
             "CMYK with associated (premultiplied) alpha".into()
         )));
     }
 
-    let pixels = convert_to_pixel_buffer(
-        width,
-        height,
-        color_type,
-        result,
-        color_map.as_deref(),
-        config.alloc_pref,
-    )?;
+    let pixels = convert_to_pixel_buffer(&info, result, color_map.as_deref(), config.alloc_pref)?;
 
-    // Associated alpha: the color samples are premultiplied. Label them so,
-    // rather than as straight alpha.
-    let pixels = if info.associated_alpha && pixels.spec().layout.order.has_alpha_slot() {
-        let spec = pixels.spec().clone().with_alpha(AlphaMode::Premultiplied);
-        pixels
-            .with_spec(spec)
-            .map_err(|err| err.map_error(TiffError::from))?
+    let pixels = if let Some(icc) = &info.icc_profile {
+        let source = match &pixels.spec().color {
+            ColorSpace::Icc { profile, .. } => profile.clone(),
+            _ => Arc::from(icc.as_slice()),
+        };
+        pixels.with_origin(ColorOrigin::from_icc(source))
     } else {
         pixels
     };
@@ -1212,23 +1216,77 @@ pub(crate) fn descriptor_for(ct: tiff::ColorType, is_float: bool) -> ImageSpec {
     pixel_spec(order, sample)
 }
 
+pub(crate) fn descriptor_for_info(info: &TiffInfo) -> Result<ImageSpec> {
+    let mut spec = descriptor_for(info.color_type, info.is_float);
+    spec = match info.extra_samples.as_slice() {
+        [] => spec,
+        // image-tiff discards an unspecified extra on RGB. The decoded
+        // raster is RGB, even though each stored pixel occupies four samples.
+        [0] if info.photometric == Some(2) && info.samples_per_pixel == Some(4) => spec,
+        [1 | 2] if spec.layout.order.has_alpha_slot() => {
+            spec.with_alpha(if info.extra_samples[0] == 1 {
+                AlphaMode::Premultiplied
+            } else {
+                AlphaMode::Straight
+            })
+        }
+        _ => {
+            return Err(at!(TiffError::UnsupportedFeature(
+                "TIFF ExtraSamples layout is unsupported".into()
+            )));
+        }
+    };
+    if let Some(icc) = &info.icc_profile
+        && let Some(class) = icc_color_space(icc)
+    {
+        let channels = match class {
+            IccColorSpace::Gray if spec.layout.order.is_gray_family() => 1,
+            IccColorSpace::Rgb
+                if spec.layout.order.is_rgb_family()
+                    && !matches!(
+                        info.color_type,
+                        tiff::ColorType::CMYK(_) | tiff::ColorType::CMYKA(_)
+                    ) =>
+            {
+                3
+            }
+            _ => return Ok(spec),
+        };
+        let alpha = spec.color.alpha();
+        spec.color = ColorSpace::Icc {
+            profile: Arc::from(icc.as_slice()),
+            channels,
+            alpha,
+            intent: RenderingIntent::RelativeColorimetric,
+        };
+    }
+    Ok(spec)
+}
+
+pub(crate) fn icc_color_space(icc: &[u8]) -> Option<IccColorSpace> {
+    let declared = u32::from_be_bytes(icc.get(..4)?.try_into().ok()?) as usize;
+    let tags = u32::from_be_bytes(icc.get(128..132)?.try_into().ok()?) as usize;
+    if icc.get(36..40)? != b"acsp"
+        || declared > icc.len()
+        || tags == 0
+        || tags.checked_mul(12)?.checked_add(132)? > declared
+    {
+        return None;
+    }
+    IccColorSpace::from_icc(icc)
+}
+
 /// Convert tiff DecodingResult into a PixelBuf.
 #[track_caller]
 fn convert_to_pixel_buffer(
-    width: u32,
-    height: u32,
-    color_type: tiff::ColorType,
+    info: &TiffInfo,
     result: tiff::decoder::DecodingResult,
     #[cfg(feature = "_palette")] color_map: Option<&[u16]>,
     #[cfg(not(feature = "_palette"))] _color_map: Option<&[u16]>,
     alloc_pref: AllocPref,
 ) -> Result<PixelBuf> {
-    use tiff::decoder::DecodingResult as DR;
-
-    let is_float = matches!(&result, DR::F16(_) | DR::F32(_) | DR::F64(_));
-
-    let descriptor = descriptor_for(color_type, is_float);
-
+    let (width, height, color_type) = (info.width, info.height, info.color_type);
+    let descriptor = descriptor_for_info(info)?;
     match color_type {
         #[cfg(feature = "_palette")]
         tiff::ColorType::Palette(bits) => {
@@ -1252,7 +1310,7 @@ fn convert_to_pixel_buffer(
     }
 }
 
-fn adopt_samples<T: bytemuck::Pod>(
+fn adopt_samples<T: TypedElement>(
     samples: Vec<T>,
     width: u32,
     height: u32,

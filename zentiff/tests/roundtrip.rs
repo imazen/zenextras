@@ -55,7 +55,7 @@ fn make_gradient_rgb16(width: u32, height: u32) -> PixelBuf {
         }
     }
     let bytes: Vec<u8> = bytemuck::cast_slice::<u16, u8>(&data).to_vec();
-    PixelBuf::from_vec(bytes, width, height, ImageSpec::rgb16_srgb()).unwrap()
+    PixelBuf::from_bytes(bytes, width, height, ImageSpec::rgb16_srgb()).unwrap()
 }
 
 #[test]
@@ -193,9 +193,8 @@ fn make_gradient_graya16(width: u32, height: u32) -> PixelBuf {
             data.push((y as u16 * 256) + 251);
         }
     }
-    let bytes: Vec<u8> = bytemuck::cast_slice::<u16, u8>(&data).to_vec();
     PixelBuf::from_vec(
-        bytes,
+        data,
         width,
         height,
         ImageSpec::new(
@@ -215,9 +214,8 @@ fn make_gradient_grayaf32(width: u32, height: u32) -> PixelBuf {
             data.push((y as f32 + 0.5) / (height as f32));
         }
     }
-    let bytes: Vec<u8> = bytemuck::cast_slice::<f32, u8>(&data).to_vec();
     PixelBuf::from_vec(
-        bytes,
+        data,
         width,
         height,
         ImageSpec::new(

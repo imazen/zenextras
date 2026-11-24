@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check independently resolved root/fuzz graphs for the pinned contract families.
+"""Check independently resolved workspace, fuzz and benchmark graphs for the pinned contract families.
 
 Run in an isolated export (outside workspace path overrides) through run-heavy.
 Resolution preserves existing lock selections where constraints permit. Keep the
@@ -11,12 +11,18 @@ from pathlib import Path
 import shutil
 import subprocess
 
-CORE = "037ef59b57ae003f853a5b6624b173edfee22d6a"
-PIXELS = "42a0c5c83c5c418950eb528d92d57788f6700bcf"
+CORE = "093211c276fbb1781bec1601d7cb6b0fb92f245a"
+PIXELS = "e0dba0052a839ecfe17e4c911a3761e793605adf"
 FAMILY = {"zencodec", "zencodec-testkit", "zencodec-io", "zencodec-media",
           "zencodec-media-testkit", "zencodec-coroutine", "zenmeta"}
 PIXEL_FAMILY = {"zenpixels", "zenpixels-convert"}
-GRAPHS = [".", "zentiff/fuzz", "zenpdf/fuzz", "zensvg/fuzz", "zenjp2/fuzz", "zenexr/fuzz"]
+COHORT = {
+    "zenjpeg": "0714703dfe94cb20f2bbd84b10a9aab5949782a6",
+    "ultrahdr-core": "a9e3eabc0884b03d2d0ef22627b1b41c03b09589",
+    "zenpng": "1dd8248fa6683d5c3e22eb946a97b1f93996371a",
+    "zenwebp": "3e55db7e5d303fad40ecb14ca396e021397d0230",
+}
+GRAPHS = [".", "zentiff/fuzz", "zenpdf/fuzz", "zensvg/fuzz", "zenjp2/fuzz", "zenexr/fuzz", "tools/exr-decode-bench"]
 
 
 def main():
@@ -43,11 +49,11 @@ def main():
         packages = json.loads((out / "metadata.json").read_text())["packages"]
         shared = {}
         for package in packages:
-            if package["name"] in FAMILY | PIXEL_FAMILY | {"how-far"}:
+            if package["name"] in FAMILY | PIXEL_FAMILY | COHORT.keys() | {"how-far"}:
                 shared.setdefault(package["name"], []).append({
                     "version": package["version"], "source": package["source"]})
         for crate, entries in shared.items():
-            expected = CORE if crate in FAMILY else PIXELS if crate in PIXEL_FAMILY else None
+            expected = CORE if crate in FAMILY else PIXELS if crate in PIXEL_FAMILY else COHORT.get(crate)
             if len(entries) != 1 or (
                 expected and not (entries[0]["source"] or "").endswith("#" + expected)
             ):

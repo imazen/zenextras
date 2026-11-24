@@ -58,7 +58,7 @@ fn independent_openexr_half_piz_fixture() {
     assert!(matches!(
         image.pixels().spec().color,
         ColorSpace::Rgb {
-            primaries: Primaries::Bt709,
+            primaries: Primaries::Unknown,
             ..
         }
     ));
@@ -286,4 +286,121 @@ fn multipart_is_rejected_instead_of_selecting_an_arbitrary_layer() {
             .error(),
         ExrError::Unsupported(_)
     ));
+}
+
+// Author the uncompressed EXR wire data independently of the exr writer.
+#[test]
+fn ap0_chromaticities_keep_the_aces_matrix_and_sample_bits() {
+    fn attribute(out: &mut Vec<u8>, name: &str, kind: &str, value: &[u8]) {
+        out.extend_from_slice(name.as_bytes());
+        out.push(0);
+        out.extend_from_slice(kind.as_bytes());
+        out.push(0);
+        out.extend_from_slice(&(value.len() as u32).to_le_bytes());
+        out.extend_from_slice(value);
+    }
+
+    let mut bytes = vec![0x76, 0x2f, 0x31, 0x01, 2, 0, 0, 0];
+    let mut channels = Vec::new();
+    for name in *b"BGR" {
+        channels.extend([name, 0]);
+        for field in [2u32, 0, 1, 1] {
+            channels.extend(field.to_le_bytes());
+        }
+    }
+    channels.push(0);
+    attribute(&mut bytes, "channels", "chlist", &channels);
+    attribute(&mut bytes, "compression", "compression", &[0]);
+    let window: Vec<u8> = [0i32, 0, 1, 0]
+        .into_iter()
+        .flat_map(i32::to_le_bytes)
+        .collect();
+    attribute(&mut bytes, "dataWindow", "box2i", &window);
+    attribute(&mut bytes, "displayWindow", "box2i", &window);
+    attribute(&mut bytes, "lineOrder", "lineOrder", &[0]);
+    attribute(
+        &mut bytes,
+        "pixelAspectRatio",
+        "float",
+        &1.0f32.to_le_bytes(),
+    );
+    attribute(&mut bytes, "screenWindowCenter", "v2f", &[0; 8]);
+    attribute(
+        &mut bytes,
+        "screenWindowWidth",
+        "float",
+        &1.0f32.to_le_bytes(),
+    );
+    let xy = [
+        0.7347f32, 0.2653, 0.0, 1.0, 0.0001, -0.077, 0.32168, 0.33767,
+    ];
+    let chroma: Vec<u8> = xy.into_iter().flat_map(f32::to_le_bytes).collect();
+    attribute(&mut bytes, "chromaticities", "chromaticities", &chroma);
+    attribute(
+        &mut bytes,
+        "whiteLuminance",
+        "float",
+        &203.0f32.to_le_bytes(),
+    );
+    bytes.push(0);
+    bytes.extend((bytes.len() as u64 + 8).to_le_bytes());
+    bytes.extend(0i32.to_le_bytes());
+    bytes.extend(24u32.to_le_bytes());
+    let r = [-0.0, f32::from_bits(0x7fc01234)];
+    let g = [-0.25, 1.25];
+    let b = [f32::INFINITY, 4.0];
+    bytes.extend([b, g, r].into_iter().flatten().flat_map(f32::to_le_bytes));
+
+    let out = ExrDecoderConfig::new()
+        .decode(&bytes, &Unstoppable)
+        .unwrap();
+    let attrs = out.header().shared_attributes.chromaticities.unwrap();
+    assert_eq!(
+        [
+            attrs.red.x(),
+            attrs.red.y(),
+            attrs.green.x(),
+            attrs.green.y(),
+            attrs.blue.x(),
+            attrs.blue.y(),
+            attrs.white.x(),
+            attrs.white.y()
+        ],
+        xy
+    );
+    assert_eq!(out.header().own_attributes.white_luminance, Some(203.0));
+    let ColorSpace::Rgb {
+        primaries: Primaries::Custom(actual),
+        transfer,
+        white,
+        ..
+    } = out.pixels().spec().color
+    else {
+        panic!("expected linear AP0 sample meaning")
+    };
+    assert_eq!(transfer, zenpixels::Transfer::Linear);
+    assert_eq!(white, Some(DiffuseWhite::new(203.0)));
+    assert_eq!(actual, CustomPrimaries::ACES_AP0);
+    let matrix = Primaries::Custom(actual).rgb_to_xyz_f64().unwrap();
+    // SMPTE ST 2065-1 AP0 to XYZ, with the ACES white point.
+    let expected_matrix = [
+        [0.9525523959, 0.0, 0.0000936786],
+        [0.3439664498, 0.7281660966, -0.0721325464],
+        [0.0, 0.0, 1.0088251844],
+    ];
+    for (got, want) in matrix
+        .into_iter()
+        .flatten()
+        .zip(expected_matrix.into_iter().flatten())
+    {
+        assert!(
+            got.is_finite() && (got - want).abs() < 3e-7,
+            "{got} vs {want}"
+        );
+    }
+    let expected: Vec<u8> = [r[0], g[0], b[0], r[1], g[1], b[1]]
+        .into_iter()
+        .flat_map(f32::to_le_bytes)
+        .collect();
+    assert_eq!(little_endian_pixels(&out), expected);
 }

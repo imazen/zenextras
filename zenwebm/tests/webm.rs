@@ -361,6 +361,44 @@ fn file(children: &[Vec<u8>]) -> Vec<u8> {
     cat(&[ebml_header("webm"), segment(children)])
 }
 
+#[test]
+fn wire_colour_and_absence_are_reported_without_touching_payload() {
+    // Matroska Colour: MatrixCoefficients, Range, TransferCharacteristics, Primaries.
+    const COLOUR: &[u8] = &[
+        0x55, 0xb0, 0x90, 0x55, 0xb1, 0x81, 9, 0x55, 0xb9, 0x81, 1, 0x55, 0xba, 0x81, 16, 0x55,
+        0xbb, 0x81, 9,
+    ];
+    let sample = b"wire-color payload";
+    let cluster = el(
+        0x1F43_B675,
+        &cat(&[uint(0xE7, 17), el(0xA3, &block(5, 0, 0x80, sample))]),
+    );
+    let pq = Cicp::new(9, 16, 9, false);
+    for present in [false, true] {
+        let colour = if present { COLOUR } else { &[] };
+        let video = el(
+            0xE0,
+            &cat(&[uint(0xB0, 16), uint(0xBA, 16), colour.to_vec()]),
+        );
+        let tracks = el(0x1654_AE6B, &track_entry(5, 1, "V_VP9", &[video]));
+        let bytes = file(&[tracks, cluster.clone()]);
+        let (tracks, packets) = demux(&bytes).unwrap();
+        assert_eq!(tracks[0].video_info().unwrap().color, present.then_some(pq));
+        assert_eq!(packets.len(), 1);
+        assert_eq!(packets[0].bytes(), sample);
+        assert_eq!(packets[0].pts(), Some(Timestamp::new(17, MS)));
+    }
+
+    let encoded = mux(WebmMuxer::new(), &tracks(), &packets(1));
+    assert_eq!(
+        encoded
+            .windows(COLOUR.len())
+            .filter(|&bytes| bytes == COLOUR)
+            .count(),
+        1
+    );
+}
+
 /// One cluster with an Xiph-, a fixed- and an EBML-laced block.
 fn laced_file() -> Vec<u8> {
     // Xiph: 3 frames of 300, 2 and the remainder (4).

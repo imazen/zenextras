@@ -83,6 +83,7 @@ fn round_trip_keeps_payloads_timestamps_and_header() {
         assert_eq!(tracks[0].time_base(), tb());
         let v = tracks[0].video_info().unwrap();
         assert_eq!((v.coded_width, v.coded_height), (64, 48));
+        assert_eq!(v.color, None);
         assert_eq!(
             tracks[0].declared_packets(),
             if patch { Some(12) } else { None }

@@ -13,12 +13,10 @@
 
 extern crate alloc;
 
-/// Allocation helpers honoring a per-site fallibility preference (the
-/// crate-local mirror of `zencodec::AllocPreference`). zenjp2's output buffer
-/// is allocated inside `hayro_jpeg2000`, so there is no crate-owned untrusted
-/// decode allocation to convert today; the module carries the boundary
-/// plumbing and the tested 3-mode helpers for parity with the sibling codecs.
 mod alloc_util;
+
+#[cfg(any(feature = "zencodec", feature = "inventory"))]
+mod boxes;
 
 pub mod error;
 

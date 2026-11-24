@@ -755,96 +755,261 @@ fn foreign_exif_blob_decomposes_into_correct_native_ifds() {
     );
 }
 
+#[path = "fixtures/display_p3.rs"]
+mod display_p3;
+
 #[test]
-#[expect(deprecated, reason = "exercise TIFF best-effort metadata retention")]
-fn cicp_only_source_synthesizes_icc_on_encode() {
-    use zencodec::Cicp;
-
-    // TIFF has no CICP carrier, so a CICP-only (Display P3) source must be
-    // lowered to a synthesized ICC profile (resolve_color_emit →
-    // IccDisposition::SynthesizeFrom → synthesize_icc_for_cicp).
-    let meta = Metadata::none().with_cicp(Cicp::DISPLAY_P3);
-    let buf = make_rgb8(4, 4);
-
+fn checked_preserve_exact_retains_supported_fields() {
+    use zenpixels::{AlphaMode, ColorSpace, SampleLayout};
+    let profile = display_p3::DISPLAY_P3;
+    let xmp = b"<x:xmpmeta xmlns:x='adobe:ns:meta/'/>";
+    let pixels = [231, 66, 12, 17, 154, 199];
+    let color = ColorSpace::Icc {
+        profile: profile.into(),
+        channels: 3,
+        alpha: AlphaMode::None,
+        intent: Default::default(),
+    };
+    let buf = PixelBuf::from_vec(
+        pixels.to_vec(),
+        2,
+        1,
+        ImageSpec::new(SampleLayout::RGB8, color),
+    )
+    .unwrap();
+    let meta = Metadata::none()
+        .with_icc(profile)
+        .with_xmp(xmp.as_slice())
+        .with_orientation(Orientation::FlipH);
     let encoded = TiffEncoderCodecConfig::new()
         .job()
-        .with_metadata_policy(meta, MetadataPolicy::PreserveExact)
+        .try_with_metadata_policy(meta, MetadataPolicy::PreserveExact)
+        .unwrap()
         .encoder()
         .unwrap()
         .encode(buf.as_view())
         .unwrap();
-    let tiff_bytes = encoded.into_vec();
 
-    let decoded = TiffDecoderCodecConfig::new()
-        .job()
-        .decoder(Cow::Owned(tiff_bytes), &[])
-        .unwrap()
-        .decode()
-        .unwrap();
-
-    // icc-db uses the canonical CICP-tagged profile, not DISPLAY_P3_V4's
-    // compact compatibility matrix. Keep exact carrier bytes and independently
-    // require the requested signal plus unchanged active samples.
-    let icc = decoded
-        .info()
-        .source_color
-        .icc_profile
-        .as_deref()
-        .expect("CICP-only P3 source should synthesize an ICC for TIFF");
-    use zenpixels_convert::icc_profiles::SynthesizedIcc;
-    let SynthesizedIcc::Profile(expected) = SynthesizedIcc::for_cicp(Cicp::DISPLAY_P3) else {
-        panic!("Display P3 must have a synthesized profile");
-    };
+    // Read the wire tags directly; do not depend on the adapter's metadata output.
+    let mut reader = tiff::decoder::Decoder::open(std::io::Cursor::new(encoded.data())).unwrap();
+    reader.next_image().unwrap();
+    let mut ifd = reader.current_ifd();
+    use tiff::tags::Tag;
+    assert_eq!(ifd.get_tag_u8_vec(Tag::IccProfile).unwrap(), profile);
+    assert_eq!(ifd.get_tag_u8_vec(Tag::Unknown(700)).unwrap(), xmp);
+    assert_eq!(ifd.get_tag_unsigned::<u16>(Tag::Orientation).unwrap(), 2);
     assert_eq!(
-        icc,
-        expected.as_ref(),
-        "embedded ICC must equal the synthesized P3 profile"
-    );
-    assert_eq!(Cicp::from_icc(icc), Some(Cicp::DISPLAY_P3));
-    assert_eq!(
-        decoded.pixels().try_contiguous_bytes().unwrap().as_ref(),
-        buf.as_view().as_contiguous_bytes().unwrap()
+        zentiff::decode(encoded.data(), &Default::default(), &enough::Unstoppable)
+            .unwrap()
+            .pixels
+            .as_view()
+            .as_contiguous_bytes()
+            .unwrap(),
+        pixels
     );
 }
 
-/// A PQ source keeps its transfer: TIFF's only colour carrier is ICC, and
-/// without the bundled profile database PQ got no profile at all (read as sRGB).
 #[test]
-#[expect(deprecated, reason = "exercise TIFF best-effort metadata retention")]
-fn pq_cicp_only_source_synthesizes_a_pq_icc() {
-    use zencodec::Cicp;
+#[expect(
+    deprecated,
+    reason = "exercise the public writer fallback on rejected retention"
+)]
+fn checked_preserve_exact_refuses_without_writing() {
+    use zencodec::encode::EncodePolicy;
+    use zencodec::{CodecErrorExt, UnsupportedOperation};
 
-    let pq = Cicp::new(9, 16, 0, true);
-    let buf = make_rgb8(4, 4);
-    let encoded = TiffEncoderCodecConfig::new()
-        .job()
-        .with_metadata_policy(
-            Metadata::none().with_cicp(pq),
+    let mut job = TiffEncoderCodecConfig::new().job();
+    let err = job
+        .try_set_metadata_policy(
+            Metadata::none().with_cicp(zencodec::Cicp::DISPLAY_P3),
             MetadataPolicy::PreserveExact,
         )
-        .encoder()
-        .unwrap()
-        .encode(buf.as_view())
-        .unwrap();
-    let decoded = TiffDecoderCodecConfig::new()
-        .job()
-        .decoder(Cow::Owned(encoded.into_vec()), &[])
-        .unwrap()
-        .decode()
-        .unwrap();
-    let icc = decoded
-        .info()
-        .source_color
-        .icc_profile
-        .clone()
-        .expect("a PQ source needs an ICC in TIFF");
-    let id = zenpixels::icc::IccIdentification::from_icc(&icc).expect("a known profile");
-    let cicp = id.to_cicp().expect("CICP for the profile");
+        .unwrap_err();
     assert_eq!(
-        (cicp.color_primaries, cicp.transfer_characteristics),
-        (9, 16),
-        "the profile describes BT.2020 PQ"
+        err.downcast_ref::<UnsupportedOperation>(),
+        Some(&UnsupportedOperation::MetadataRetention)
     );
+
+    // A later policy can also conflict with a successfully checked offer.
+    job.try_set_metadata_policy(
+        Metadata::none().with_xmp(b"<meta/>".as_slice()),
+        MetadataPolicy::PreserveExact,
+    )
+    .unwrap();
+    let encoder = job
+        .with_policy(EncodePolicy::none().with_embed_xmp(false))
+        .encoder()
+        .unwrap();
+    let mut destination = Vec::new();
+    let err = zencodec_io::encode_to_writer(encoder, make_rgb8(4, 3).as_view(), &mut destination)
+        .unwrap_err();
+    let zencodec_io::EncodeWriteError::Encoder(err) = err else {
+        panic!("expected TIFF's typed refusal: {err}");
+    };
+    assert_eq!(
+        err.unsupported_operation(),
+        Some(&UnsupportedOperation::MetadataRetention)
+    );
+    assert!(destination.is_empty());
+}
+
+fn profile_tag<'a>(icc: &'a [u8], signature: &[u8; 4]) -> Option<&'a [u8]> {
+    let read_u32 = |bytes: &[u8]| u32::from_be_bytes(bytes.try_into().unwrap()) as usize;
+    let count = read_u32(&icc[128..132]);
+    icc[132..132 + count * 12]
+        .as_chunks::<12>()
+        .0
+        .iter()
+        .find(|entry| &entry[..4] == signature)
+        .map(|entry| {
+            let start = read_u32(&entry[4..8]);
+            &icc[start..start + read_u32(&entry[8..])]
+        })
+}
+
+fn sfixed(bytes: &[u8]) -> f64 {
+    f64::from(i32::from_be_bytes(bytes.try_into().unwrap())) / 65536.0
+}
+
+fn assert_icc_header(icc: &[u8], space: &[u8; 4]) {
+    assert_eq!(
+        u32::from_be_bytes(icc[..4].try_into().unwrap()) as usize,
+        icc.len()
+    );
+    assert_eq!(&icc[12..16], b"mntr");
+    assert_eq!(&icc[16..20], space);
+    assert_eq!(&icc[20..24], b"XYZ ");
+    assert_eq!(&icc[36..40], b"acsp");
+}
+
+#[test]
+fn display_p3_synthesis_matches_d50_matrix_and_srgb_curve() {
+    use zenpixels::Primaries;
+
+    let buf = PixelBuf::from_vec(
+        vec![231u8, 66, 12, 17, 154, 199],
+        2,
+        1,
+        ImageSpec::rgb8_srgb().with_primaries(Primaries::DisplayP3),
+    )
+    .unwrap();
+    let file = encode_via_trait(&buf);
+    let info = zentiff::probe(&file).unwrap();
+    let icc = info.icc_profile.as_deref().unwrap();
+    assert_icc_header(icc, b"RGB ");
+    // Display P3 D65 primaries Bradford-adapted to ICC PCS D50.
+    for (tag, expected) in [
+        (b"rXYZ", [0.5151, 0.2412, -0.00105]),
+        (b"gXYZ", [0.2920, 0.6922, 0.0419]),
+        (b"bXYZ", [0.1571, 0.0666, 0.7841]),
+    ] {
+        let xyz = profile_tag(icc, tag).unwrap();
+        assert_eq!(&xyz[..4], b"XYZ ");
+        for (raw, expected) in xyz[8..20].as_chunks::<4>().0.iter().zip(expected) {
+            assert!(
+                (sfixed(raw) - expected).abs() < 0.001,
+                "{tag:?} got {}",
+                sfixed(raw)
+            );
+        }
+    }
+    // The parametric ICC type-3/4 curve stores gamma, a, b, linear slope and
+    // the breakpoint as s15Fixed16 numbers. Check independently of the builder.
+    for sig in [b"rTRC", b"gTRC", b"bTRC"] {
+        let trc = profile_tag(icc, sig).unwrap();
+        assert_eq!(&trc[..4], b"para");
+        assert!(matches!(
+            u16::from_be_bytes(trc[8..10].try_into().unwrap()),
+            3 | 4
+        ));
+        for (raw, expected) in trc[12..32].as_chunks::<4>().0.iter().zip([
+            2.4,
+            1.0 / 1.055,
+            0.055 / 1.055,
+            1.0 / 12.92,
+            0.04045,
+        ]) {
+            assert!((sfixed(raw) - expected).abs() <= 1.0 / 65536.0);
+        }
+    }
+    assert_eq!(
+        zentiff::decode(&file, &Default::default(), &enough::Unstoppable)
+            .unwrap()
+            .pixels
+            .as_view()
+            .as_contiguous_bytes()
+            .unwrap(),
+        [231, 66, 12, 17, 154, 199]
+    );
+}
+
+#[test]
+fn rgb_pq_keeps_its_transfer_and_native_samples() {
+    use zenpixels::{Primaries, Transfer};
+
+    let spec = ImageSpec::rgb8_srgb()
+        .with_primaries(Primaries::Bt2020)
+        .with_transfer(Transfer::Pq);
+    let samples = [231u8, 66, 12, 17, 154, 199];
+    let buf = PixelBuf::from_vec(samples.to_vec(), 2, 1, spec).unwrap();
+    let file = encode_via_trait(&buf);
+    let decoded = zentiff::decode(&file, &Default::default(), &enough::Unstoppable).unwrap();
+    let icc = decoded.info.icc_profile.as_deref().unwrap();
+    assert_icc_header(icc, b"RGB ");
+    // ICC's video-signal tag is the four raw H.273 code points.
+    let tag = profile_tag(icc, b"cicp").unwrap();
+    assert_eq!(&tag[..4], b"cicp");
+    assert_eq!(&tag[8..12], &[9, 16, 0, 1]);
+    assert_eq!(
+        decoded.pixels.as_view().as_contiguous_bytes().unwrap(),
+        samples
+    );
+}
+
+/// TIFF emits a gray profile for gray samples, including a requested P3
+/// white and an HDR transfer. The profile's color-space signature must not be RGB.
+#[test]
+#[expect(deprecated, reason = "exercise the legacy color signaling input")]
+fn gray_pq_and_p3_emit_gray_icc_without_changing_u16_samples() {
+    use zenpixels::{Cicp, Transfer};
+
+    let samples = [0u16, 0x1234, 0x8001, 0xffff];
+    for (cicp, transfer) in [
+        (Cicp::new(9, 16, 0, true), Transfer::Pq),
+        (Cicp::DISPLAY_P3, Transfer::Srgb),
+    ] {
+        let buf = PixelBuf::from_vec(
+            samples.to_vec(),
+            2,
+            2,
+            ImageSpec::gray16_srgb().with_transfer(transfer),
+        )
+        .unwrap();
+        let encoded = TiffEncoderCodecConfig::new()
+            .job()
+            .with_metadata_policy(
+                Metadata::none().with_cicp(cicp),
+                MetadataPolicy::PreserveExact,
+            )
+            .encoder()
+            .unwrap()
+            .encode(buf.as_view())
+            .unwrap();
+        let decoded =
+            zentiff::decode(encoded.data(), &Default::default(), &enough::Unstoppable).unwrap();
+        let icc = decoded.info.icc_profile.as_deref().unwrap();
+        assert_icc_header(icc, b"GRAY");
+        let trc = profile_tag(icc, b"kTRC").unwrap();
+        assert!(matches!(&trc[..4], b"para" | b"curv"));
+        assert!(profile_tag(icc, b"rXYZ").is_none());
+        assert_eq!(
+            decoded.pixels.as_view().as_contiguous_bytes().unwrap(),
+            samples
+                .into_iter()
+                .flat_map(u16::to_ne_bytes)
+                .collect::<Vec<_>>()
+        );
+    }
 }
 
 #[test]

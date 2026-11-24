@@ -1,6 +1,7 @@
 //! Core PSD (v1) and PSB (v2) header, resource, and merged-image parser.
 
 use alloc::string::String;
+use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
 use core::ops::Range;
@@ -8,7 +9,8 @@ use core::ops::Range;
 use enough::Stop;
 use whereat::at;
 use zenpixels::{
-    AlphaMode, ChannelOrder, ColorSpace, ImageSpec, PixelBuf, SampleLayout, SampleType,
+    AlphaMode, ChannelOrder, ColorOrigin, ColorSpace, IccColorSpace, ImageSpec, PixelBuf,
+    SampleLayout, SampleType,
 };
 
 use crate::alloc_util::{AllocPref, alloc_zeroed};
@@ -252,7 +254,7 @@ impl PsdHeader {
     /// Output [`ImageSpec`] produced when decoding this PSD/PSB.
     pub fn output_descriptor(&self, metadata: &PsdMetadata) -> ImageSpec {
         let alpha = self.has_alpha(metadata);
-        match (self.color_mode, self.depth, alpha) {
+        let mut spec = match (self.color_mode, self.depth, alpha) {
             (ColorMode::Bitmap, _, _) => ImageSpec::gray8_srgb(),
             (ColorMode::Grayscale | ColorMode::Duotone, BitDepth::Eight, false) => {
                 ImageSpec::gray8_srgb()
@@ -282,8 +284,35 @@ impl PsdHeader {
             (ColorMode::Rgb, BitDepth::ThirtyTwo, false) => ImageSpec::rgbf32_linear(),
             (ColorMode::Rgb, BitDepth::ThirtyTwo, true) => ImageSpec::rgbaf32_linear(),
             _ => ImageSpec::rgba8_srgb(),
+        };
+        if self.color_mode == ColorMode::Rgb
+            && let Some(profile) = metadata.icc_profile.as_deref()
+            && is_rgb_icc(profile)
+        {
+            spec.color = ColorSpace::Icc {
+                profile: Arc::from(profile),
+                channels: 3,
+                alpha: spec.color.alpha(),
+                intent: Default::default(),
+            };
         }
+        spec
     }
+}
+
+/// Recognize a structurally present RGB profile. Its color transforms are
+/// interpreted by a CMS when a caller requests conversion.
+fn is_rgb_icc(bytes: &[u8]) -> bool {
+    let Some((declared, tags)) = bytes.first_chunk::<4>().zip(bytes.get(128..132)) else {
+        return false;
+    };
+    let declared = u32::from_be_bytes(*declared) as usize;
+    let tags = u32::from_be_bytes(tags.try_into().expect("four bytes")) as usize;
+    bytes.get(36..40) == Some(b"acsp")
+        && declared <= bytes.len()
+        && tags != 0
+        && tags <= declared.saturating_sub(132) / 12
+        && IccColorSpace::from_icc(bytes) == Some(IccColorSpace::Rgb)
 }
 
 /// Metadata extracted from the PSD/PSB Image Resources section.
@@ -1379,6 +1408,17 @@ fn interleave_planes(
         }
     };
 
-    PixelBuf::from_vec(out, width, height, descriptor)
+    let origin = metadata
+        .icc_profile
+        .as_deref()
+        .map_or_else(ColorOrigin::assumed, |icc| {
+            let profile = match &descriptor.color {
+                ColorSpace::Icc { profile, .. } => profile.clone(),
+                _ => Arc::from(icc),
+            };
+            ColorOrigin::from_icc(profile)
+        });
+    PixelBuf::from_bytes(out, width, height, descriptor)
+        .map(|pixels| pixels.with_origin(origin))
         .map_err(|e| at!(PsdError::PixelBuffer(alloc::format!("{e}"))))
 }

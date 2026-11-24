@@ -655,7 +655,7 @@ fn encoder_output_passes_check_inventory() {
     let rgb: Vec<u8> = (0..24 * 16 * 3).map(|i| (i * 7 % 251) as u8).collect();
     let rgb = PixelBuf::from_vec(rgb, 24, 16, ImageSpec::rgb8_srgb()).unwrap();
     let rgba16: Vec<u8> = (0..9 * 5 * 8).map(|i| (i * 13 % 256) as u8).collect();
-    let rgba16 = PixelBuf::from_vec(rgba16, 9, 5, ImageSpec::rgba16_srgb()).unwrap();
+    let rgba16 = PixelBuf::from_bytes(rgba16, 9, 5, ImageSpec::rgba16_srgb()).unwrap();
     let gray: Vec<u8> = (0..31 * 3).map(|i| (i * 3 % 256) as u8).collect();
     let gray = PixelBuf::from_vec(gray, 31, 3, ImageSpec::gray8_srgb()).unwrap();
     let mut icc = vec![0u8; 132];

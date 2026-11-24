@@ -15,7 +15,7 @@ use zencodec::{
     ImageSequence, Metadata, Orientation, OrientationHint, Resolution, ResolutionUnit,
     ResourceLimits, SourceColor, resolve_color_emit,
 };
-use zenpixels::{AlphaMode, ChannelOrder, ImageSpec, PixelView, SampleType};
+use zenpixels::{ChannelOrder, ImageSpec, PixelView, SampleType};
 
 use whereat::At;
 #[allow(unused_imports)]
@@ -248,6 +248,7 @@ impl zencodec::encode::EncoderConfig for TiffEncoderCodecConfig {
             pulse: zencodec::SharedPulse::default(),
             limits: None,
             metadata: None,
+            require_metadata: false,
             policy: EncodePolicy::none(),
         }
     }
@@ -261,6 +262,7 @@ pub struct TiffEncodeJob {
     pulse: zencodec::SharedPulse,
     limits: Option<ResourceLimits>,
     metadata: Option<Metadata>,
+    require_metadata: bool,
     policy: EncodePolicy,
 }
 
@@ -284,8 +286,31 @@ impl zencodec::encode::EncodeJob for TiffEncodeJob {
     // then delegates here). Store the (already-filtered) metadata to embed.
     #[allow(deprecated)]
     fn with_metadata(mut self, meta: Metadata) -> Self {
-        self.metadata = Some(meta);
+        if !self.require_metadata {
+            self.metadata = Some(meta);
+        }
         self
+    }
+
+    fn try_set_metadata_policy(
+        &mut self,
+        meta: Metadata,
+        policy: zencodec::MetadataPolicy,
+    ) -> Result<(), zencodec::encode::BoxedError> {
+        let retained = zenmeta::metadata::filter(&meta, &policy);
+        // TIFF stores ICC, XMP and orientation directly. Its EXIF translation
+        // may rewrite entries and it has no native carrier for the other fields.
+        if retained.exif.is_some()
+            || retained.cicp.is_some()
+            || retained.content_light_level.is_some()
+            || retained.mastering_display.is_some()
+            || retained.diffuse_white.is_some()
+        {
+            return Err(Box::new(zencodec::UnsupportedOperation::MetadataRetention));
+        }
+        self.metadata = Some(retained);
+        self.require_metadata = true;
+        Ok(())
     }
 
     fn with_limits(mut self, limits: ResourceLimits) -> Self {
@@ -299,6 +324,7 @@ impl zencodec::encode::EncodeJob for TiffEncodeJob {
             pulse: self.pulse,
             limits: self.limits,
             metadata: self.metadata,
+            require_metadata: self.require_metadata,
             policy: self.policy,
         })
     }
@@ -318,6 +344,7 @@ pub struct TiffCodecEncoder {
     pulse: zencodec::SharedPulse,
     limits: Option<ResourceLimits>,
     metadata: Option<Metadata>,
+    require_metadata: bool,
     policy: EncodePolicy,
 }
 
@@ -381,8 +408,17 @@ impl TiffCodecEncoder {
 
         self.check_limits(&pixels)?;
 
-        let channel_count = pixels.spec().layout.channels() as u8;
-        let encode_meta = lower_metadata(self.metadata.as_ref(), &self.policy, channel_count)?;
+        let encode_meta = lower_metadata(self.metadata.as_ref(), &self.policy, pixels.spec())?;
+        if self.require_metadata
+            && let Some(required) = self.metadata.as_ref()
+            && (required.icc_profile.is_some()
+                && required.icc_profile.as_deref() != encode_meta.icc.as_deref()
+                || required.xmp.is_some() && required.xmp.as_deref() != encode_meta.xmp.as_deref())
+        {
+            return Err(at!(TiffError::from(
+                zencodec::UnsupportedOperation::MetadataRetention
+            )));
+        }
 
         let encoded =
             crate::encode::encode_with_meta(&pixels, &self.config.inner, &encode_meta, stop)?;
@@ -407,45 +443,81 @@ impl zencodec::encode::Encoder for TiffCodecEncoder {
 /// plus the color-emit policy into the format-agnostic
 /// [`crate::encode::TiffEncodeMeta`] the encoder writes.
 ///
-/// Color: TIFF has no CICP carrier ([`EncodeCapabilities`]`cicp == false`), so
-/// [`resolve_color_emit`] is asked what to do with the ICC channel — a
-/// CICP-only source resolves to [`IccDisposition::SynthesizeFrom`], which we
-/// lower to a profile via the transfer-aware
-/// [`zenpixels_convert::icc_profiles::SynthesizedIcc::for_cicp`] (so an HDR transfer
-/// is never mis-tagged with an SDR-TRC profile); `plan.cicp` itself is discarded
-/// because there is nowhere to write it.
+/// TIFF carries color through ICC. The plan is based on the active samples
+/// and can keep an existing profile or synthesize an RGB or gray profile.
 fn lower_metadata(
     meta: Option<&Metadata>,
     policy: &EncodePolicy,
-    channel_count: u8,
+    spec: &ImageSpec,
 ) -> crate::Result<crate::encode::TiffEncodeMeta> {
-    let Some(meta) = meta else {
-        return Ok(crate::encode::TiffEncodeMeta::default());
-    };
-
-    // --- Color (ICC) via resolve_color_emit ------------------------------
-    let mut src = SourceColor::default().with_channel_count(channel_count);
+    let empty = Metadata::none();
+    let meta = meta.unwrap_or(&empty);
+    let mut src = SourceColor::default().with_channel_count(spec.layout.channels() as u8);
     if let Some(c) = meta.cicp {
         src = src.with_cicp(c).with_color_authority(ColorAuthority::Cicp);
     }
-    if let Some(icc) = &meta.icc_profile {
-        src = src
-            .with_icc_profile(icc.clone())
-            .with_color_authority(ColorAuthority::Icc);
-    }
 
     let color_policy = policy.resolve_color(ColorEmitPolicy::Balanced);
-    let plan = resolve_color_emit(&src, &TIFF_ENCODE_CAPS, color_policy);
+    let allow_profile = color_policy.fields().icc != zencodec::IccRetention::Drop;
+    // A gray spec carries a transfer but no RGB primaries. A compatible
+    // explicit CICP can select its native white for profile synthesis.
+    let gray_cicp = meta.cicp.filter(|c| {
+        allow_profile
+            && color_policy != ColorEmitPolicy::Verbatim
+            && !matches!(c.color_primaries, 1 | 2)
+            && c.matrix_coefficients == 0
+            && c.full_range
+            && matches!(
+                &spec.color,
+                zenpixels::ColorSpace::Gray { transfer, range: zenpixels::SignalRange::Full, .. }
+                    if transfer.to_cicp() == Some(c.transfer_characteristics)
+            )
+    });
 
-    // Coarse `embed_icc` gate (best-effort) overrides the plan toward dropping.
-    let icc: Option<Vec<u8>> = if policy.resolve_icc(true) {
-        match plan.icc {
-            IccDisposition::KeepSource => meta.icc_profile.as_deref().map(|b| b.to_vec()),
-            IccDisposition::SynthesizeFrom(cicp) => synth_icc_from_cicp(cicp)?,
-            IccDisposition::Drop => None,
-            // `IccDisposition` is `#[non_exhaustive]`; a future disposition we
-            // don't understand must not emit unknown ICC bytes — drop instead.
-            _ => None,
+    let source_icc = match &spec.color {
+        zenpixels::ColorSpace::Icc { profile, .. } => Some(profile),
+        _ => meta.icc_profile.as_ref(),
+    };
+    let icc = if policy.resolve_icc(true) {
+        if let Some(profile) = source_icc
+            && crate::decode::icc_color_space(profile).is_none()
+        {
+            // Keep legacy opaque ICC tag bytes without assigning them active color meaning.
+            allow_profile.then(|| profile.to_vec())
+        } else if source_icc.is_none()
+            && meta.cicp.is_none()
+            && matches!(
+                &spec.color,
+                zenpixels::ColorSpace::Rgb {
+                    transfer: zenpixels::Transfer::Unknown,
+                    ..
+                } | zenpixels::ColorSpace::Gray {
+                    transfer: zenpixels::Transfer::Unknown,
+                    ..
+                }
+            )
+        {
+            None
+        } else {
+            if let Some(profile) = source_icc {
+                src = src
+                    .with_icc_profile(profile.clone())
+                    .with_color_authority(ColorAuthority::Icc);
+            }
+            let plan = resolve_color_emit(&src, &spec.color, &TIFF_ENCODE_CAPS, color_policy)
+                .map_err(|error| at!(TiffError::Encode(alloc::format!("{error}"))))?;
+            match plan.icc {
+                IccDisposition::KeepSource => source_icc.map(|profile| profile.to_vec()),
+                IccDisposition::SynthesizeFrom(cicp) => synth_icc_from_cicp(cicp, false)?,
+                IccDisposition::SynthesizeGrayFrom(cicp) => {
+                    synth_icc_from_cicp(gray_cicp.unwrap_or(cicp), true)?
+                }
+                IccDisposition::Drop => gray_cicp
+                    .map(|cicp| synth_icc_from_cicp(cicp, true))
+                    .transpose()?
+                    .flatten(),
+                _ => None,
+            }
         }
     } else {
         None
@@ -483,9 +555,14 @@ fn lower_metadata(
 /// be synthesized causes an encode error.
 ///
 /// [`synthesize_icc_for_cicp`]: zenpixels_convert::icc_profiles::SynthesizedIcc::for_cicp
-fn synth_icc_from_cicp(cicp: Cicp) -> crate::Result<Option<Vec<u8>>> {
+fn synth_icc_from_cicp(cicp: Cicp, gray: bool) -> crate::Result<Option<Vec<u8>>> {
     use zenpixels_convert::icc_profiles::SynthesizedIcc;
-    match SynthesizedIcc::for_cicp(cicp) {
+    let synthesis = if gray {
+        SynthesizedIcc::for_gray_cicp(cicp)
+    } else {
+        SynthesizedIcc::for_cicp(cicp)
+    };
+    match synthesis {
         SynthesizedIcc::Profile(bytes) => Ok(Some(bytes.into_owned())),
         SynthesizedIcc::NotNeeded => Ok(None),
         // TIFF carries colour only as ICC: writing the pixels without one
@@ -741,8 +818,9 @@ impl<'a> zencodec::decode::DecodeJob<'a> for TiffDecodeJob {
 
     fn output_info(&self, data: &[u8]) -> Result<OutputInfo, At<CodecError>> {
         let tiff_info = crate::probe(data).map_err(CodecError::of)?;
-        let has_alpha = has_alpha_from_color_type(tiff_info.color_type);
-        let native_format = descriptor_for_probe(&tiff_info);
+        let native_format =
+            crate::decode::descriptor_for_info(&tiff_info).map_err(CodecError::of)?;
+        let has_alpha = native_format.layout.order.has_alpha_slot();
         // Report the post-orientation output geometry + the transform the
         // decoder will apply. `Preserve` applies nothing (output = stored dims,
         // `Identity` recorded); a bake hint outputs the resolved orientation's
@@ -905,7 +983,8 @@ impl zencodec::decode::Decode for TiffCodecDecoder<'_> {
 
 /// Convert a [`TiffInfo`] into a [`zencodec::ImageInfo`].
 fn tiff_info_to_image_info(tiff: &TiffInfo) -> ImageInfo {
-    let has_alpha = has_alpha_from_color_type(tiff.color_type);
+    let has_alpha = crate::decode::descriptor_for_info(tiff)
+        .is_ok_and(|spec| spec.layout.order.has_alpha_slot());
 
     let orientation = tiff
         .orientation
@@ -1074,30 +1153,6 @@ fn report_probe_for_hint(mut info: ImageInfo, hint: OrientationHint) -> ImageInf
     info.width = ow;
     info.height = oh;
     info.with_orientation(Orientation::Identity)
-}
-
-/// Determine whether a tiff `ColorType` has an alpha channel.
-fn has_alpha_from_color_type(ct: tiff::ColorType) -> bool {
-    matches!(
-        ct,
-        tiff::ColorType::GrayA(_)
-            | tiff::ColorType::RGBA(_)
-            | tiff::ColorType::CMYKA(_)
-            | tiff::ColorType::Multiband {
-                num_samples: 2 | 4,
-                ..
-            }
-    )
-}
-
-/// Describe the native output using the same sample layout and color as decode.
-fn descriptor_for_probe(tiff: &TiffInfo) -> ImageSpec {
-    let spec = crate::decode::descriptor_for(tiff.color_type, tiff.is_float);
-    if tiff.associated_alpha && spec.layout.order.has_alpha_slot() {
-        spec.with_alpha(AlphaMode::Premultiplied)
-    } else {
-        spec
-    }
 }
 
 #[cfg(test)]

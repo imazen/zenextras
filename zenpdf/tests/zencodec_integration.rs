@@ -136,26 +136,23 @@ fn limits_accept_within_bounds() {
 
 #[test]
 fn push_decoder() {
+    use std::fmt::Write as _;
     use zencodec::decode::{DecodeRowSink, SinkError};
-    use zenpixels::{ImageSpec, PixelViewMut};
+    use zenpixels::{AlphaMode, ImageSpec, PixelViewMut};
 
     struct CollectSink {
         data: Vec<u8>,
-        width: u32,
-        height: u32,
+        stride: usize,
+        spec: Option<ImageSpec>,
     }
 
     impl DecodeRowSink for CollectSink {
-        fn begin(
-            &mut self,
-            width: u32,
-            height: u32,
-            _descriptor: ImageSpec,
-        ) -> Result<(), SinkError> {
-            self.width = width;
-            self.height = height;
-            let bpp = 4usize;
-            self.data.resize(width as usize * height as usize * bpp, 0);
+        fn begin(&mut self, width: u32, height: u32, spec: ImageSpec) -> Result<(), SinkError> {
+            assert_eq!((width, height), (6, 4));
+            assert_eq!(spec.color.alpha(), AlphaMode::Straight);
+            self.spec = Some(spec);
+            self.stride = width as usize * 4 + 7;
+            self.data.resize(self.stride * height as usize, 0xA5);
             Ok(())
         }
 
@@ -166,30 +163,81 @@ fn push_decoder() {
             width: u32,
             descriptor: ImageSpec,
         ) -> Result<PixelViewMut<'_>, SinkError> {
-            let bpp = 4usize;
-            let stride = width as usize * bpp;
-            let start = y as usize * stride;
-            let end = start + height as usize * stride;
-            let slice = &mut self.data[start..end];
-            PixelViewMut::new(slice, width, height, stride, descriptor)
-                .map_err(|e| -> SinkError { e.to_string().into() })
+            assert_eq!(self.spec.as_ref(), Some(&descriptor));
+            let start = y as usize * self.stride;
+            let end = start + height as usize * self.stride;
+            PixelViewMut::new(
+                &mut self.data[start..end],
+                width,
+                height,
+                self.stride,
+                descriptor,
+            )
+            .map_err(|e| -> SinkError { e.to_string().into() })
         }
     }
 
-    let dec = PdfDecoderConfig::new().with_bounds(RenderBounds::Scale(0.1));
-    let data = test_pdf();
+    let mark = "1 0 0 rg\n1 1 2 1 re f";
+    let mut pdf = String::from("%PDF-1.4\n");
+    let mut offsets = Vec::new();
+    for (index, object) in [
+        "<< /Type /Catalog /Pages 2 0 R >>".into(),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".into(),
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 6 4] /Resources << >> /Contents 4 0 R >>"
+            .into(),
+        format!("<< /Length {} >>\nstream\n{mark}\nendstream", mark.len()),
+    ]
+    .iter()
+    .enumerate()
+    {
+        offsets.push(pdf.len());
+        writeln!(&mut pdf, "{} 0 obj\n{object}\nendobj", index + 1).unwrap();
+    }
+    let xref = pdf.len();
+    pdf.push_str("xref\n0 5\n0000000000 65535 f \n");
+    for offset in offsets {
+        writeln!(&mut pdf, "{offset:010} 00000 n ").unwrap();
+    }
+    writeln!(
+        &mut pdf,
+        "trailer\n<< /Root 1 0 R /Size 5 >>\nstartxref\n{xref}\n%%EOF"
+    )
+    .unwrap();
+
+    let dec = PdfDecoderConfig::new().with_background([0, 0, 255, 255]);
+    let one = dec
+        .clone()
+        .job()
+        .decoder(Cow::Borrowed(pdf.as_bytes()), &[])
+        .unwrap()
+        .decode()
+        .unwrap();
     let mut sink = CollectSink {
         data: Vec::new(),
-        width: 0,
-        height: 0,
+        stride: 0,
+        spec: None,
     };
     let info = dec
         .job()
-        .push_decoder(Cow::Borrowed(&data), &mut sink, &[])
+        .push_decoder(Cow::Borrowed(pdf.as_bytes()), &mut sink, &[])
         .unwrap();
-    assert!(info.width > 0);
-    assert!(info.height > 0);
-    assert!(!sink.data.is_empty());
+    assert_eq!((info.width, info.height), (6, 4));
+    assert_eq!((one.width(), one.height()), (6, 4));
+    assert_eq!(one.pixels().spec(), sink.spec.as_ref().unwrap());
+    assert_eq!(sink.data.len(), 4 * sink.stride);
+    for (y, row) in sink.data.chunks_exact(sink.stride).enumerate() {
+        assert_eq!(&row[..24], one.pixels().row(y as u32));
+        assert_eq!(&row[24..], &[0xA5; 7]);
+        for (x, pixel) in row[..24].as_chunks::<4>().0.iter().enumerate() {
+            // PDF uses bottom-left coordinates. x=1..3, y=1..2 maps to row 2.
+            let expected = if y == 2 && (1..3).contains(&x) {
+                [255, 0, 0, 255]
+            } else {
+                [0, 0, 255, 255]
+            };
+            assert_eq!(*pixel, expected, "at ({x}, {y})");
+        }
+    }
 }
 
 #[test]

@@ -95,6 +95,16 @@ All color types and sample depths handled by the `tiff` crate:
 Higher-depth integers (u32/u64/i8-i64) are widened to the next supported depth.
 Sub-byte samples (1/2/4/6-bit) are unpacked and scaled to 0-255.
 
+RGB pages with an unspecified fourth sample in `ExtraSamples` deliver three
+color channels. Associated and unassociated alpha retain the fourth sample
+with premultiplied and straight alpha semantics respectively. A matching RGB
+or Gray ICC profile describes the decoded samples. Untagged TIFF has an
+unknown transfer, with BT.709 as the RGB primaries fallback.
+
+On the zencodec adapter, checked metadata retention accepts ICC bytes, XMP
+bytes and orientation. Required fields that TIFF must translate or lacks a
+carrier for, such as EXIF blobs or CICP, return a typed refusal.
+
 ## Encode support
 
 | Format | Depths |

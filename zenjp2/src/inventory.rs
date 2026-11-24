@@ -29,6 +29,8 @@ use zencodec::inventory::{
     Disposition, Inventory, InventoryError, MetadataKind, Part, PartId, PartKind, PartTag,
 };
 
+use crate::boxes::{BoxHdr, read_box};
+
 /// JP2 signature box prefix hayro-jpeg2000 requires (`Image::new`).
 const JP2_MAGIC: [u8; 8] = [0x00, 0x00, 0x00, 0x0C, b'j', b'P', b' ', b' '];
 /// Codestream prefix hayro-jpeg2000 requires (`Image::new`): SOC + SIZ.
@@ -61,68 +63,6 @@ impl zencodec::CategorizedError for Failed {
     }
 }
 type Res<T = ()> = Result<T, Failed>;
-
-/// A parsed box header.
-struct BoxHdr {
-    start: u64,
-    /// Header length: 8, or 16 with an `XLBox`.
-    hdr: u64,
-    /// End of the box, clamped to the enclosing range.
-    end: u64,
-    ty: [u8; 4],
-    /// The declared length ran past the enclosing range.
-    truncated: bool,
-    /// `LBox == 0`: the box runs to the end of the enclosing range.
-    to_end: bool,
-}
-
-impl BoxHdr {
-    fn range(&self) -> Range<u64> {
-        self.start..self.end
-    }
-    fn payload(&self) -> Range<u64> {
-        (self.start + self.hdr).min(self.end)..self.end
-    }
-}
-
-/// Read a box header at `pos` inside `..limit`. `Err` carries why the bytes
-/// cannot be a box (hayro-jpeg2000's `box::read` returns `None` for the same
-/// cases and the parse loop stops).
-fn read_box(data: &[u8], pos: u64, limit: u64) -> Result<BoxHdr, &'static str> {
-    let rem = limit.saturating_sub(pos);
-    if rem < 8 {
-        return Err("fewer than 8 bytes left for a box header");
-    }
-    let at = pos as usize;
-    let lbox = u32::from_be_bytes([data[at], data[at + 1], data[at + 2], data[at + 3]]);
-    let ty = [data[at + 4], data[at + 5], data[at + 6], data[at + 7]];
-    let (hdr, declared_end, to_end) = match lbox {
-        0 => (8u64, limit, true),
-        1 => {
-            if rem < 16 {
-                return Err("truncated XLBox");
-            }
-            let mut xl = [0u8; 8];
-            xl.copy_from_slice(&data[at + 8..at + 16]);
-            let xl = u64::from_be_bytes(xl);
-            if xl < 16 {
-                return Err("XLBox smaller than its own header");
-            }
-            (16, pos.saturating_add(xl), false)
-        }
-        2..=7 => return Err("box length smaller than its header"),
-        n => (8, pos + u64::from(n), false),
-    };
-    let truncated = declared_end > limit;
-    Ok(BoxHdr {
-        start: pos,
-        hdr,
-        end: declared_end.min(limit),
-        ty,
-        truncated,
-        to_end,
-    })
-}
 
 fn label_of(bytes: &[u8]) -> String {
     let n = bytes.len().min(MAX_LABEL);
