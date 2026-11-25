@@ -31,7 +31,7 @@ pub enum Jp2Error {
 
     /// A fallible allocation failed (out-of-memory on an untrusted-sized
     /// buffer). Always available (no `zencodec` feature required) since
-    /// [`crate::alloc_util`]'s helpers are feature-agnostic. Maps to
+    /// `crate::alloc_util`'s helpers are feature-agnostic. Maps to
     /// [`ResourceError::OutOfMemory`](zencodec::ResourceError::OutOfMemory).
     #[error("out of memory: {0}")]
     OutOfMemory(String),
@@ -109,7 +109,7 @@ impl zencodec::CategorizedError for Jp2Error {
 /// Bridge a bare [`Jp2Error`] into the shared
 /// [`CodecError`](zencodec::CodecError) envelope (Pattern B).
 ///
-/// `.start_at()` begins the location trace; [`CodecError::of`] then reads the
+/// `.start_at()` begins the location trace; [`zencodec::CodecError::of`] then reads the
 /// [`category`](zencodec::CategorizedError::category) *and* the
 /// [`codec_name`](zencodec::CategorizedError::codec_name) from the value, keeping
 /// the trace on the outside. With this, `?`/`.into()` on a bare `Jp2Error`

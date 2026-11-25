@@ -238,7 +238,7 @@ fn an_unstopped_pulse_changes_nothing() {
         view.rows(),
         view.as_contiguous_bytes().unwrap().to_vec(),
     );
-    assert_eq!(view.spec(), &zenpixels::ImageSpec::rgb8_srgb());
+    assert_eq!(view.spec(), &zenpixels::ImageSpec::RGB8_SRGB);
     assert_eq!((expected.0, expected.1), (W, H));
     let plain = PsdDecoderConfig::new()
         .job()

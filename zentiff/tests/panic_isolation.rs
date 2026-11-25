@@ -190,5 +190,5 @@ fn make_gradient_rgb8(width: u32, height: u32) -> zenpixels::PixelBuf {
             data.push(128u8);
         }
     }
-    PixelBuf::from_vec(data, width, height, ImageSpec::rgb8_srgb()).unwrap()
+    PixelBuf::from_typed(data, width, height, ImageSpec::RGB8_SRGB).unwrap()
 }

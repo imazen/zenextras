@@ -98,16 +98,16 @@ static TIFF_DECODE_CAPS: DecodeCapabilities = DecodeCapabilities::new()
 /// (GrayAlpha is written as Gray + an `ExtraSamples` alpha channel — 2
 /// samples/pixel — not widened to RGBA.)
 static TIFF_ENCODE_DESCRIPTORS: &[ImageSpec] = &[
-    ImageSpec::rgb8_srgb(),
-    ImageSpec::rgba8_srgb(),
-    ImageSpec::gray8_srgb(),
-    ImageSpec::rgb16_srgb(),
-    ImageSpec::rgba16_srgb(),
-    ImageSpec::gray16_srgb(),
-    ImageSpec::rgbf32_linear(),
-    ImageSpec::rgbaf32_linear(),
-    ImageSpec::grayf32_linear(),
-    ImageSpec::graya8_srgb(),
+    ImageSpec::RGB8_SRGB,
+    ImageSpec::RGBA8_SRGB,
+    ImageSpec::GRAY8_SRGB,
+    ImageSpec::RGB16_SRGB,
+    ImageSpec::RGBA16_SRGB,
+    ImageSpec::GRAY16_SRGB,
+    ImageSpec::RGBF32_LINEAR,
+    ImageSpec::RGBAF32_LINEAR,
+    ImageSpec::GRAYF32_LINEAR,
+    ImageSpec::GRAYA8_SRGB,
     zenpixels::ImageSpec::new(
         zenpixels::SampleLayout::new(
             zenpixels::SampleType::U16,
@@ -764,7 +764,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for TiffDecodeJob {
     }
 
     /// Map every byte of `data` without decoding pixels; see
-    /// [`crate::inventory`] for the walk and the dispositions.
+    /// `crate::inventory` for the walk and the dispositions.
     #[cfg(feature = "inventory")]
     fn inventory(&self, data: &[u8]) -> Result<zencodec::inventory::Inventory, At<CodecError>> {
         let stop: &dyn Stop = &self.pulse;
@@ -1208,7 +1208,7 @@ mod tests {
         let w = 4u32;
         let h = 2u32;
         let pixels: Vec<u8> = (0..w * h * 3).map(|i| (i % 256) as u8).collect();
-        let buf = PixelBuf::from_vec(pixels.clone(), w, h, ImageSpec::rgb8_srgb()).unwrap();
+        let buf = PixelBuf::from_typed(pixels.clone(), w, h, ImageSpec::RGB8_SRGB).unwrap();
         let slice = buf.as_view();
 
         let encoded = encode_pixels(slice);
@@ -1222,10 +1222,7 @@ mod tests {
 
         // Verify pixel data roundtrips
         let out_pixels = decoded.pixels();
-        assert_eq!(
-            out_pixels.try_contiguous_bytes().unwrap().as_ref(),
-            &pixels[..]
-        );
+        assert_eq!(out_pixels.contiguous_bytes().unwrap().as_ref(), &pixels[..]);
     }
 
     #[test]
@@ -1233,7 +1230,7 @@ mod tests {
         let w = 3u32;
         let h = 3u32;
         let pixels: Vec<u8> = (0..w * h).map(|i| (i * 28 % 256) as u8).collect();
-        let buf = PixelBuf::from_vec(pixels.clone(), w, h, ImageSpec::gray8_srgb()).unwrap();
+        let buf = PixelBuf::from_typed(pixels.clone(), w, h, ImageSpec::GRAY8_SRGB).unwrap();
         let slice = buf.as_view();
 
         let encoded = encode_pixels(slice);
@@ -1241,7 +1238,7 @@ mod tests {
         assert_eq!(decoded.width(), w);
         assert_eq!(decoded.height(), h);
         assert_eq!(
-            decoded.pixels().try_contiguous_bytes().unwrap().as_ref(),
+            decoded.pixels().contiguous_bytes().unwrap().as_ref(),
             &pixels[..]
         );
     }
@@ -1252,7 +1249,7 @@ mod tests {
         let w = 2u32;
         let h = 2u32;
         let pixels = vec![255u8; (w * h * 4) as usize];
-        let buf = PixelBuf::from_vec(pixels.clone(), w, h, ImageSpec::rgba8_srgb()).unwrap();
+        let buf = PixelBuf::from_typed(pixels.clone(), w, h, ImageSpec::RGBA8_SRGB).unwrap();
         let encoded = encode_pixels(buf.as_view());
 
         let config = TiffDecoderCodecConfig::new();
@@ -1269,7 +1266,7 @@ mod tests {
         let w = 2u32;
         let h = 2u32;
         let pixels = vec![128u8; (w * h * 3) as usize];
-        let buf = PixelBuf::from_vec(pixels, w, h, ImageSpec::rgb8_srgb()).unwrap();
+        let buf = PixelBuf::from_typed(pixels, w, h, ImageSpec::RGB8_SRGB).unwrap();
         let encoded = encode_pixels(buf.as_view());
 
         let config = TiffDecoderCodecConfig::new();
@@ -1328,7 +1325,7 @@ mod tests {
         let w = 2u32;
         let h = 2u32;
         let pixels = vec![0u8; (w * h * 3) as usize];
-        let buf = PixelBuf::from_vec(pixels, w, h, ImageSpec::rgb8_srgb()).unwrap();
+        let buf = PixelBuf::from_typed(pixels, w, h, ImageSpec::RGB8_SRGB).unwrap();
         let encoded = encode_pixels(buf.as_view());
         let decoded = decode_bytes(encoded.data());
         let details = decoded.source_encoding_details().unwrap();
@@ -1343,7 +1340,7 @@ mod tests {
         let w = 2u32;
         let h = 2u32;
         let pixels = vec![0u8; (w * h * 3) as usize];
-        let buf = PixelBuf::from_vec(pixels, w, h, ImageSpec::rgb8_srgb()).unwrap();
+        let buf = PixelBuf::from_typed(pixels, w, h, ImageSpec::RGB8_SRGB).unwrap();
         let encoded = encode_pixels(buf.as_view());
 
         // Decode with strict policy — metadata should be suppressed

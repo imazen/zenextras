@@ -147,7 +147,7 @@ impl Default for PdfDecoderConfig {
     }
 }
 
-static DECODE_DESCRIPTORS: &[ImageSpec] = &[ImageSpec::rgba8_srgb()];
+static DECODE_DESCRIPTORS: &[ImageSpec] = &[ImageSpec::RGBA8_SRGB];
 
 impl zencodec::decode::DecoderConfig for PdfDecoderConfig {
     type Error = At<CodecError>;
@@ -174,7 +174,7 @@ impl zencodec::decode::DecoderConfig for PdfDecoderConfig {
     /// transparency groups), not just the output width × height. The output
     /// raster is a firm lower bound — the final RGBA8 buffer is W × H × 4 — and
     /// zenpdf's `pixmap_to_buffer` briefly holds the hayro pixmap and the
-    /// converted [`PixelBuf`] concurrently (≈ 2× the raster). On top of that,
+    /// converted [`zenpixels::PixelBuf`] concurrently (≈ 2× the raster). On top of that,
     /// this estimate budgets a generous working-set multiple for the parsed
     /// document and embedded resources, and reports a wide `peak_max`.
     /// Rendering is single-threaded. Treat the numbers as a structural floor,
@@ -251,7 +251,7 @@ impl PdfDecodeJob {
             (0.0, 0.0)
         };
         let (w, h) = compute_output_dims(&self.config.bounds, page_w, page_h)?;
-        let info = OutputInfo::full_decode(w, h, ImageSpec::rgba8_srgb());
+        let info = OutputInfo::full_decode(w, h, ImageSpec::RGBA8_SRGB);
         self.check_limits_on_output(&info)?;
         Ok(SelectedPage {
             page,

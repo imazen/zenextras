@@ -127,7 +127,7 @@ fn windows_chromaticities_and_luminance_metadata_are_retained() {
     assert_eq!(probe.shared_attributes.chromaticities, Some(chromaticities));
     assert_eq!(probe.own_attributes.white_luminance, Some(203.0));
     assert_eq!(probe.own_attributes.exposure, Some(0.125));
-    let expected = CustomPrimaries::try_new(
+    let expected = CustomPrimaries::new(
         (0.708, 0.292),
         (0.170, 0.797),
         (0.131, 0.046),

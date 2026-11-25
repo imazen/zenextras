@@ -14,7 +14,7 @@ use zentiff::codec::{TiffDecoderCodecConfig, TiffEncoderCodecConfig};
 
 fn make_rgb8(w: u32, h: u32) -> PixelBuf {
     let data: Vec<u8> = (0..w * h * 3).map(|i| (i % 256) as u8).collect();
-    PixelBuf::from_vec(data, w, h, ImageSpec::rgb8_srgb()).unwrap()
+    PixelBuf::from_typed(data, w, h, ImageSpec::RGB8_SRGB).unwrap()
 }
 
 fn encode_via_trait(buf: &PixelBuf) -> Vec<u8> {
@@ -169,7 +169,7 @@ fn roundtrip_rgb8_via_traits() {
     assert_eq!(decoded.width(), 8);
     assert_eq!(decoded.height(), 4);
     assert_eq!(
-        decoded.pixels().try_contiguous_bytes().unwrap().as_ref(),
+        decoded.pixels().contiguous_bytes().unwrap().as_ref(),
         original.as_view().as_contiguous_bytes().unwrap()
     );
 }
@@ -177,7 +177,7 @@ fn roundtrip_rgb8_via_traits() {
 #[test]
 fn roundtrip_rgba8_via_traits() {
     let data: Vec<u8> = (0..4u32 * 4 * 4).map(|i| (i % 256) as u8).collect();
-    let original = PixelBuf::from_vec(data, 4, 4, ImageSpec::rgba8_srgb()).unwrap();
+    let original = PixelBuf::from_typed(data, 4, 4, ImageSpec::RGBA8_SRGB).unwrap();
     let tiff_data = encode_via_trait(&original);
 
     let config = TiffDecoderCodecConfig::new();
@@ -196,7 +196,7 @@ fn roundtrip_rgba8_via_traits() {
 #[test]
 fn roundtrip_gray8_via_traits() {
     let data: Vec<u8> = (0..16u32).map(|i| (i * 17 % 256) as u8).collect();
-    let original = PixelBuf::from_vec(data, 4, 4, ImageSpec::gray8_srgb()).unwrap();
+    let original = PixelBuf::from_typed(data, 4, 4, ImageSpec::GRAY8_SRGB).unwrap();
     let tiff_data = encode_via_trait(&original);
 
     let config = TiffDecoderCodecConfig::new();
@@ -210,7 +210,7 @@ fn roundtrip_gray8_via_traits() {
     assert_eq!(decoded.width(), 4);
     assert_eq!(decoded.height(), 4);
     assert_eq!(
-        decoded.pixels().try_contiguous_bytes().unwrap().as_ref(),
+        decoded.pixels().contiguous_bytes().unwrap().as_ref(),
         original.as_view().as_contiguous_bytes().unwrap()
     );
 }
@@ -222,7 +222,7 @@ fn roundtrip_graya8_via_traits_stays_two_channel() {
     let data: Vec<u8> = (0..w * h)
         .flat_map(|i| [(i * 7 % 256) as u8, (i * 3 % 256) as u8])
         .collect();
-    let original = PixelBuf::from_vec(data, w, h, ImageSpec::graya8_srgb()).unwrap();
+    let original = PixelBuf::from_typed(data, w, h, ImageSpec::GRAYA8_SRGB).unwrap();
     let tiff_data = encode_via_trait(&original);
 
     let config = TiffDecoderCodecConfig::new();
@@ -242,7 +242,7 @@ fn roundtrip_graya8_via_traits_stays_two_channel() {
     );
     assert_eq!(desc.layout.sample, zenpixels::SampleType::U8);
     assert_eq!(
-        decoded.pixels().try_contiguous_bytes().unwrap().as_ref(),
+        decoded.pixels().contiguous_bytes().unwrap().as_ref(),
         original.as_view().as_contiguous_bytes().unwrap(),
         "GrayAlpha8 pixels must round-trip byte-identically"
     );
@@ -258,7 +258,7 @@ fn roundtrip_graya8_with_metadata_stays_two_channel() {
     let data: Vec<u8> = (0..w * h)
         .flat_map(|i| [(200 - i % 200) as u8, (i * 11 % 256) as u8])
         .collect();
-    let original = PixelBuf::from_vec(data, w, h, ImageSpec::graya8_srgb()).unwrap();
+    let original = PixelBuf::from_typed(data, w, h, ImageSpec::GRAYA8_SRGB).unwrap();
 
     let icc = sample_icc();
     let meta = Metadata::none().with_icc(icc.clone());
@@ -299,7 +299,7 @@ fn roundtrip_graya8_with_metadata_stays_two_channel() {
     assert_eq!(desc.layout.order, zenpixels::ChannelOrder::GrayAlpha);
     assert_eq!(desc.layout.sample, zenpixels::SampleType::U8);
     assert_eq!(
-        decoded.pixels().try_contiguous_bytes().unwrap().as_ref(),
+        decoded.pixels().contiguous_bytes().unwrap().as_ref(),
         original.as_view().as_contiguous_bytes().unwrap()
     );
 }
@@ -528,7 +528,7 @@ fn metadata_web_policy_roundtrip_keeps_icc_orientation_strips_gps() {
     // Embedding metadata must not corrupt the pixels: the decoded image is
     // byte-identical to the source (orientation is metadata, not baked here).
     assert_eq!(
-        decoded.pixels().try_contiguous_bytes().unwrap().as_ref(),
+        decoded.pixels().contiguous_bytes().unwrap().as_ref(),
         buf.as_view().as_contiguous_bytes().unwrap(),
         "pixels must survive the metadata-embedding encode path unchanged"
     );
@@ -770,7 +770,7 @@ fn checked_preserve_exact_retains_supported_fields() {
         alpha: AlphaMode::None,
         intent: Default::default(),
     };
-    let buf = PixelBuf::from_vec(
+    let buf = PixelBuf::from_typed(
         pixels.to_vec(),
         2,
         1,
@@ -886,11 +886,11 @@ fn assert_icc_header(icc: &[u8], space: &[u8; 4]) {
 fn display_p3_synthesis_matches_d50_matrix_and_srgb_curve() {
     use zenpixels::Primaries;
 
-    let buf = PixelBuf::from_vec(
+    let buf = PixelBuf::from_typed(
         vec![231u8, 66, 12, 17, 154, 199],
         2,
         1,
-        ImageSpec::rgb8_srgb().with_primaries(Primaries::DisplayP3),
+        ImageSpec::RGB8_SRGB.with_primaries(Primaries::DisplayP3),
     )
     .unwrap();
     let file = encode_via_trait(&buf);
@@ -947,11 +947,11 @@ fn display_p3_synthesis_matches_d50_matrix_and_srgb_curve() {
 fn rgb_pq_keeps_its_transfer_and_native_samples() {
     use zenpixels::{Primaries, Transfer};
 
-    let spec = ImageSpec::rgb8_srgb()
+    let spec = ImageSpec::RGB8_SRGB
         .with_primaries(Primaries::Bt2020)
         .with_transfer(Transfer::Pq);
     let samples = [231u8, 66, 12, 17, 154, 199];
-    let buf = PixelBuf::from_vec(samples.to_vec(), 2, 1, spec).unwrap();
+    let buf = PixelBuf::from_typed(samples.to_vec(), 2, 1, spec).unwrap();
     let file = encode_via_trait(&buf);
     let decoded = zentiff::decode(&file, &Default::default(), &enough::Unstoppable).unwrap();
     let icc = decoded.info.icc_profile.as_deref().unwrap();
@@ -978,11 +978,11 @@ fn gray_pq_and_p3_emit_gray_icc_without_changing_u16_samples() {
         (Cicp::new(9, 16, 0, true), Transfer::Pq),
         (Cicp::DISPLAY_P3, Transfer::Srgb),
     ] {
-        let buf = PixelBuf::from_vec(
+        let buf = PixelBuf::from_typed(
             samples.to_vec(),
             2,
             2,
-            ImageSpec::gray16_srgb().with_transfer(transfer),
+            ImageSpec::GRAY16_SRGB.with_transfer(transfer),
         )
         .unwrap();
         let encoded = TiffEncoderCodecConfig::new()
@@ -1081,7 +1081,7 @@ fn decode_bytes_under_pref(encoded: &[u8], pref: Option<zencodec::AllocPreferenc
         .unwrap()
         .into_buffer()
         .as_view()
-        .try_contiguous_bytes()
+        .contiguous_bytes()
         .unwrap()
         .into_owned()
 }
@@ -1110,13 +1110,13 @@ fn fallible_alloc_decode_matches_default() {
 
     // (2) RGBA8 — passthrough with alpha.
     let rgba_data: Vec<u8> = (0..64u32 * 48 * 4).map(|i| (i % 256) as u8).collect();
-    let rgba8 = PixelBuf::from_vec(rgba_data, 64, 48, ImageSpec::rgba8_srgb()).unwrap();
+    let rgba8 = PixelBuf::from_typed(rgba_data, 64, 48, ImageSpec::RGBA8_SRGB).unwrap();
     assert_all_alloc_modes_agree(&encode_via_trait(&rgba8));
 
     // (3) GrayAlpha8 — exercises the channel-adjust conversion buffer
     //     (gray+alpha → expanded), a different untrusted-sized alloc site.
     let ga_data: Vec<u8> = (0..32u32 * 24 * 2).map(|i| (i % 256) as u8).collect();
-    let graya = PixelBuf::from_vec(ga_data, 32, 24, ImageSpec::graya8_srgb()).unwrap();
+    let graya = PixelBuf::from_typed(ga_data, 32, 24, ImageSpec::GRAYA8_SRGB).unwrap();
     assert_all_alloc_modes_agree(&encode_via_trait(&graya));
 }
 

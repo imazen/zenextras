@@ -153,13 +153,13 @@ impl ExrDecoderConfig {
             .chromaticities
             .map_or(Primaries::Unknown, |c| {
                 let xy = |v: exr::math::Vec2<f32>| (v.x(), v.y());
-                CustomPrimaries::try_new(xy(c.red), xy(c.green), xy(c.blue), xy(c.white))
+                CustomPrimaries::new(xy(c.red), xy(c.green), xy(c.blue), xy(c.white))
                     .map_or(Primaries::Unknown, Primaries::Custom)
             });
         let mut spec = if channels == 4 {
-            ImageSpec::rgbaf32_linear().with_alpha(AlphaMode::Premultiplied)
+            ImageSpec::RGBAF32_LINEAR.with_alpha(AlphaMode::Premultiplied)
         } else {
-            ImageSpec::rgbf32_linear()
+            ImageSpec::RGBF32_LINEAR
         };
         spec = spec.with_primaries(primaries);
         if let Some(white) = header
@@ -203,7 +203,7 @@ impl ExrDecoderConfig {
             .map_err(|e| upstream_error(e, stop))?;
         check_stop(stop)?;
         let samples = image.layer_data.channel_data.pixels;
-        let pixels = PixelBuf::from_vec(samples, width, height, spec)
+        let pixels = PixelBuf::from_typed(samples, width, height, spec)
             .map_err(|_| at!(ExrError::Allocation))?;
         Ok(ExrImage { pixels, header })
     }

@@ -46,7 +46,7 @@ fn render_with(cfg: SvgDecoderConfig, d: &[u8]) -> Result<Vec<u8>, String> {
     cfg.job()
         .decoder(Cow::Borrowed(d), &[])
         .and_then(|x| x.decode())
-        .map(|o| o.pixels().try_contiguous_bytes().unwrap().into_owned())
+        .map(|o| o.pixels().contiguous_bytes().unwrap().into_owned())
         .map_err(|e| format!("{e}"))
 }
 
@@ -632,14 +632,15 @@ fn a28_raster_limit_rejection_and_allowed_control() {
         )
     }));
 
-    let spec = ImageSpec::rgba8_srgb();
+    let spec = ImageSpec::RGBA8_SRGB;
     let mut expected = vec![0; 1000 * 1000 * 4];
     for row in expected.chunks_exact_mut(4000).take(20) {
         for pixel in row[..80].as_chunks_mut::<4>().0 {
             *pixel = [255, 0, 0, 255];
         }
     }
-    let expected = PixelView::from_packed(&expected, 1000, 1000, spec.clone()).unwrap();
+    let expected =
+        PixelView::from_bytes(&expected, 1000, 1000, &zenpixels::specs::RGBA8_SRGB).unwrap();
     let config = SvgDecoderConfig::new();
     let decoded = config
         .clone()

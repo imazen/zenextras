@@ -6,7 +6,7 @@
 # impls omitted; re-export duplicates annotated `[also: path]`.
 # DO NOT EDIT BY HAND — commit regenerated changes with the code.
 #
-# files: zentiff.txt 111 lines (supported surface) | zentiff.features.txt 31 added (features: all-codecs,deflate,fax,inventory,jpeg,lzw,std,webp,zencodec,zenjpeg,zstd) | zentiff.internal.txt 14 lines (4 hidden + 38 excluded-feature)
+# files: zentiff.txt 112 lines (supported surface) | zentiff.features.txt 31 added (features: all-codecs,deflate,fax,inventory,jpeg,lzw,std,webp,zencodec,zenjpeg,zstd) | zentiff.internal.txt 14 lines (4 hidden + 38 excluded-feature)
 
 ## summary
 #
@@ -18,8 +18,8 @@
 #   struct fields                              42
 #   enum variants                              16
 #   trait roster entries (type × trait)        35
-#   auto-trait-complete types                  10
-#   auto-trait exceptions                       1
+#   auto-trait-complete types                   9
+#   auto-trait exceptions                       2
 #
 # per-module pub lines:
 #   (root)                           71
@@ -89,7 +89,7 @@ pub const fn TiffDecodeConfig::with_max_pixels(self, u64) -> Self
 pub const fn TiffDecodeConfig::with_max_width(self, u32) -> Self
 #[non_exhaustive] pub struct TiffDecodeOutput
 pub TiffDecodeOutput::info: TiffInfo
-pub TiffDecodeOutput::pixels: zenpixels::buffer::PixelBuffer
+pub TiffDecodeOutput::pixels: zenpixels::buffer::PixelBuf
 #[non_exhaustive] pub struct TiffEncodeConfig
 pub TiffEncodeConfig::big_tiff: bool
 pub TiffEncodeConfig::compression: Compression
@@ -121,8 +121,8 @@ pub TiffInfo::x_resolution: core::option::Option<(u32, u32)>
 pub TiffInfo::xmp: core::option::Option<alloc::vec::Vec<u8>>
 pub TiffInfo::y_resolution: core::option::Option<(u32, u32)>
 pub fn decode(&[u8], &TiffDecodeConfig, &dyn enough::Stop) -> core::result::Result<TiffDecodeOutput, whereat::at::At<TiffError>>
-pub fn encode(&zenpixels::buffer::PixelSlice<'_>, &TiffEncodeConfig, &dyn enough::Stop) -> core::result::Result<alloc::vec::Vec<u8>, whereat::at::At<TiffError>>
-pub fn encode_into(&zenpixels::buffer::PixelSlice<'_>, &TiffEncodeConfig, &dyn enough::Stop, &mut alloc::vec::Vec<u8>) -> core::result::Result<(), whereat::at::At<TiffError>>
+pub fn encode(&zenpixels::buffer::PixelView<'_>, &TiffEncodeConfig, &dyn enough::Stop) -> core::result::Result<alloc::vec::Vec<u8>, whereat::at::At<TiffError>>
+pub fn encode_into(&zenpixels::buffer::PixelView<'_>, &TiffEncodeConfig, &dyn enough::Stop, &mut alloc::vec::Vec<u8>) -> core::result::Result<(), whereat::at::At<TiffError>>
 pub fn probe(&[u8]) -> core::result::Result<TiffInfo, whereat::at::At<TiffError>>
 pub type Result<T> = core::result::Result<T, whereat::at::At<TiffError>>
 
@@ -142,5 +142,6 @@ sweep::SweepVariant: Clone, Debug
 
 ## auto traits
 
-10 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe
+9 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe
+TiffDecodeOutput: !RefUnwindSafe !UnwindSafe
 TiffError: !RefUnwindSafe !UnwindSafe

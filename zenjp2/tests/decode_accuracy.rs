@@ -59,8 +59,8 @@ fn to_u8(code: u16) -> u8 {
 fn jp2_and_j2k_match_each_other_and_ffmpeg_oracle() {
     let (w1, h1, d1, px_jp2) = decode_bytes(JP2);
     let (w2, h2, d2, px_j2k) = decode_bytes(J2K);
-    assert_eq!((w1, h1, d1), (16, 16, ImageSpec::rgb8_srgb()));
-    assert_eq!((w2, h2, d2), (16, 16, ImageSpec::rgb8_srgb()));
+    assert_eq!((w1, h1, d1), (16, 16, ImageSpec::RGB8_SRGB));
+    assert_eq!((w2, h2, d2), (16, 16, ImageSpec::RGB8_SRGB));
     assert_eq!(
         px_jp2, px_j2k,
         "JP2 container and raw J2K codestream must decode identically"
@@ -121,7 +121,7 @@ fn cdef_reorders_channels_accurately() {
     f.extend(bx(b"jp2c", J2K));
 
     let (w, h, desc, swapped_rgb) = decode_bytes(&f);
-    assert_eq!((w, h, desc), (16, 16, ImageSpec::rgb8_srgb()));
+    assert_eq!((w, h, desc), (16, 16, ImageSpec::RGB8_SRGB));
     for (base_px, swap_px) in base_rgb
         .as_chunks::<3>()
         .0
@@ -210,8 +210,8 @@ fn palette_12bit_defaults_to_the_full_u16_grid() {
 #[test]
 fn palette_12bit_honors_explicit_u8() {
     let (file, codes) = palette_12bit_jp2();
-    let out = decode(&file, &[ImageSpec::rgb8_srgb()]);
-    assert_eq!(out.pixels().spec(), &ImageSpec::rgb8_srgb());
+    let out = decode(&file, &[ImageSpec::RGB8_SRGB]);
+    assert_eq!(out.pixels().spec(), &ImageSpec::RGB8_SRGB);
     assert_eq!(
         out.pixels().as_contiguous_bytes().unwrap(),
         codes.into_iter().map(to_u8).collect::<Vec<_>>()
@@ -303,7 +303,7 @@ fn gray_plus_alpha_expands_to_rgba8() {
     f.extend(bx(b"jp2c", J2K));
 
     let (w, h, desc, rgba) = decode_bytes(&f);
-    assert_eq!((w, h, desc), (16, 16, ImageSpec::rgba8_srgb()));
+    assert_eq!((w, h, desc), (16, 16, ImageSpec::RGBA8_SRGB));
     for (base_px, out_px) in base_rgb
         .as_chunks::<3>()
         .0

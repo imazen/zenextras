@@ -40,7 +40,7 @@ const ENCODE_CHECKPOINTS: usize = 2;
 
 fn rgb8(w: u32, h: u32) -> PixelBuf {
     let data = (0..w * h * 3).map(|i| (i * 7 % 251) as u8).collect();
-    PixelBuf::from_vec(data, w, h, ImageSpec::rgb8_srgb()).unwrap()
+    PixelBuf::from_typed(data, w, h, ImageSpec::RGB8_SRGB).unwrap()
 }
 
 /// Counts its polls; poll number `at` (from 0) returns `reason` and every
@@ -283,7 +283,7 @@ fn an_unstopped_pulse_changes_nothing() {
     let (w, h, _, bytes) = image(pixels.as_view());
     assert_eq!(
         (expected.0, expected.1, expected.2.layout, &expected.3),
-        (w, h, ImageSpec::rgb8_srgb().layout, &bytes),
+        (w, h, ImageSpec::RGB8_SRGB.layout, &bytes),
         "lossless round trip"
     );
     for arm in ARMS {

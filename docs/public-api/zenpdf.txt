@@ -6,7 +6,7 @@
 # impls omitted; re-export duplicates annotated `[also: path]`.
 # DO NOT EDIT BY HAND — commit regenerated changes with the code.
 #
-# files: zenpdf.txt 77 lines (supported surface) | zenpdf.features.txt 0 added (features: inventory,zencodec) | zenpdf.internal.txt 2 lines (2 hidden + 0 excluded-feature)
+# files: zenpdf.txt 78 lines (supported surface) | zenpdf.features.txt 0 added (features: inventory,zencodec) | zenpdf.internal.txt 2 lines (2 hidden + 0 excluded-feature)
 
 ## summary
 #
@@ -18,8 +18,8 @@
 #   struct fields                              27
 #   enum variants                              22
 #   trait roster entries (type × trait)        26
-#   auto-trait-complete types                   6
-#   auto-trait exceptions                       1
+#   auto-trait-complete types                   5
+#   auto-trait exceptions                       2
 #
 # per-module pub lines:
 #   (root)                           68
@@ -84,7 +84,7 @@ pub RenderLimits::max_pages: usize
 pub RenderLimits::max_pixels_per_page: u64
 pub fn RenderLimits::unlimited() -> Self
 pub struct RenderedPage
-pub RenderedPage::buffer: zenpixels::buffer::PixelBuffer<rgb::formats::rgba::Rgba<u8>>
+pub RenderedPage::buffer: zenpixels::buffer::PixelBuf
 pub RenderedPage::index: u32
 pub RenderedPage::source_height_pt: f32
 pub RenderedPage::source_width_pt: f32
@@ -107,5 +107,6 @@ whereat::at::At<zencodec::error::CodecError>: From<PdfError>
 
 ## auto traits
 
-6 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe
+5 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe
 PdfError: !RefUnwindSafe !UnwindSafe
+RenderedPage: !RefUnwindSafe !UnwindSafe

@@ -93,7 +93,7 @@ fn decode_all_color_modes_and_depths() {
     let psd_bitmap = build_psd(1, 1, 10, 2, 1, 0, &[], &[], &[], 0, &bitmap_planes);
     let dec = decode(&psd_bitmap).unwrap();
     assert_eq!(dec.header().color_mode, ColorMode::Bitmap);
-    assert_eq!(dec.pixels().spec().clone(), ImageSpec::gray8_srgb());
+    assert_eq!(dec.pixels().spec().clone(), ImageSpec::GRAY8_SRGB);
     let slice = dec.pixels().as_view();
     let row0 = slice.row(0);
     // In PSD Bitmap mode: 0 = white (255), 1 = black (0)
@@ -102,12 +102,12 @@ fn decode_all_color_modes_and_depths() {
     // 2. Grayscale 8-bit, 16-bit, 32-bit + Alpha
     let gray8 = build_psd(1, 1, 2, 2, 8, 1, &[], &[], &[], 0, &[10, 20, 30, 40]);
     let dec_g8 = decode(&gray8).unwrap();
-    assert_eq!(dec_g8.pixels().spec().clone(), ImageSpec::gray8_srgb());
+    assert_eq!(dec_g8.pixels().spec().clone(), ImageSpec::GRAY8_SRGB);
     assert_eq!(dec_g8.pixels().as_view().row(0), &[10, 20]);
 
     let gray8a = build_psd(1, 2, 2, 1, 8, 1, &[], &[], &[], 0, &[10, 20, 200, 255]);
     let dec_g8a = decode(&gray8a).unwrap();
-    assert_eq!(dec_g8a.pixels().spec().clone(), ImageSpec::graya8_srgb());
+    assert_eq!(dec_g8a.pixels().spec().clone(), ImageSpec::GRAYA8_SRGB);
     assert_eq!(dec_g8a.pixels().as_view().row(0), &[10, 200, 20, 255]);
 
     let mut gray16_planes = Vec::new();
@@ -116,7 +116,7 @@ fn decode_all_color_modes_and_depths() {
     }
     let gray16 = build_psd(1, 1, 2, 2, 16, 1, &[], &[], &[], 0, &gray16_planes);
     let dec_g16 = decode(&gray16).unwrap();
-    assert_eq!(dec_g16.pixels().spec().clone(), ImageSpec::gray16_srgb());
+    assert_eq!(dec_g16.pixels().spec().clone(), ImageSpec::GRAY16_SRGB);
     assert_eq!(
         dec_g16.pixels().as_view().row(0),
         &[1000u16.to_ne_bytes(), 2000u16.to_ne_bytes()].concat()
@@ -128,13 +128,13 @@ fn decode_all_color_modes_and_depths() {
     }
     let gray32 = build_psd(1, 1, 2, 2, 32, 1, &[], &[], &[], 0, &gray32_planes);
     let dec_g32 = decode(&gray32).unwrap();
-    assert_eq!(dec_g32.pixels().spec().clone(), ImageSpec::grayf32_linear());
+    assert_eq!(dec_g32.pixels().spec().clone(), ImageSpec::GRAYF32_LINEAR);
 
     // 3. Duotone 8-bit (treated as Grayscale per spec)
     let duotone = build_psd(1, 1, 2, 1, 8, 8, &[0u8; 20], &[], &[], 0, &[55, 66]);
     let dec_duo = decode(&duotone).unwrap();
     assert_eq!(dec_duo.header().color_mode, ColorMode::Duotone);
-    assert_eq!(dec_duo.pixels().spec().clone(), ImageSpec::gray8_srgb());
+    assert_eq!(dec_duo.pixels().spec().clone(), ImageSpec::GRAY8_SRGB);
     assert_eq!(dec_duo.pixels().as_view().row(0), &[55, 66]);
 
     // 4. Indexed 8-bit without and with TransparencyIndex (0x0417)
@@ -147,13 +147,13 @@ fn decode_all_color_modes_and_depths() {
     palette[513] = 66;
     let idx_rgb = build_psd(1, 1, 2, 1, 8, 2, &palette, &[], &[], 0, &[0, 1]);
     let dec_idx = decode(&idx_rgb).unwrap();
-    assert_eq!(dec_idx.pixels().spec().clone(), ImageSpec::rgb8_srgb());
+    assert_eq!(dec_idx.pixels().spec().clone(), ImageSpec::RGB8_SRGB);
     assert_eq!(dec_idx.pixels().as_view().row(0), &[11, 22, 33, 44, 55, 66]);
 
     let trans_res = build_resource_block(b"8BIM", 0x0417, b"", &1u16.to_be_bytes());
     let idx_rgba = build_psd(1, 1, 2, 1, 8, 2, &palette, &trans_res, &[], 0, &[0, 1]);
     let dec_idx_a = decode(&idx_rgba).unwrap();
-    assert_eq!(dec_idx_a.pixels().spec().clone(), ImageSpec::rgba8_srgb());
+    assert_eq!(dec_idx_a.pixels().spec().clone(), ImageSpec::RGBA8_SRGB);
     assert_eq!(
         dec_idx_a.pixels().as_view().row(0),
         &[11, 22, 33, 255, 44, 55, 66, 0]
@@ -174,7 +174,7 @@ fn decode_all_color_modes_and_depths() {
         &[10, 20, 30, 40, 50, 60, 128, 255],
     );
     let dec_rgba8 = decode(&rgba8).unwrap();
-    assert_eq!(dec_rgba8.pixels().spec().clone(), ImageSpec::rgba8_srgb());
+    assert_eq!(dec_rgba8.pixels().spec().clone(), ImageSpec::RGBA8_SRGB);
     assert_eq!(
         dec_rgba8.pixels().as_view().row(0),
         &[10, 30, 50, 128, 20, 40, 60, 255]
@@ -183,7 +183,7 @@ fn decode_all_color_modes_and_depths() {
     // 6. CMYK 8-bit and 16-bit (Photoshop convention: 0 = full ink, 255 = no ink)
     let cmyk8 = build_psd(1, 4, 1, 1, 8, 4, &[], &[], &[], 0, &[255, 255, 255, 255]);
     let dec_cmyk8 = decode(&cmyk8).unwrap();
-    assert_eq!(dec_cmyk8.pixels().spec().clone(), ImageSpec::rgb8_srgb());
+    assert_eq!(dec_cmyk8.pixels().spec().clone(), ImageSpec::RGB8_SRGB);
     assert_eq!(dec_cmyk8.pixels().as_view().row(0), &[255, 255, 255]);
 
     // CMYK + Alpha 16-bit
@@ -193,10 +193,7 @@ fn decode_all_color_modes_and_depths() {
     }
     let cmyka16 = build_psd(1, 5, 1, 1, 16, 4, &[], &[], &[], 0, &cmyka16_planes);
     let dec_cmyka16 = decode(&cmyka16).unwrap();
-    assert_eq!(
-        dec_cmyka16.pixels().spec().clone(),
-        ImageSpec::rgba16_srgb()
-    );
+    assert_eq!(dec_cmyka16.pixels().spec().clone(), ImageSpec::RGBA16_SRGB);
 }
 
 #[test]

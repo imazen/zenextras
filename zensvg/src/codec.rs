@@ -45,7 +45,7 @@ static SVG_DECODE_CAPS: DecodeCapabilities = DecodeCapabilities::new()
     .with_enforces_max_input_bytes(true)
     .with_inventory(cfg!(feature = "inventory"));
 
-static SVG_DECODE_DESCRIPTORS: &[ImageSpec] = &[ImageSpec::rgba8_srgb()];
+static SVG_DECODE_DESCRIPTORS: &[ImageSpec] = &[ImageSpec::RGBA8_SRGB];
 
 // ══════════════════════════════════════════════════════════════════════
 // SvgDecoderConfig
@@ -325,7 +325,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for SvgDecodeJob {
             &self.config.render_options,
             self.limits.max_memory_bytes,
         )?;
-        Ok(OutputInfo::full_decode(w, h, ImageSpec::rgba8_srgb()).with_alpha(true))
+        Ok(OutputInfo::full_decode(w, h, ImageSpec::RGBA8_SRGB).with_alpha(true))
     }
 
     fn extensions(&self) -> Option<&dyn core::any::Any> {
@@ -456,7 +456,7 @@ impl zencodec::decode::Decode for SvgDecoder<'_> {
             result.data,
             result.width,
             result.height,
-            ImageSpec::rgba8_srgb(),
+            ImageSpec::RGBA8_SRGB,
         )
         .map_err(|e| SvgError::PixelBufferMismatch(format!("{e}")))?;
 
@@ -490,7 +490,7 @@ mod tests {
             .expect("decoder construction succeeds")
             .decode()
             .expect("render succeeds");
-        out.pixels().try_contiguous_bytes().unwrap().into_owned()
+        out.pixels().contiguous_bytes().unwrap().into_owned()
     }
 
     /// Rendering the same SVG under all three allocation modes must produce
@@ -530,7 +530,7 @@ mod tests {
     #[test]
     fn estimate_decode_resources_scales_with_output() {
         use zencodec::estimate::{ComputeEnvironment, ImageCharacteristics, ThreadingInformation};
-        let img = ImageCharacteristics::new(800, 600, ImageSpec::rgba8_srgb());
+        let img = ImageCharacteristics::new(800, 600, ImageSpec::RGBA8_SRGB);
         let env = ComputeEnvironment::conservative().with_cores(8);
         let est = SvgDecoderConfig::new().estimate_decode_resources(&img, &env);
         let output = 800u64 * 600 * 4;

@@ -13,7 +13,7 @@ fn encoded(desc: ImageSpec, width: u32, height: u32) -> Vec<u8> {
     let bytes: Vec<u8> = (0..stride * height as usize)
         .map(|i| (i * 7 + i / stride * 13) as u8)
         .collect();
-    let pixels = PixelView::new(&bytes, width, height, stride, desc).unwrap();
+    let pixels = PixelView::new(&bytes, width, height, stride, &desc).unwrap();
     E::new().job().encode(pixels).unwrap().data().to_vec()
 }
 
@@ -21,10 +21,10 @@ fn encoded(desc: ImageSpec, width: u32, height: u32) -> Vec<u8> {
 fn incremental_contract_holds() {
     assert!(D::capabilities().incremental());
     for (desc, width, height) in [
-        (ImageSpec::rgb8_srgb(), 64, 48),
-        (ImageSpec::rgba8_srgb(), 33, 17),
-        (ImageSpec::gray8_srgb(), 1, 1),
-        (ImageSpec::rgb16_srgb(), 40, 300),
+        (ImageSpec::RGB8_SRGB, 64, 48),
+        (ImageSpec::RGBA8_SRGB, 33, 17),
+        (ImageSpec::GRAY8_SRGB, 1, 1),
+        (ImageSpec::RGB16_SRGB, 40, 300),
     ] {
         let data = encoded(desc.clone(), width, height);
         zencodec_testkit::check_incremental_capability_honesty(D::new(), &data)

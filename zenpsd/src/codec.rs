@@ -32,13 +32,13 @@ fn alloc_pref_from_zencodec(pref: zencodec::AllocPreference) -> AllocPref {
 }
 
 static DECODE_DESCRIPTORS: &[ImageSpec] = &[
-    ImageSpec::rgb8_srgb(),
-    ImageSpec::rgba8_srgb(),
-    ImageSpec::gray8_srgb(),
-    ImageSpec::graya8_srgb(),
-    ImageSpec::rgb16_srgb(),
-    ImageSpec::rgba16_srgb(),
-    ImageSpec::gray16_srgb(),
+    ImageSpec::RGB8_SRGB,
+    ImageSpec::RGBA8_SRGB,
+    ImageSpec::GRAY8_SRGB,
+    ImageSpec::GRAYA8_SRGB,
+    ImageSpec::RGB16_SRGB,
+    ImageSpec::RGBA16_SRGB,
+    ImageSpec::GRAY16_SRGB,
     zenpixels::ImageSpec::new(
         zenpixels::SampleLayout::new(
             zenpixels::SampleType::U16,
@@ -51,9 +51,9 @@ static DECODE_DESCRIPTORS: &[ImageSpec] = &[
             white: None,
         },
     ),
-    ImageSpec::rgbf32_linear(),
-    ImageSpec::rgbaf32_linear(),
-    ImageSpec::grayf32_linear(),
+    ImageSpec::RGBF32_LINEAR,
+    ImageSpec::RGBAF32_LINEAR,
+    ImageSpec::GRAYF32_LINEAR,
 ];
 
 static PSD_DECODE_CAPS: DecodeCapabilities = DecodeCapabilities::new()

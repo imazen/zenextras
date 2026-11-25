@@ -6,7 +6,7 @@
 # impls omitted; re-export duplicates annotated `[also: path]`.
 # DO NOT EDIT BY HAND — commit regenerated changes with the code.
 #
-# files: zenpsd.txt 204 lines (supported surface) | zenpsd.features.txt 2 added (features: inventory,std,zencodec) | zenpsd.internal.txt 8 lines (8 hidden + 0 excluded-feature)
+# files: zenpsd.txt 205 lines (supported surface) | zenpsd.features.txt 2 added (features: inventory,std,zencodec) | zenpsd.internal.txt 8 lines (8 hidden + 0 excluded-feature)
 
 ## summary
 #
@@ -18,8 +18,8 @@
 #   struct fields                              48
 #   enum variants                              70
 #   trait roster entries (type × trait)        56
-#   auto-trait-complete types                  11
-#   auto-trait exceptions                       3
+#   auto-trait-complete types                  10
+#   auto-trait exceptions                       4
 #
 # per-module pub lines:
 #   (root)                           85
@@ -87,9 +87,9 @@ pub fn parser::Version::from_u16(u16) -> core::option::Option<Self>
 pub fn parser::Version::max_dimension(self) -> u32
 pub fn parser::DecodedPsd::header(&self) -> &parser::PsdHeader
 pub fn parser::DecodedPsd::info(&self) -> &parser::PsdInfo
-pub fn parser::DecodedPsd::into_pixels(self) -> zenpixels::buffer::PixelBuffer
+pub fn parser::DecodedPsd::into_pixels(self) -> zenpixels::buffer::PixelBuf
 pub fn parser::DecodedPsd::metadata(&self) -> &parser::PsdMetadata
-pub fn parser::DecodedPsd::pixels(&self) -> &zenpixels::buffer::PixelBuffer
+pub fn parser::DecodedPsd::pixels(&self) -> &zenpixels::buffer::PixelBuf
 pub parser::PsdHeader::channels: u16
 pub parser::PsdHeader::color_mode: parser::ColorMode
 pub parser::PsdHeader::depth: parser::BitDepth
@@ -97,7 +97,7 @@ pub parser::PsdHeader::height: u32
 pub parser::PsdHeader::version: parser::Version
 pub parser::PsdHeader::width: u32
 pub fn parser::PsdHeader::has_alpha(&self, &parser::PsdMetadata) -> bool
-pub fn parser::PsdHeader::output_descriptor(&self, &parser::PsdMetadata) -> zenpixels::descriptor::PixelDescriptor
+pub fn parser::PsdHeader::output_descriptor(&self, &parser::PsdMetadata) -> zenpixels::color::ImageSpec
 pub fn parser::PsdHeader::used_channels(&self) -> u16
 pub parser::PsdInfo::compression: parser::Compression
 pub parser::PsdInfo::header: parser::PsdHeader
@@ -172,9 +172,9 @@ pub fn parser::Version::max_dimension(self) -> u32
 pub struct DecodedPsd [also: parser]
 pub fn parser::DecodedPsd::header(&self) -> &parser::PsdHeader
 pub fn parser::DecodedPsd::info(&self) -> &parser::PsdInfo
-pub fn parser::DecodedPsd::into_pixels(self) -> zenpixels::buffer::PixelBuffer
+pub fn parser::DecodedPsd::into_pixels(self) -> zenpixels::buffer::PixelBuf
 pub fn parser::DecodedPsd::metadata(&self) -> &parser::PsdMetadata
-pub fn parser::DecodedPsd::pixels(&self) -> &zenpixels::buffer::PixelBuffer
+pub fn parser::DecodedPsd::pixels(&self) -> &zenpixels::buffer::PixelBuf
 pub struct PsdDecodeJob [also: codec]
 pub struct PsdDecoder<'a> [also: codec]
 pub struct PsdDecoderConfig [also: codec]
@@ -189,7 +189,7 @@ pub PsdHeader::height: u32
 pub PsdHeader::version: parser::Version
 pub PsdHeader::width: u32
 pub fn parser::PsdHeader::has_alpha(&self, &parser::PsdMetadata) -> bool
-pub fn parser::PsdHeader::output_descriptor(&self, &parser::PsdMetadata) -> zenpixels::descriptor::PixelDescriptor
+pub fn parser::PsdHeader::output_descriptor(&self, &parser::PsdMetadata) -> zenpixels::color::ImageSpec
 pub fn parser::PsdHeader::used_channels(&self) -> u16
 pub struct PsdInfo [also: parser]
 pub PsdInfo::compression: parser::Compression
@@ -236,7 +236,8 @@ whereat::at::At<zencodec::error::CodecError>: From<error::PsdError>
 
 ## auto traits
 
-11 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe
+10 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe
 codec::PsdDecodeJob: !RefUnwindSafe !UnwindSafe
 codec::PsdDecoder<'a>: !RefUnwindSafe !UnwindSafe
 error::PsdError: !RefUnwindSafe !UnwindSafe
+parser::DecodedPsd: !RefUnwindSafe !UnwindSafe

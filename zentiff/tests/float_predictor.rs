@@ -36,7 +36,7 @@ fn default_float_prediction_preserves_samples_and_stride() {
         std::fs::create_dir(dir).expect("oracle output must be a fresh directory");
     }
     for (name, desc, channels) in [
-        ("gray", ImageSpec::grayf32_linear(), 1),
+        ("gray", ImageSpec::GRAYF32_LINEAR, 1),
         (
             "graya",
             ImageSpec::new(
@@ -45,12 +45,12 @@ fn default_float_prediction_preserves_samples_and_stride() {
             ),
             2,
         ),
-        ("rgb", ImageSpec::rgbf32_linear(), 3),
-        ("rgba", ImageSpec::rgbaf32_linear(), 4),
+        ("rgb", ImageSpec::RGBF32_LINEAR, 3),
+        ("rgba", ImageSpec::RGBAF32_LINEAR, 4),
     ] {
         for padded in [false, true] {
             let (input, expected, stride) = fixture(channels, padded);
-            let pixels = PixelView::new(&input, 3, 2, stride, desc.clone()).unwrap();
+            let pixels = PixelView::new(&input, 3, 2, stride, &desc).unwrap();
             for big in [false, true] {
                 for (compression_name, compression) in [
                     ("none", Compression::Uncompressed),
@@ -87,7 +87,7 @@ fn float_shared_job_with_metadata_preserves_samples() {
     use zencodec::{Metadata, MetadataPolicy};
     use zenpixels::{ImageSpec, PixelView};
     use zentiff::codec::TiffEncoderCodecConfig;
-    let desc = ImageSpec::rgbf32_linear();
+    let desc = ImageSpec::RGBF32_LINEAR;
     let (input, expected, stride) = fixture(3, true);
     let config = TiffEncoderCodecConfig::new();
     let one = config
@@ -95,7 +95,7 @@ fn float_shared_job_with_metadata_preserves_samples() {
         .job()
         .encoder()
         .unwrap()
-        .encode(PixelView::new(&input, 3, 2, stride, desc.clone()).unwrap())
+        .encode(PixelView::new(&input, 3, 2, stride, &desc).unwrap())
         .unwrap();
     let metadata = Metadata::none().with_xmp(b"<xmp>float predictor</xmp>".as_slice());
     let tagged = config
@@ -103,7 +103,7 @@ fn float_shared_job_with_metadata_preserves_samples() {
         .with_metadata_policy(metadata, MetadataPolicy::PreserveExact)
         .encoder()
         .unwrap()
-        .encode(PixelView::new(&input, 3, 2, stride, desc).unwrap())
+        .encode(PixelView::new(&input, 3, 2, stride, &desc).unwrap())
         .unwrap();
     for bytes in [one.data(), tagged.data()] {
         let decoded = decode(bytes, &TiffDecodeConfig::default(), &Unstoppable).unwrap();

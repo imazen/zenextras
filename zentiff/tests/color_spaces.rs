@@ -95,7 +95,7 @@ fn rationals(values: &[(u32, u32)]) -> Vec<u8> {
 
 fn decode_rgb8(data: &[u8]) -> Vec<u8> {
     let out = decode(data, &TiffDecodeConfig::default(), &Unstoppable).unwrap();
-    out.pixels.try_into_vec::<u8>().unwrap()
+    out.pixels.into_vec::<u8>().unwrap()
 }
 
 // TIFF 6.0 section 21: exact rational form for the declared 299/587/114 weights.

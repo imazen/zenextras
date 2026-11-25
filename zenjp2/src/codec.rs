@@ -54,13 +54,13 @@ fn alloc_pref_from_zencodec(pref: zencodec::AllocPreference) -> AllocPref {
 /// normalized to the full unsigned range. Embedded profiles determine the
 /// active color independently of this list of representative formats.
 static DECODE_DESCRIPTORS: &[ImageSpec] = &[
-    ImageSpec::rgb8_srgb(),
-    ImageSpec::rgba8_srgb(),
-    ImageSpec::gray8_srgb(),
-    ImageSpec::graya8_srgb(),
-    ImageSpec::rgb16_srgb(),
-    ImageSpec::rgba16_srgb(),
-    ImageSpec::gray16_srgb(),
+    ImageSpec::RGB8_SRGB,
+    ImageSpec::RGBA8_SRGB,
+    ImageSpec::GRAY8_SRGB,
+    ImageSpec::GRAYA8_SRGB,
+    ImageSpec::RGB16_SRGB,
+    ImageSpec::RGBA16_SRGB,
+    ImageSpec::GRAY16_SRGB,
     ImageSpec::new(
         SampleLayout::new(SampleType::U16, ChannelOrder::GrayAlpha),
         ColorSpace::Gray {
@@ -628,7 +628,7 @@ fn interleave(
     {
         let mut raw = alloc_zeroed(alloc_pref, true, count).map_err(CodecError::of)?;
         decoded.store_u8_into(&mut raw);
-        PixelBuf::from_vec(raw, width, height, spec)
+        PixelBuf::from_typed(raw, width, height, spec)
     } else {
         // Use f64 so an integer code through 16 bits rounds to the exact
         // full-range U16 grid, e.g. round(code * 65535 / 4095) for 12-bit data.
@@ -645,11 +645,11 @@ fn interleave(
         if spec.layout.sample == SampleType::U16 {
             let mut raw = vec_with_capacity(alloc_pref, true, count).map_err(CodecError::of)?;
             raw.extend(samples.map(|s| (s * 65535.0).round() as u16));
-            PixelBuf::from_vec(raw, width, height, spec)
+            PixelBuf::from_typed(raw, width, height, spec)
         } else {
             let mut raw = vec_with_capacity(alloc_pref, true, count).map_err(CodecError::of)?;
             raw.extend(samples.map(|s| (s * 255.0).round() as u8));
-            PixelBuf::from_vec(raw, width, height, spec)
+            PixelBuf::from_typed(raw, width, height, spec)
         }
     };
     result.map_err(|err| Jp2Error::PixelBuffer(alloc::format!("{err}")).into())
@@ -794,7 +794,7 @@ mod tests {
     #[test]
     fn estimate_decode_resources_scales_with_output() {
         use zencodec::estimate::{ComputeEnvironment, ImageCharacteristics, ThreadingInformation};
-        let img = ImageCharacteristics::new(1000, 1000, ImageSpec::rgba8_srgb());
+        let img = ImageCharacteristics::new(1000, 1000, ImageSpec::RGBA8_SRGB);
         let env = ComputeEnvironment::conservative().with_cores(8);
         let est = Jp2DecoderConfig::new().estimate_decode_resources(&img, &env);
         // Peak holds output (1000*1000*4 = 4 MB) at least twice plus scratch.

@@ -166,12 +166,12 @@ fn push_decoder() {
             assert_eq!(self.spec.as_ref(), Some(&descriptor));
             let start = y as usize * self.stride;
             let end = start + height as usize * self.stride;
-            PixelViewMut::new(
+            PixelViewMut::new_with_spec_cow(
                 &mut self.data[start..end],
                 width,
                 height,
                 self.stride,
-                descriptor,
+                zenpixels::SpecCow::from_owned(descriptor),
             )
             .map_err(|e| -> SinkError { e.to_string().into() })
         }
@@ -267,7 +267,7 @@ fn render_bytes_under(pref: zencodec::AllocPreference) -> Vec<u8> {
         .expect("decoder construction succeeds")
         .decode()
         .expect("render succeeds");
-    out.pixels().try_contiguous_bytes().unwrap().into_owned()
+    out.pixels().contiguous_bytes().unwrap().into_owned()
 }
 
 /// Rendering the same PDF page under all three allocation modes must produce
@@ -288,7 +288,7 @@ fn alloc_pref_modes_render_byte_identical() {
 fn estimate_decode_resources_scales_with_output() {
     use zencodec::estimate::{ComputeEnvironment, ImageCharacteristics, ThreadingInformation};
     use zenpixels::ImageSpec;
-    let img = ImageCharacteristics::new(595, 841, ImageSpec::rgba8_srgb());
+    let img = ImageCharacteristics::new(595, 841, ImageSpec::RGBA8_SRGB);
     let env = ComputeEnvironment::conservative().with_cores(8);
     let est = PdfDecoderConfig::new().estimate_decode_resources(&img, &env);
     let output = 595u64 * 841 * 4;

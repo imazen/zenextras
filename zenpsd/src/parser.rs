@@ -255,35 +255,35 @@ impl PsdHeader {
     pub fn output_descriptor(&self, metadata: &PsdMetadata) -> ImageSpec {
         let alpha = self.has_alpha(metadata);
         let mut spec = match (self.color_mode, self.depth, alpha) {
-            (ColorMode::Bitmap, _, _) => ImageSpec::gray8_srgb(),
+            (ColorMode::Bitmap, _, _) => ImageSpec::GRAY8_SRGB,
             (ColorMode::Grayscale | ColorMode::Duotone, BitDepth::Eight, false) => {
-                ImageSpec::gray8_srgb()
+                ImageSpec::GRAY8_SRGB
             }
             (ColorMode::Grayscale | ColorMode::Duotone, BitDepth::Eight, true) => {
-                ImageSpec::graya8_srgb()
+                ImageSpec::GRAYA8_SRGB
             }
             (ColorMode::Grayscale | ColorMode::Duotone, BitDepth::Sixteen, false) => {
-                ImageSpec::gray16_srgb()
+                ImageSpec::GRAY16_SRGB
             }
             (ColorMode::Grayscale | ColorMode::Duotone, BitDepth::Sixteen, true) => ImageSpec::new(
                 SampleLayout::new(SampleType::U16, ChannelOrder::GrayAlpha),
                 ColorSpace::GRAY_SRGB.with_alpha(AlphaMode::Straight),
             ),
             (ColorMode::Grayscale | ColorMode::Duotone, BitDepth::ThirtyTwo, false) => {
-                ImageSpec::grayf32_linear()
+                ImageSpec::GRAYF32_LINEAR
             }
             (ColorMode::Grayscale | ColorMode::Duotone, BitDepth::ThirtyTwo, true) => {
-                ImageSpec::rgbaf32_linear()
+                ImageSpec::RGBAF32_LINEAR
             }
-            (ColorMode::Indexed, _, false) => ImageSpec::rgb8_srgb(),
-            (ColorMode::Indexed, _, true) => ImageSpec::rgba8_srgb(),
-            (ColorMode::Rgb | ColorMode::Cmyk, BitDepth::Eight, false) => ImageSpec::rgb8_srgb(),
-            (ColorMode::Rgb | ColorMode::Cmyk, BitDepth::Eight, true) => ImageSpec::rgba8_srgb(),
-            (ColorMode::Rgb | ColorMode::Cmyk, BitDepth::Sixteen, false) => ImageSpec::rgb16_srgb(),
-            (ColorMode::Rgb | ColorMode::Cmyk, BitDepth::Sixteen, true) => ImageSpec::rgba16_srgb(),
-            (ColorMode::Rgb, BitDepth::ThirtyTwo, false) => ImageSpec::rgbf32_linear(),
-            (ColorMode::Rgb, BitDepth::ThirtyTwo, true) => ImageSpec::rgbaf32_linear(),
-            _ => ImageSpec::rgba8_srgb(),
+            (ColorMode::Indexed, _, false) => ImageSpec::RGB8_SRGB,
+            (ColorMode::Indexed, _, true) => ImageSpec::RGBA8_SRGB,
+            (ColorMode::Rgb | ColorMode::Cmyk, BitDepth::Eight, false) => ImageSpec::RGB8_SRGB,
+            (ColorMode::Rgb | ColorMode::Cmyk, BitDepth::Eight, true) => ImageSpec::RGBA8_SRGB,
+            (ColorMode::Rgb | ColorMode::Cmyk, BitDepth::Sixteen, false) => ImageSpec::RGB16_SRGB,
+            (ColorMode::Rgb | ColorMode::Cmyk, BitDepth::Sixteen, true) => ImageSpec::RGBA16_SRGB,
+            (ColorMode::Rgb, BitDepth::ThirtyTwo, false) => ImageSpec::RGBF32_LINEAR,
+            (ColorMode::Rgb, BitDepth::ThirtyTwo, true) => ImageSpec::RGBAF32_LINEAR,
+            _ => ImageSpec::RGBA8_SRGB,
         };
         if self.color_mode == ColorMode::Rgb
             && let Some(profile) = metadata.icc_profile.as_deref()

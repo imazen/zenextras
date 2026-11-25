@@ -1316,7 +1316,7 @@ fn adopt_samples<T: TypedElement>(
     height: u32,
     spec: ImageSpec,
 ) -> Result<PixelBuf> {
-    PixelBuf::from_vec(samples, width, height, spec).map_err(|err| err.map_error(TiffError::from))
+    PixelBuf::from_typed(samples, width, height, spec).map_err(|err| err.map_error(TiffError::from))
 }
 
 /// Unpack sub-byte samples (1, 2, 4, 6-bit) packed into bytes to one byte per sample.

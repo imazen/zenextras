@@ -16,7 +16,7 @@ fn make_gradient_rgb8(width: u32, height: u32) -> PixelBuf {
             data.push(128u8);
         }
     }
-    PixelBuf::from_vec(data, width, height, ImageSpec::rgb8_srgb()).unwrap()
+    PixelBuf::from_typed(data, width, height, ImageSpec::RGB8_SRGB).unwrap()
 }
 
 fn make_gradient_rgba8(width: u32, height: u32) -> PixelBuf {
@@ -30,7 +30,7 @@ fn make_gradient_rgba8(width: u32, height: u32) -> PixelBuf {
             data.push(255u8);
         }
     }
-    PixelBuf::from_vec(data, width, height, ImageSpec::rgba8_srgb()).unwrap()
+    PixelBuf::from_typed(data, width, height, ImageSpec::RGBA8_SRGB).unwrap()
 }
 
 fn make_gradient_gray8(width: u32, height: u32) -> PixelBuf {
@@ -41,7 +41,7 @@ fn make_gradient_gray8(width: u32, height: u32) -> PixelBuf {
             data.push(((x + y) * 255 / (width + height).max(1)) as u8);
         }
     }
-    PixelBuf::from_vec(data, width, height, ImageSpec::gray8_srgb()).unwrap()
+    PixelBuf::from_typed(data, width, height, ImageSpec::GRAY8_SRGB).unwrap()
 }
 
 fn make_gradient_rgb16(width: u32, height: u32) -> PixelBuf {
@@ -55,7 +55,7 @@ fn make_gradient_rgb16(width: u32, height: u32) -> PixelBuf {
         }
     }
     let bytes: Vec<u8> = bytemuck::cast_slice::<u16, u8>(&data).to_vec();
-    PixelBuf::from_bytes(bytes, width, height, ImageSpec::rgb16_srgb()).unwrap()
+    PixelBuf::from_bytes(bytes, width, height, ImageSpec::RGB16_SRGB).unwrap()
 }
 
 #[test]
@@ -71,8 +71,8 @@ fn roundtrip_rgb8_lzw() {
     assert_eq!(output.pixels.spec().layout.sample, SampleType::U8);
 
     // Lossless — pixel data should match exactly
-    let original = buf.as_view().try_contiguous_bytes().unwrap();
-    let decoded = output.pixels.as_view().try_contiguous_bytes().unwrap();
+    let original = buf.as_view().contiguous_bytes().unwrap();
+    let decoded = output.pixels.as_view().contiguous_bytes().unwrap();
     assert_eq!(original.as_ref(), decoded.as_ref());
 }
 
@@ -90,8 +90,8 @@ fn roundtrip_rgba8_deflate() {
     assert_eq!(output.pixels.spec().layout.order, ChannelOrder::Rgba);
     assert_eq!(output.pixels.spec().layout.sample, SampleType::U8);
 
-    let original = buf.as_view().try_contiguous_bytes().unwrap();
-    let decoded = output.pixels.as_view().try_contiguous_bytes().unwrap();
+    let original = buf.as_view().contiguous_bytes().unwrap();
+    let decoded = output.pixels.as_view().contiguous_bytes().unwrap();
     assert_eq!(original.as_ref(), decoded.as_ref());
 }
 
@@ -109,8 +109,8 @@ fn roundtrip_gray8_uncompressed() {
     assert_eq!(output.pixels.spec().layout.order, ChannelOrder::Gray);
     assert_eq!(output.pixels.spec().layout.sample, SampleType::U8);
 
-    let original = buf.as_view().try_contiguous_bytes().unwrap();
-    let decoded = output.pixels.as_view().try_contiguous_bytes().unwrap();
+    let original = buf.as_view().contiguous_bytes().unwrap();
+    let decoded = output.pixels.as_view().contiguous_bytes().unwrap();
     assert_eq!(original.as_ref(), decoded.as_ref());
 }
 
@@ -128,8 +128,8 @@ fn roundtrip_rgb16_packbits() {
     assert_eq!(output.pixels.spec().layout.order, ChannelOrder::Rgb);
     assert_eq!(output.pixels.spec().layout.sample, SampleType::U16);
 
-    let original = buf.as_view().try_contiguous_bytes().unwrap();
-    let decoded = output.pixels.as_view().try_contiguous_bytes().unwrap();
+    let original = buf.as_view().contiguous_bytes().unwrap();
+    let decoded = output.pixels.as_view().contiguous_bytes().unwrap();
     assert_eq!(original.as_ref(), decoded.as_ref());
 }
 
@@ -167,8 +167,8 @@ fn bigtiff_roundtrip() {
     assert_eq!(output.info.width, 32);
     assert_eq!(output.info.height, 32);
 
-    let original = buf.as_view().try_contiguous_bytes().unwrap();
-    let decoded = output.pixels.as_view().try_contiguous_bytes().unwrap();
+    let original = buf.as_view().contiguous_bytes().unwrap();
+    let decoded = output.pixels.as_view().contiguous_bytes().unwrap();
     assert_eq!(original.as_ref(), decoded.as_ref());
 }
 
@@ -181,7 +181,7 @@ fn make_gradient_graya8(width: u32, height: u32) -> PixelBuf {
             data.push((x * 255 / width.max(1)) as u8);
         }
     }
-    PixelBuf::from_vec(data, width, height, ImageSpec::graya8_srgb()).unwrap()
+    PixelBuf::from_typed(data, width, height, ImageSpec::GRAYA8_SRGB).unwrap()
 }
 
 fn make_gradient_graya16(width: u32, height: u32) -> PixelBuf {
@@ -193,7 +193,7 @@ fn make_gradient_graya16(width: u32, height: u32) -> PixelBuf {
             data.push((y as u16 * 256) + 251);
         }
     }
-    PixelBuf::from_vec(
+    PixelBuf::from_typed(
         data,
         width,
         height,
@@ -214,7 +214,7 @@ fn make_gradient_grayaf32(width: u32, height: u32) -> PixelBuf {
             data.push((y as f32 + 0.5) / (height as f32));
         }
     }
-    PixelBuf::from_vec(
+    PixelBuf::from_typed(
         data,
         width,
         height,
@@ -248,8 +248,8 @@ fn roundtrip_graya8_stays_two_channel() {
     assert_eq!(output.pixels.spec().layout.order, ChannelOrder::GrayAlpha);
     assert_eq!(output.pixels.spec().layout.sample, SampleType::U8);
 
-    let original = buf.as_view().try_contiguous_bytes().unwrap();
-    let decoded = output.pixels.as_view().try_contiguous_bytes().unwrap();
+    let original = buf.as_view().contiguous_bytes().unwrap();
+    let decoded = output.pixels.as_view().contiguous_bytes().unwrap();
     assert_eq!(
         original.as_ref(),
         decoded.as_ref(),
@@ -273,8 +273,8 @@ fn roundtrip_graya16_stays_two_channel() {
     assert_eq!(output.pixels.spec().layout.order, ChannelOrder::GrayAlpha);
     assert_eq!(output.pixels.spec().layout.sample, SampleType::U16);
 
-    let original = buf.as_view().try_contiguous_bytes().unwrap();
-    let decoded = output.pixels.as_view().try_contiguous_bytes().unwrap();
+    let original = buf.as_view().contiguous_bytes().unwrap();
+    let decoded = output.pixels.as_view().contiguous_bytes().unwrap();
     assert_eq!(original.as_ref(), decoded.as_ref());
 }
 
@@ -296,8 +296,8 @@ fn roundtrip_grayaf32_stays_two_channel() {
     assert_eq!(output.pixels.spec().layout.order, ChannelOrder::GrayAlpha);
     assert_eq!(output.pixels.spec().layout.sample, SampleType::F32);
 
-    let original = buf.as_view().try_contiguous_bytes().unwrap();
-    let decoded = output.pixels.as_view().try_contiguous_bytes().unwrap();
+    let original = buf.as_view().contiguous_bytes().unwrap();
+    let decoded = output.pixels.as_view().contiguous_bytes().unwrap();
     assert_eq!(
         original.as_ref(),
         decoded.as_ref(),
@@ -315,7 +315,7 @@ fn graya8_encodes_smaller_than_rgba_widening() {
     let mut rgba_bytes = Vec::with_capacity(64 * 64 * 4);
     for chunk in graya
         .as_view()
-        .try_contiguous_bytes()
+        .contiguous_bytes()
         .unwrap()
         .as_chunks::<2>()
         .0
@@ -324,7 +324,7 @@ fn graya8_encodes_smaller_than_rgba_widening() {
         let (g, a) = (chunk[0], chunk[1]);
         rgba_bytes.extend_from_slice(&[g, g, g, a]);
     }
-    let rgba = PixelBuf::from_vec(rgba_bytes, 64, 64, ImageSpec::rgba8_srgb()).unwrap();
+    let rgba = PixelBuf::from_typed(rgba_bytes, 64, 64, ImageSpec::RGBA8_SRGB).unwrap();
 
     let config = TiffEncodeConfig::new()
         .with_compression(Compression::Uncompressed)
@@ -343,7 +343,7 @@ fn graya8_encodes_smaller_than_rgba_widening() {
 #[test]
 fn encode_1x1_pixel() {
     let data = vec![255u8, 0, 128];
-    let buf = PixelBuf::from_vec(data, 1, 1, ImageSpec::rgb8_srgb()).unwrap();
+    let buf = PixelBuf::from_typed(data, 1, 1, ImageSpec::RGB8_SRGB).unwrap();
     let encoded = encode(
         &buf.as_view(),
         &TiffEncodeConfig::new().with_compression(Compression::Uncompressed),
@@ -353,6 +353,6 @@ fn encode_1x1_pixel() {
     let output = decode(&encoded, &TiffDecodeConfig::default(), &Unstoppable).unwrap();
     assert_eq!(output.info.width, 1);
     assert_eq!(output.info.height, 1);
-    let decoded = output.pixels.as_view().try_contiguous_bytes().unwrap();
+    let decoded = output.pixels.as_view().contiguous_bytes().unwrap();
     assert_eq!(decoded.as_ref(), &[255u8, 0, 128]);
 }

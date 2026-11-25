@@ -401,7 +401,7 @@ pub fn encode(
     let width = pixels.width();
     let height = pixels.rows();
     let data = pixels
-        .try_contiguous_bytes()
+        .contiguous_bytes()
         .map_err(|err| err.map_error(TiffError::from))?;
 
     let compression = config.compression.to_tiff()?;
@@ -453,7 +453,7 @@ pub(crate) fn encode_with_meta(
     let width = pixels.width();
     let height = pixels.rows();
     let data = pixels
-        .try_contiguous_bytes()
+        .contiguous_bytes()
         .map_err(|err| err.map_error(TiffError::from))?;
 
     let compression = config.compression.to_tiff()?;
@@ -1416,7 +1416,7 @@ mod tests {
             ..Default::default()
         };
         let buf =
-            zenpixels::PixelBuf::from_vec(vec![7u8; 3 * 4], 2, 2, ImageSpec::rgb8_srgb()).unwrap();
+            zenpixels::PixelBuf::from_typed(vec![7u8; 3 * 4], 2, 2, ImageSpec::RGB8_SRGB).unwrap();
         for big_tiff in [false, true] {
             let config = TiffEncodeConfig::default().with_big_tiff(big_tiff);
             let data =
