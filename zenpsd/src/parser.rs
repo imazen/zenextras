@@ -9,7 +9,7 @@ use core::ops::Range;
 use enough::Stop;
 use whereat::at;
 use zenpixels::{
-    AlphaMode, ChannelOrder, ColorOrigin, ColorSpace, IccColorSpace, ImageSpec, PixelBuf,
+    AlphaMode, ChannelOrder, ColorOrigin, ColorSpace, IccColorSpace, PixelBuf, PixelFormat,
     SampleLayout, SampleType,
 };
 
@@ -251,39 +251,41 @@ impl PsdHeader {
         }
     }
 
-    /// Output [`ImageSpec`] produced when decoding this PSD/PSB.
-    pub fn output_descriptor(&self, metadata: &PsdMetadata) -> ImageSpec {
+    /// Output [`PixelFormat`] produced when decoding this PSD/PSB.
+    pub fn output_descriptor(&self, metadata: &PsdMetadata) -> PixelFormat {
         let alpha = self.has_alpha(metadata);
         let mut spec = match (self.color_mode, self.depth, alpha) {
-            (ColorMode::Bitmap, _, _) => ImageSpec::GRAY8_SRGB,
+            (ColorMode::Bitmap, _, _) => PixelFormat::GRAY8_SRGB,
             (ColorMode::Grayscale | ColorMode::Duotone, BitDepth::Eight, false) => {
-                ImageSpec::GRAY8_SRGB
+                PixelFormat::GRAY8_SRGB
             }
             (ColorMode::Grayscale | ColorMode::Duotone, BitDepth::Eight, true) => {
-                ImageSpec::GRAYA8_SRGB
+                PixelFormat::GRAYA8_SRGB
             }
             (ColorMode::Grayscale | ColorMode::Duotone, BitDepth::Sixteen, false) => {
-                ImageSpec::GRAY16_SRGB
+                PixelFormat::GRAY16_SRGB
             }
-            (ColorMode::Grayscale | ColorMode::Duotone, BitDepth::Sixteen, true) => ImageSpec::new(
-                SampleLayout::new(SampleType::U16, ChannelOrder::GrayAlpha),
-                ColorSpace::GRAY_SRGB.with_alpha(AlphaMode::Straight),
-            ),
+            (ColorMode::Grayscale | ColorMode::Duotone, BitDepth::Sixteen, true) => {
+                PixelFormat::new(
+                    SampleLayout::new(SampleType::U16, ChannelOrder::GrayAlpha),
+                    ColorSpace::GRAY_SRGB.with_alpha(AlphaMode::Straight),
+                )
+            }
             (ColorMode::Grayscale | ColorMode::Duotone, BitDepth::ThirtyTwo, false) => {
-                ImageSpec::GRAYF32_LINEAR
+                PixelFormat::GRAYF32_LINEAR
             }
             (ColorMode::Grayscale | ColorMode::Duotone, BitDepth::ThirtyTwo, true) => {
-                ImageSpec::RGBAF32_LINEAR
+                PixelFormat::RGBAF32_LINEAR
             }
-            (ColorMode::Indexed, _, false) => ImageSpec::RGB8_SRGB,
-            (ColorMode::Indexed, _, true) => ImageSpec::RGBA8_SRGB,
-            (ColorMode::Rgb | ColorMode::Cmyk, BitDepth::Eight, false) => ImageSpec::RGB8_SRGB,
-            (ColorMode::Rgb | ColorMode::Cmyk, BitDepth::Eight, true) => ImageSpec::RGBA8_SRGB,
-            (ColorMode::Rgb | ColorMode::Cmyk, BitDepth::Sixteen, false) => ImageSpec::RGB16_SRGB,
-            (ColorMode::Rgb | ColorMode::Cmyk, BitDepth::Sixteen, true) => ImageSpec::RGBA16_SRGB,
-            (ColorMode::Rgb, BitDepth::ThirtyTwo, false) => ImageSpec::RGBF32_LINEAR,
-            (ColorMode::Rgb, BitDepth::ThirtyTwo, true) => ImageSpec::RGBAF32_LINEAR,
-            _ => ImageSpec::RGBA8_SRGB,
+            (ColorMode::Indexed, _, false) => PixelFormat::RGB8_SRGB,
+            (ColorMode::Indexed, _, true) => PixelFormat::RGBA8_SRGB,
+            (ColorMode::Rgb | ColorMode::Cmyk, BitDepth::Eight, false) => PixelFormat::RGB8_SRGB,
+            (ColorMode::Rgb | ColorMode::Cmyk, BitDepth::Eight, true) => PixelFormat::RGBA8_SRGB,
+            (ColorMode::Rgb | ColorMode::Cmyk, BitDepth::Sixteen, false) => PixelFormat::RGB16_SRGB,
+            (ColorMode::Rgb | ColorMode::Cmyk, BitDepth::Sixteen, true) => PixelFormat::RGBA16_SRGB,
+            (ColorMode::Rgb, BitDepth::ThirtyTwo, false) => PixelFormat::RGBF32_LINEAR,
+            (ColorMode::Rgb, BitDepth::ThirtyTwo, true) => PixelFormat::RGBAF32_LINEAR,
+            _ => PixelFormat::RGBA8_SRGB,
         };
         if self.color_mode == ColorMode::Rgb
             && let Some(profile) = metadata.icc_profile.as_deref()

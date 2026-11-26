@@ -56,13 +56,13 @@ fn independent_openexr_half_piz_fixture() {
     let image = ExrDecoderConfig::new().decode(PIZ, &Unstoppable).unwrap();
     assert_eq!((image.pixels().width(), image.pixels().height()), (31, 33));
     assert!(matches!(
-        image.pixels().spec().color,
+        image.pixels().format().color,
         ColorSpace::Rgb {
             primaries: Primaries::Unknown,
             ..
         }
     ));
-    assert_eq!(image.pixels().spec().color.alpha(), AlphaMode::None);
+    assert_eq!(image.pixels().format().color.alpha(), AlphaMode::None);
     assert_eq!(little_endian_pixels(&image), EXPECTED);
 }
 
@@ -79,7 +79,7 @@ fn lossless_scanlines_and_tiles_preserve_float_bits_and_associated_alpha() {
             let data = encoded(compression, blocks);
             let image = ExrDecoderConfig::new().decode(&data, &Unstoppable).unwrap();
             assert_eq!(
-                image.pixels().spec().color.alpha(),
+                image.pixels().format().color.alpha(),
                 AlphaMode::Premultiplied
             );
             let expected: Vec<u8> = (0..35)
@@ -134,11 +134,11 @@ fn windows_chromaticities_and_luminance_metadata_are_retained() {
         (0.3127, 0.3290),
     )
     .unwrap();
-    assert!(matches!(decoded.pixels().spec().color, ColorSpace::Rgb {
+    assert!(matches!(decoded.pixels().format().color, ColorSpace::Rgb {
         primaries: Primaries::Custom(actual), ..
     } if actual == expected));
     assert_eq!(
-        decoded.pixels().spec().color.white(),
+        decoded.pixels().format().color.white(),
         Some(DiffuseWhite::new(203.0))
     );
     // No exposure scaling, primary conversion, unpremultiplication or canvas padding.
@@ -374,7 +374,7 @@ fn ap0_chromaticities_keep_the_aces_matrix_and_sample_bits() {
         transfer,
         white,
         ..
-    } = out.pixels().spec().color
+    } = out.pixels().format().color
     else {
         panic!("expected linear AP0 sample meaning")
     };

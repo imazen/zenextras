@@ -7,7 +7,7 @@ use hayro::hayro_syntax::Pdf;
 use hayro::vello_cpu::color::AlphaColor;
 use hayro::vello_cpu::color::Srgb;
 
-use zenpixels::{ImageSpec, PixelBuf};
+use zenpixels::{PixelBuf, PixelFormat};
 
 use crate::error::{PdfError, Result};
 
@@ -460,7 +460,7 @@ fn compute_render_settings(
 
 fn pixmap_to_buffer(pixmap: hayro::vello_cpu::Pixmap, w: u32, h: u32) -> Result<PixelBuf> {
     let bytes = pixmap.take_rgba8(hayro::vello_cpu::peniko::ImageAlphaType::Alpha);
-    Ok(PixelBuf::from_bytes(bytes, w, h, ImageSpec::RGBA8_SRGB)?)
+    Ok(PixelBuf::from_bytes(bytes, w, h, PixelFormat::RGBA8_SRGB)?)
 }
 
 #[cfg(test)]

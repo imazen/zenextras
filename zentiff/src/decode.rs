@@ -15,7 +15,7 @@ use tiff::decoder::ifd::Value;
 use tiff::tags::Tag;
 use whereat::at;
 use zenpixels::{
-    AlphaMode, ChannelOrder, ColorOrigin, ColorSpace, IccColorSpace, ImageSpec, PixelBuf,
+    AlphaMode, ChannelOrder, ColorOrigin, ColorSpace, IccColorSpace, PixelBuf, PixelFormat,
     Primaries, RenderingIntent, SampleLayout, SampleType, SignalRange, Transfer, TypedElement,
 };
 
@@ -986,7 +986,7 @@ pub fn decode(
     let pixels = convert_to_pixel_buffer(&info, result, color_map.as_deref(), config.alloc_pref)?;
 
     let pixels = if let Some(icc) = &info.icc_profile {
-        let source = match &pixels.spec().color {
+        let source = match &pixels.format().color {
             ColorSpace::Icc { profile, .. } => profile.clone(),
             _ => Arc::from(icc.as_slice()),
         };
@@ -1169,7 +1169,7 @@ fn output_bytes_per_pixel(ct: tiff::ColorType) -> usize {
 /// The decoded layout has known channel roles, but TIFF need not declare a
 /// transfer function. Keep the previous BT.709 fallback for RGB; source tags
 /// remain available in TiffInfo.
-pub(crate) const fn pixel_spec(order: ChannelOrder, sample: SampleType) -> ImageSpec {
+pub(crate) const fn pixel_spec(order: ChannelOrder, sample: SampleType) -> PixelFormat {
     let alpha = if order.has_alpha_slot() {
         AlphaMode::Straight
     } else {
@@ -1191,10 +1191,10 @@ pub(crate) const fn pixel_spec(order: ChannelOrder, sample: SampleType) -> Image
             white: None,
         }
     };
-    ImageSpec::new(SampleLayout::new(sample, order), color)
+    PixelFormat::new(SampleLayout::new(sample, order), color)
 }
 
-pub(crate) fn descriptor_for(ct: tiff::ColorType, is_float: bool) -> ImageSpec {
+pub(crate) fn descriptor_for(ct: tiff::ColorType, is_float: bool) -> PixelFormat {
     use tiff::ColorType;
     let order = match ct {
         ColorType::Gray(_) | ColorType::Multiband { num_samples: 1, .. } => ChannelOrder::Gray,
@@ -1216,7 +1216,7 @@ pub(crate) fn descriptor_for(ct: tiff::ColorType, is_float: bool) -> ImageSpec {
     pixel_spec(order, sample)
 }
 
-pub(crate) fn descriptor_for_info(info: &TiffInfo) -> Result<ImageSpec> {
+pub(crate) fn descriptor_for_info(info: &TiffInfo) -> Result<PixelFormat> {
     let mut spec = descriptor_for(info.color_type, info.is_float);
     spec = match info.extra_samples.as_slice() {
         [] => spec,
@@ -1314,7 +1314,7 @@ fn adopt_samples<T: TypedElement>(
     samples: Vec<T>,
     width: u32,
     height: u32,
-    spec: ImageSpec,
+    spec: PixelFormat,
 ) -> Result<PixelBuf> {
     PixelBuf::from_typed(samples, width, height, spec).map_err(|err| err.map_error(TiffError::from))
 }
@@ -1498,7 +1498,7 @@ fn result_to_buffer(
     height: u32,
     color_type: tiff::ColorType,
     result: tiff::decoder::DecodingResult,
-    descriptor: ImageSpec,
+    descriptor: PixelFormat,
     alloc_pref: AllocPref,
 ) -> Result<PixelBuf> {
     use tiff::decoder::DecodingResult as DR;

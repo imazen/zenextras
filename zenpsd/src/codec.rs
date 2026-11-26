@@ -14,7 +14,7 @@ use zencodec::decode::{
     DecoderConfig, OutputInfo,
 };
 use zencodec::{CodecError, ImageFormat, ImageInfo, ResourceLimits, SharedPulse, Unsupported};
-use zenpixels::ImageSpec;
+use zenpixels::PixelFormat;
 
 use crate::alloc_util::AllocPref;
 use crate::error::PsdError;
@@ -31,15 +31,15 @@ fn alloc_pref_from_zencodec(pref: zencodec::AllocPreference) -> AllocPref {
     }
 }
 
-static DECODE_DESCRIPTORS: &[ImageSpec] = &[
-    ImageSpec::RGB8_SRGB,
-    ImageSpec::RGBA8_SRGB,
-    ImageSpec::GRAY8_SRGB,
-    ImageSpec::GRAYA8_SRGB,
-    ImageSpec::RGB16_SRGB,
-    ImageSpec::RGBA16_SRGB,
-    ImageSpec::GRAY16_SRGB,
-    zenpixels::ImageSpec::new(
+static DECODE_DESCRIPTORS: &[PixelFormat] = &[
+    PixelFormat::RGB8_SRGB,
+    PixelFormat::RGBA8_SRGB,
+    PixelFormat::GRAY8_SRGB,
+    PixelFormat::GRAYA8_SRGB,
+    PixelFormat::RGB16_SRGB,
+    PixelFormat::RGBA16_SRGB,
+    PixelFormat::GRAY16_SRGB,
+    zenpixels::PixelFormat::new(
         zenpixels::SampleLayout::new(
             zenpixels::SampleType::U16,
             zenpixels::ChannelOrder::GrayAlpha,
@@ -51,9 +51,9 @@ static DECODE_DESCRIPTORS: &[ImageSpec] = &[
             white: None,
         },
     ),
-    ImageSpec::RGBF32_LINEAR,
-    ImageSpec::RGBAF32_LINEAR,
-    ImageSpec::GRAYF32_LINEAR,
+    PixelFormat::RGBF32_LINEAR,
+    PixelFormat::RGBAF32_LINEAR,
+    PixelFormat::GRAYF32_LINEAR,
 ];
 
 static PSD_DECODE_CAPS: DecodeCapabilities = DecodeCapabilities::new()
@@ -115,7 +115,7 @@ impl DecoderConfig for PsdDecoderConfig {
         &*FORMATS
     }
 
-    fn supported_descriptors() -> &'static [ImageSpec] {
+    fn supported_descriptors() -> &'static [PixelFormat] {
         DECODE_DESCRIPTORS
     }
 
@@ -256,14 +256,14 @@ impl<'a> DecodeJob<'a> for PsdDecodeJob {
         self,
         data: Cow<'a, [u8]>,
         sink: &mut dyn DecodeRowSink,
-        preferred: &[ImageSpec],
+        preferred: &[PixelFormat],
     ) -> CodecResult<OutputInfo> {
         zencodec::helpers::copy_decode_to_sink(self, data, sink, preferred, |e| {
             PsdError::Sink(e).into()
         })
     }
 
-    fn decoder(self, data: Cow<'a, [u8]>, _preferred: &[ImageSpec]) -> CodecResult<Self::Dec> {
+    fn decoder(self, data: Cow<'a, [u8]>, _preferred: &[PixelFormat]) -> CodecResult<Self::Dec> {
         if let Some(ref limits) = self.limits {
             limits
                 .check_input_size(data.len() as u64)
@@ -288,7 +288,7 @@ impl<'a> DecodeJob<'a> for PsdDecodeJob {
     fn streaming_decoder(
         self,
         _data: Cow<'a, [u8]>,
-        _preferred: &[ImageSpec],
+        _preferred: &[PixelFormat],
     ) -> CodecResult<Self::StreamDec> {
         Err(PsdError::UnsupportedOperation(zencodec::UnsupportedOperation::RowLevelDecode).into())
     }
@@ -296,14 +296,14 @@ impl<'a> DecodeJob<'a> for PsdDecodeJob {
     fn animation_frame_decoder(
         self,
         _data: Cow<'a, [u8]>,
-        _preferred: &[ImageSpec],
+        _preferred: &[PixelFormat],
     ) -> CodecResult<Self::AnimationFrameDec> {
         Err(PsdError::UnsupportedOperation(zencodec::UnsupportedOperation::AnimationDecode).into())
     }
 
     fn dyn_incremental_decoder(
         self,
-        preferred: &[ImageSpec],
+        preferred: &[PixelFormat],
     ) -> Result<
         alloc::boxed::Box<zencodec::decode::DynIncrementalDecoder>,
         zencodec::decode::BoxedError,

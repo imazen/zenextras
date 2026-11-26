@@ -1,7 +1,7 @@
 //! Default prediction must admit float input and preserve every sample bit.
 use enough::Unstoppable;
 use zenpixels::{
-    AlphaMode, ChannelOrder, ColorSpace, ImageSpec, PixelView, SampleLayout, SampleType,
+    AlphaMode, ChannelOrder, ColorSpace, PixelFormat, PixelView, SampleLayout, SampleType,
 };
 use zentiff::{Compression, TiffDecodeConfig, TiffEncodeConfig, decode, encode};
 
@@ -36,17 +36,17 @@ fn default_float_prediction_preserves_samples_and_stride() {
         std::fs::create_dir(dir).expect("oracle output must be a fresh directory");
     }
     for (name, desc, channels) in [
-        ("gray", ImageSpec::GRAYF32_LINEAR, 1),
+        ("gray", PixelFormat::GRAYF32_LINEAR, 1),
         (
             "graya",
-            ImageSpec::new(
+            PixelFormat::new(
                 SampleLayout::new(SampleType::F32, ChannelOrder::GrayAlpha),
                 ColorSpace::GRAY_LINEAR.with_alpha(AlphaMode::Straight),
             ),
             2,
         ),
-        ("rgb", ImageSpec::RGBF32_LINEAR, 3),
-        ("rgba", ImageSpec::RGBAF32_LINEAR, 4),
+        ("rgb", PixelFormat::RGBF32_LINEAR, 3),
+        ("rgba", PixelFormat::RGBAF32_LINEAR, 4),
     ] {
         for padded in [false, true] {
             let (input, expected, stride) = fixture(channels, padded);
@@ -85,9 +85,9 @@ fn default_float_prediction_preserves_samples_and_stride() {
 fn float_shared_job_with_metadata_preserves_samples() {
     use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
     use zencodec::{Metadata, MetadataPolicy};
-    use zenpixels::{ImageSpec, PixelView};
+    use zenpixels::{PixelFormat, PixelView};
     use zentiff::codec::TiffEncoderCodecConfig;
-    let desc = ImageSpec::RGBF32_LINEAR;
+    let desc = PixelFormat::RGBF32_LINEAR;
     let (input, expected, stride) = fixture(3, true);
     let config = TiffEncoderCodecConfig::new();
     let one = config

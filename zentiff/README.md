@@ -42,14 +42,16 @@ file's **native** format — TIFF can be Gray8 / RGB8 / RGBA16 / RGBF32 / … �
 [`zenpixels-convert`](https://crates.io/crates/zenpixels-convert):
 
 ```rust,ignore
-use zenpixels_convert::{ConvertPolicy, ImageSpec, PeakSource, Transfer, convert_buf};
+use zenpixels_convert::{
+    ConvertPolicy, PeakSource, PixelFormat, Transfer, convert_to_buf_with_peak,
+};
 
 // Supply a transfer assumption only when the file and its metadata warrant it.
-let spec = output.pixels.spec().clone().with_transfer(Transfer::Srgb);
-let pixels = output.pixels.with_spec(spec)?;
-let rgba = convert_buf(
+let format = output.pixels.format().clone().with_transfer(Transfer::Srgb);
+let pixels = output.pixels.relabel_format(format)?;
+let rgba = convert_to_buf_with_peak(
     &pixels.as_view(),
-    ImageSpec::rgba8_srgb(),
+    &PixelFormat::RGBA8_SRGB,
     &ConvertPolicy::permissive(),
     PeakSource::Measured,
 )?;

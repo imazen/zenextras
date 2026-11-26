@@ -228,7 +228,7 @@ fn rgb_profile_describes_the_unmodified_samples() {
         let out = decode_planes(&file);
         let px = out.pixels();
         let info = PsdDecoderConfig::new().job().output_info(&file).unwrap();
-        assert_eq!(px.spec(), &info.native_format);
+        assert_eq!(px.format(), &info.native_format);
         assert_eq!(
             px.as_contiguous_bytes().unwrap(),
             [231, 66, 12, 17, 154, 199]
@@ -236,10 +236,10 @@ fn rgb_profile_describes_the_unmodified_samples() {
         assert_eq!(px.origin().unwrap().icc.as_deref(), tag);
         assert_eq!(out.info().source_color.icc_profile.as_deref(), tag);
         if tag.is_some() {
-            assert!(matches!(&px.spec().color,
+            assert!(matches!(&px.format().color,
                 ColorSpace::Icc { profile: active, channels: 3, .. } if active.as_ref() == profile));
         } else {
-            assert_eq!(px.spec().color, ColorSpace::SRGB);
+            assert_eq!(px.format().color, ColorSpace::SRGB);
             assert_eq!(px.origin().unwrap().kind, OriginKind::Assumed);
         }
     }
@@ -257,7 +257,7 @@ fn cmyk_profile_is_source_provenance_for_the_rgb_approximation() {
     );
     let out = decode_planes(&file);
     let px = out.pixels();
-    assert_eq!(px.spec().color, ColorSpace::SRGB);
+    assert_eq!(px.format().color, ColorSpace::SRGB);
     assert_eq!(px.as_contiguous_bytes().unwrap(), [128, 32, 0, 0, 128, 255]);
     assert_eq!(px.origin().unwrap().kind, OriginKind::Icc);
     assert_eq!(px.origin().unwrap().icc.as_deref(), Some(profile));

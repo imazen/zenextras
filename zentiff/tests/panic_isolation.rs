@@ -180,7 +180,7 @@ fn memory_cap_does_not_break_small_image_through_limits() {
 // --- helpers (mirrors tests/roundtrip.rs) ---
 
 fn make_gradient_rgb8(width: u32, height: u32) -> zenpixels::PixelBuf {
-    use zenpixels::{ImageSpec, PixelBuf};
+    use zenpixels::{PixelBuf, PixelFormat};
     let pixel_count = (width * height) as usize;
     let mut data = Vec::with_capacity(pixel_count * 3);
     for y in 0..height {
@@ -190,5 +190,5 @@ fn make_gradient_rgb8(width: u32, height: u32) -> zenpixels::PixelBuf {
             data.push(128u8);
         }
     }
-    PixelBuf::from_typed(data, width, height, ImageSpec::RGB8_SRGB).unwrap()
+    PixelBuf::from_typed(data, width, height, PixelFormat::RGB8_SRGB).unwrap()
 }

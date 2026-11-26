@@ -97,7 +97,7 @@ pub parser::PsdHeader::height: u32
 pub parser::PsdHeader::version: parser::Version
 pub parser::PsdHeader::width: u32
 pub fn parser::PsdHeader::has_alpha(&self, &parser::PsdMetadata) -> bool
-pub fn parser::PsdHeader::output_descriptor(&self, &parser::PsdMetadata) -> zenpixels::color::ImageSpec
+pub fn parser::PsdHeader::output_descriptor(&self, &parser::PsdMetadata) -> zenpixels::color::PixelFormat
 pub fn parser::PsdHeader::used_channels(&self) -> u16
 pub parser::PsdInfo::compression: parser::Compression
 pub parser::PsdInfo::header: parser::PsdHeader
@@ -189,7 +189,7 @@ pub PsdHeader::height: u32
 pub PsdHeader::version: parser::Version
 pub PsdHeader::width: u32
 pub fn parser::PsdHeader::has_alpha(&self, &parser::PsdMetadata) -> bool
-pub fn parser::PsdHeader::output_descriptor(&self, &parser::PsdMetadata) -> zenpixels::color::ImageSpec
+pub fn parser::PsdHeader::output_descriptor(&self, &parser::PsdMetadata) -> zenpixels::color::PixelFormat
 pub fn parser::PsdHeader::used_channels(&self) -> u16
 pub struct PsdInfo [also: parser]
 pub PsdInfo::compression: parser::Compression

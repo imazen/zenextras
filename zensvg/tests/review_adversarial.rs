@@ -609,7 +609,7 @@ fn a28_raster_limit_rejection_and_allowed_control() {
         .inventory(&d)
         .unwrap();
     use zencodec::CodecErrorExt as _;
-    use zenpixels::{ImageSpec, PixelView};
+    use zenpixels::{PixelFormat, PixelView};
     let error = SvgDecoderConfig::new()
         .job()
         .with_limits(limits)
@@ -632,7 +632,7 @@ fn a28_raster_limit_rejection_and_allowed_control() {
         )
     }));
 
-    let spec = ImageSpec::RGBA8_SRGB;
+    let spec = PixelFormat::RGBA8_SRGB;
     let mut expected = vec![0; 1000 * 1000 * 4];
     for row in expected.chunks_exact_mut(4000).take(20) {
         for pixel in row[..80].as_chunks_mut::<4>().0 {
@@ -640,7 +640,7 @@ fn a28_raster_limit_rejection_and_allowed_control() {
         }
     }
     let expected =
-        PixelView::from_bytes(&expected, 1000, 1000, &zenpixels::specs::RGBA8_SRGB).unwrap();
+        PixelView::from_bytes(&expected, 1000, 1000, &zenpixels::formats::RGBA8_SRGB).unwrap();
     let config = SvgDecoderConfig::new();
     let decoded = config
         .clone()

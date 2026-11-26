@@ -8,7 +8,7 @@ use zentiff::codec::{TiffDecoderCodecConfig as D, TiffEncoderCodecConfig as E};
 #[test]
 fn strided_fixture_policy_and_inventory_contracts() {
     let bytes = [1, 2, 3, 4, 5, 6, 255, 255, 255, 7, 8, 9, 10, 11, 12];
-    let pixels = PixelView::new(&bytes, 2, 2, 9, &zenpixels::specs::RGB8_SRGB).unwrap();
+    let pixels = PixelView::new(&bytes, 2, 2, 9, &zenpixels::formats::RGB8_SRGB).unwrap();
     let encoded = E::new().job().encode(pixels.clone()).unwrap();
     let expected = D::new()
         .job()

@@ -91,7 +91,7 @@ fn sweep_cells_decode_exactly_and_steps_are_live() {
                 img.w,
                 img.h,
                 (img.w * 3) as usize,
-                &zenpixels::specs::RGB8_SRGB,
+                &zenpixels::formats::RGB8_SRGB,
             )
             .expect("slice");
             let tif = encode(&slice, &cfg, &enough::Unstoppable)

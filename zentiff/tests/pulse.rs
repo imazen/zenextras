@@ -26,7 +26,7 @@ use zencodec::how_far::{
     Child, Execution, PhaseSpec, PlanError, Pulse, Report, SharedPulse, StopOnly, Total,
 };
 use zencodec::{CategorizedError as _, CodecErrorExt as _, ErrorCategory};
-use zenpixels::{ImageSpec, PixelBuf, PixelView};
+use zenpixels::{PixelBuf, PixelFormat, PixelView};
 use zentiff::codec::{TiffDecoderCodecConfig, TiffEncoderCodecConfig};
 use zentiff::{TiffDecodeConfig, TiffEncodeConfig};
 
@@ -40,7 +40,7 @@ const ENCODE_CHECKPOINTS: usize = 2;
 
 fn rgb8(w: u32, h: u32) -> PixelBuf {
     let data = (0..w * h * 3).map(|i| (i * 7 % 251) as u8).collect();
-    PixelBuf::from_typed(data, w, h, ImageSpec::RGB8_SRGB).unwrap()
+    PixelBuf::from_typed(data, w, h, PixelFormat::RGB8_SRGB).unwrap()
 }
 
 /// Counts its polls; poll number `at` (from 0) returns `reason` and every
@@ -115,11 +115,11 @@ enum Arm {
 
 const ARMS: [Arm; 4] = [Arm::Quiet, Arm::Reporting, Arm::Legacy, Arm::Erased];
 
-type Image = (u32, u32, ImageSpec, Vec<u8>);
+type Image = (u32, u32, PixelFormat, Vec<u8>);
 
 fn image(px: PixelView<'_>) -> Image {
     let bytes = (0..px.rows()).flat_map(|y| px.row(y).to_vec()).collect();
-    (px.width(), px.rows(), px.spec().clone(), bytes)
+    (px.width(), px.rows(), px.format().clone(), bytes)
 }
 
 /// Decodes `data` with `stop` installed through `arm`.
@@ -283,7 +283,7 @@ fn an_unstopped_pulse_changes_nothing() {
     let (w, h, _, bytes) = image(pixels.as_view());
     assert_eq!(
         (expected.0, expected.1, expected.2.layout, &expected.3),
-        (w, h, ImageSpec::RGB8_SRGB.layout, &bytes),
+        (w, h, PixelFormat::RGB8_SRGB.layout, &bytes),
         "lossless round trip"
     );
     for arm in ARMS {

@@ -16,7 +16,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let data = fs::read(&input)?;
     let image = ExrDecoderConfig::new().decode(&data, &Unstoppable)?;
     let pixels = image.pixels();
-    let channels = pixels.spec().layout.channels();
+    let channels = pixels.format().layout.channels();
     fs::create_dir(&output)?;
     let mut samples = BufWriter::new(File::create(output.join("pixels.f32le"))?);
     let view = pixels.as_view();
@@ -39,7 +39,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             channels,
             pixels.row_bytes(),
             if channels == 4 { "RGBA" } else { "RGB" },
-            pixels.spec(),
+            pixels.format(),
             image.header(),
         ),
     )?;

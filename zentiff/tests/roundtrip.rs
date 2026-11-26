@@ -2,7 +2,7 @@
 
 use enough::Unstoppable;
 use zenpixels::{
-    AlphaMode, ChannelOrder, ColorSpace, ImageSpec, PixelBuf, SampleLayout, SampleType,
+    AlphaMode, ChannelOrder, ColorSpace, PixelBuf, PixelFormat, SampleLayout, SampleType,
 };
 use zentiff::{Compression, Predictor, TiffDecodeConfig, TiffEncodeConfig, decode, encode, probe};
 
@@ -16,7 +16,7 @@ fn make_gradient_rgb8(width: u32, height: u32) -> PixelBuf {
             data.push(128u8);
         }
     }
-    PixelBuf::from_typed(data, width, height, ImageSpec::RGB8_SRGB).unwrap()
+    PixelBuf::from_typed(data, width, height, PixelFormat::RGB8_SRGB).unwrap()
 }
 
 fn make_gradient_rgba8(width: u32, height: u32) -> PixelBuf {
@@ -30,7 +30,7 @@ fn make_gradient_rgba8(width: u32, height: u32) -> PixelBuf {
             data.push(255u8);
         }
     }
-    PixelBuf::from_typed(data, width, height, ImageSpec::RGBA8_SRGB).unwrap()
+    PixelBuf::from_typed(data, width, height, PixelFormat::RGBA8_SRGB).unwrap()
 }
 
 fn make_gradient_gray8(width: u32, height: u32) -> PixelBuf {
@@ -41,7 +41,7 @@ fn make_gradient_gray8(width: u32, height: u32) -> PixelBuf {
             data.push(((x + y) * 255 / (width + height).max(1)) as u8);
         }
     }
-    PixelBuf::from_typed(data, width, height, ImageSpec::GRAY8_SRGB).unwrap()
+    PixelBuf::from_typed(data, width, height, PixelFormat::GRAY8_SRGB).unwrap()
 }
 
 fn make_gradient_rgb16(width: u32, height: u32) -> PixelBuf {
@@ -55,7 +55,7 @@ fn make_gradient_rgb16(width: u32, height: u32) -> PixelBuf {
         }
     }
     let bytes: Vec<u8> = bytemuck::cast_slice::<u16, u8>(&data).to_vec();
-    PixelBuf::from_bytes(bytes, width, height, ImageSpec::RGB16_SRGB).unwrap()
+    PixelBuf::from_bytes(bytes, width, height, PixelFormat::RGB16_SRGB).unwrap()
 }
 
 #[test]
@@ -67,8 +67,8 @@ fn roundtrip_rgb8_lzw() {
     let output = decode(&encoded, &TiffDecodeConfig::default(), &Unstoppable).unwrap();
     assert_eq!(output.info.width, 64);
     assert_eq!(output.info.height, 48);
-    assert_eq!(output.pixels.spec().layout.order, ChannelOrder::Rgb);
-    assert_eq!(output.pixels.spec().layout.sample, SampleType::U8);
+    assert_eq!(output.pixels.format().layout.order, ChannelOrder::Rgb);
+    assert_eq!(output.pixels.format().layout.sample, SampleType::U8);
 
     // Lossless — pixel data should match exactly
     let original = buf.as_view().contiguous_bytes().unwrap();
@@ -87,8 +87,8 @@ fn roundtrip_rgba8_deflate() {
     let output = decode(&encoded, &TiffDecodeConfig::default(), &Unstoppable).unwrap();
     assert_eq!(output.info.width, 32);
     assert_eq!(output.info.height, 32);
-    assert_eq!(output.pixels.spec().layout.order, ChannelOrder::Rgba);
-    assert_eq!(output.pixels.spec().layout.sample, SampleType::U8);
+    assert_eq!(output.pixels.format().layout.order, ChannelOrder::Rgba);
+    assert_eq!(output.pixels.format().layout.sample, SampleType::U8);
 
     let original = buf.as_view().contiguous_bytes().unwrap();
     let decoded = output.pixels.as_view().contiguous_bytes().unwrap();
@@ -106,8 +106,8 @@ fn roundtrip_gray8_uncompressed() {
     let output = decode(&encoded, &TiffDecodeConfig::default(), &Unstoppable).unwrap();
     assert_eq!(output.info.width, 16);
     assert_eq!(output.info.height, 16);
-    assert_eq!(output.pixels.spec().layout.order, ChannelOrder::Gray);
-    assert_eq!(output.pixels.spec().layout.sample, SampleType::U8);
+    assert_eq!(output.pixels.format().layout.order, ChannelOrder::Gray);
+    assert_eq!(output.pixels.format().layout.sample, SampleType::U8);
 
     let original = buf.as_view().contiguous_bytes().unwrap();
     let decoded = output.pixels.as_view().contiguous_bytes().unwrap();
@@ -125,8 +125,8 @@ fn roundtrip_rgb16_packbits() {
     let output = decode(&encoded, &TiffDecodeConfig::default(), &Unstoppable).unwrap();
     assert_eq!(output.info.width, 24);
     assert_eq!(output.info.height, 24);
-    assert_eq!(output.pixels.spec().layout.order, ChannelOrder::Rgb);
-    assert_eq!(output.pixels.spec().layout.sample, SampleType::U16);
+    assert_eq!(output.pixels.format().layout.order, ChannelOrder::Rgb);
+    assert_eq!(output.pixels.format().layout.sample, SampleType::U16);
 
     let original = buf.as_view().contiguous_bytes().unwrap();
     let decoded = output.pixels.as_view().contiguous_bytes().unwrap();
@@ -181,7 +181,7 @@ fn make_gradient_graya8(width: u32, height: u32) -> PixelBuf {
             data.push((x * 255 / width.max(1)) as u8);
         }
     }
-    PixelBuf::from_typed(data, width, height, ImageSpec::GRAYA8_SRGB).unwrap()
+    PixelBuf::from_typed(data, width, height, PixelFormat::GRAYA8_SRGB).unwrap()
 }
 
 fn make_gradient_graya16(width: u32, height: u32) -> PixelBuf {
@@ -197,7 +197,7 @@ fn make_gradient_graya16(width: u32, height: u32) -> PixelBuf {
         data,
         width,
         height,
-        ImageSpec::new(
+        PixelFormat::new(
             SampleLayout::new(SampleType::U16, ChannelOrder::GrayAlpha),
             ColorSpace::GRAY_SRGB.with_alpha(AlphaMode::Straight),
         ),
@@ -218,7 +218,7 @@ fn make_gradient_grayaf32(width: u32, height: u32) -> PixelBuf {
         data,
         width,
         height,
-        ImageSpec::new(
+        PixelFormat::new(
             SampleLayout::new(SampleType::F32, ChannelOrder::GrayAlpha),
             ColorSpace::GRAY_LINEAR.with_alpha(AlphaMode::Straight),
         ),
@@ -245,8 +245,8 @@ fn roundtrip_graya8_stays_two_channel() {
     let output = decode(&encoded, &TiffDecodeConfig::default(), &Unstoppable).unwrap();
     assert_eq!(output.info.width, 40);
     assert_eq!(output.info.height, 24);
-    assert_eq!(output.pixels.spec().layout.order, ChannelOrder::GrayAlpha);
-    assert_eq!(output.pixels.spec().layout.sample, SampleType::U8);
+    assert_eq!(output.pixels.format().layout.order, ChannelOrder::GrayAlpha);
+    assert_eq!(output.pixels.format().layout.sample, SampleType::U8);
 
     let original = buf.as_view().contiguous_bytes().unwrap();
     let decoded = output.pixels.as_view().contiguous_bytes().unwrap();
@@ -270,8 +270,8 @@ fn roundtrip_graya16_stays_two_channel() {
     assert_eq!(info.samples_per_pixel, Some(2));
 
     let output = decode(&encoded, &TiffDecodeConfig::default(), &Unstoppable).unwrap();
-    assert_eq!(output.pixels.spec().layout.order, ChannelOrder::GrayAlpha);
-    assert_eq!(output.pixels.spec().layout.sample, SampleType::U16);
+    assert_eq!(output.pixels.format().layout.order, ChannelOrder::GrayAlpha);
+    assert_eq!(output.pixels.format().layout.sample, SampleType::U16);
 
     let original = buf.as_view().contiguous_bytes().unwrap();
     let decoded = output.pixels.as_view().contiguous_bytes().unwrap();
@@ -293,8 +293,8 @@ fn roundtrip_grayaf32_stays_two_channel() {
     assert_eq!(info.samples_per_pixel, Some(2));
 
     let output = decode(&encoded, &TiffDecodeConfig::default(), &Unstoppable).unwrap();
-    assert_eq!(output.pixels.spec().layout.order, ChannelOrder::GrayAlpha);
-    assert_eq!(output.pixels.spec().layout.sample, SampleType::F32);
+    assert_eq!(output.pixels.format().layout.order, ChannelOrder::GrayAlpha);
+    assert_eq!(output.pixels.format().layout.sample, SampleType::F32);
 
     let original = buf.as_view().contiguous_bytes().unwrap();
     let decoded = output.pixels.as_view().contiguous_bytes().unwrap();
@@ -324,7 +324,7 @@ fn graya8_encodes_smaller_than_rgba_widening() {
         let (g, a) = (chunk[0], chunk[1]);
         rgba_bytes.extend_from_slice(&[g, g, g, a]);
     }
-    let rgba = PixelBuf::from_typed(rgba_bytes, 64, 64, ImageSpec::RGBA8_SRGB).unwrap();
+    let rgba = PixelBuf::from_typed(rgba_bytes, 64, 64, PixelFormat::RGBA8_SRGB).unwrap();
 
     let config = TiffEncodeConfig::new()
         .with_compression(Compression::Uncompressed)
@@ -343,7 +343,7 @@ fn graya8_encodes_smaller_than_rgba_widening() {
 #[test]
 fn encode_1x1_pixel() {
     let data = vec![255u8, 0, 128];
-    let buf = PixelBuf::from_typed(data, 1, 1, ImageSpec::RGB8_SRGB).unwrap();
+    let buf = PixelBuf::from_typed(data, 1, 1, PixelFormat::RGB8_SRGB).unwrap();
     let encoded = encode(
         &buf.as_view(),
         &TiffEncodeConfig::new().with_compression(Compression::Uncompressed),

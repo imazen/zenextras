@@ -15,7 +15,7 @@ use zencodec::{
     ImageSequence, Metadata, Orientation, OrientationHint, Resolution, ResolutionUnit,
     ResourceLimits, SourceColor, resolve_color_emit,
 };
-use zenpixels::{ChannelOrder, ImageSpec, PixelView, SampleType};
+use zenpixels::{ChannelOrder, PixelFormat, PixelView, SampleType};
 
 use whereat::At;
 #[allow(unused_imports)]
@@ -97,18 +97,18 @@ static TIFF_DECODE_CAPS: DecodeCapabilities = DecodeCapabilities::new()
 /// Gray, GrayAlpha, RGB, RGBA in u8/u16/f32.
 /// (GrayAlpha is written as Gray + an `ExtraSamples` alpha channel — 2
 /// samples/pixel — not widened to RGBA.)
-static TIFF_ENCODE_DESCRIPTORS: &[ImageSpec] = &[
-    ImageSpec::RGB8_SRGB,
-    ImageSpec::RGBA8_SRGB,
-    ImageSpec::GRAY8_SRGB,
-    ImageSpec::RGB16_SRGB,
-    ImageSpec::RGBA16_SRGB,
-    ImageSpec::GRAY16_SRGB,
-    ImageSpec::RGBF32_LINEAR,
-    ImageSpec::RGBAF32_LINEAR,
-    ImageSpec::GRAYF32_LINEAR,
-    ImageSpec::GRAYA8_SRGB,
-    zenpixels::ImageSpec::new(
+static TIFF_ENCODE_DESCRIPTORS: &[PixelFormat] = &[
+    PixelFormat::RGB8_SRGB,
+    PixelFormat::RGBA8_SRGB,
+    PixelFormat::GRAY8_SRGB,
+    PixelFormat::RGB16_SRGB,
+    PixelFormat::RGBA16_SRGB,
+    PixelFormat::GRAY16_SRGB,
+    PixelFormat::RGBF32_LINEAR,
+    PixelFormat::RGBAF32_LINEAR,
+    PixelFormat::GRAYF32_LINEAR,
+    PixelFormat::GRAYA8_SRGB,
+    zenpixels::PixelFormat::new(
         zenpixels::SampleLayout::new(
             zenpixels::SampleType::U16,
             zenpixels::ChannelOrder::GrayAlpha,
@@ -120,7 +120,7 @@ static TIFF_ENCODE_DESCRIPTORS: &[ImageSpec] = &[
             white: None,
         },
     ),
-    zenpixels::ImageSpec::new(
+    zenpixels::PixelFormat::new(
         zenpixels::SampleLayout::new(
             zenpixels::SampleType::F32,
             zenpixels::ChannelOrder::GrayAlpha,
@@ -137,7 +137,7 @@ static TIFF_ENCODE_DESCRIPTORS: &[ImageSpec] = &[
 /// Pixel formats the TIFF decoder can output.
 ///
 /// Covers all standard decode outputs (see `descriptor_for()` in decode.rs).
-static TIFF_DECODE_DESCRIPTORS: &[ImageSpec] = &[
+static TIFF_DECODE_DESCRIPTORS: &[PixelFormat] = &[
     crate::decode::pixel_spec(ChannelOrder::Rgb, SampleType::U8),
     crate::decode::pixel_spec(ChannelOrder::Rgba, SampleType::U8),
     crate::decode::pixel_spec(ChannelOrder::Gray, SampleType::U8),
@@ -205,7 +205,7 @@ impl zencodec::encode::EncoderConfig for TiffEncoderCodecConfig {
         ImageFormat::Tiff
     }
 
-    fn supported_descriptors() -> &'static [ImageSpec] {
+    fn supported_descriptors() -> &'static [PixelFormat] {
         TIFF_ENCODE_DESCRIPTORS
     }
 
@@ -387,7 +387,7 @@ impl TiffCodecEncoder {
                 })));
             }
             if let Some(max_mem) = limits.max_memory_bytes {
-                let bpp = pixels.spec().layout.bytes_per_pixel() as u64;
+                let bpp = pixels.format().layout.bytes_per_pixel() as u64;
                 let estimated = pixel_count * bpp;
                 if estimated > max_mem {
                     return Err(at!(TiffError::from(zencodec::LimitExceeded::Memory {
@@ -408,7 +408,7 @@ impl TiffCodecEncoder {
 
         self.check_limits(&pixels)?;
 
-        let encode_meta = lower_metadata(self.metadata.as_ref(), &self.policy, pixels.spec())?;
+        let encode_meta = lower_metadata(self.metadata.as_ref(), &self.policy, pixels.format())?;
         if self.require_metadata
             && let Some(required) = self.metadata.as_ref()
             && (required.icc_profile.is_some()
@@ -448,7 +448,7 @@ impl zencodec::encode::Encoder for TiffCodecEncoder {
 fn lower_metadata(
     meta: Option<&Metadata>,
     policy: &EncodePolicy,
-    spec: &ImageSpec,
+    spec: &PixelFormat,
 ) -> crate::Result<crate::encode::TiffEncodeMeta> {
     let empty = Metadata::none();
     let meta = meta.unwrap_or(&empty);
@@ -628,7 +628,7 @@ impl zencodec::decode::DecoderConfig for TiffDecoderCodecConfig {
         &[ImageFormat::Tiff]
     }
 
-    fn supported_descriptors() -> &'static [ImageSpec] {
+    fn supported_descriptors() -> &'static [PixelFormat] {
         TIFF_DECODE_DESCRIPTORS
     }
 
@@ -843,7 +843,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for TiffDecodeJob {
     fn decoder(
         self,
         data: Cow<'a, [u8]>,
-        _preferred: &[ImageSpec],
+        _preferred: &[PixelFormat],
     ) -> Result<TiffCodecDecoder<'a>, At<CodecError>> {
         if let Some(max) = self.max_input_bytes
             && data.len() as u64 > max
@@ -870,7 +870,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for TiffDecodeJob {
         self,
         data: Cow<'a, [u8]>,
         sink: &mut dyn zencodec::decode::DecodeRowSink,
-        preferred: &[ImageSpec],
+        preferred: &[PixelFormat],
     ) -> Result<OutputInfo, Self::Error> {
         zencodec::helpers::copy_decode_to_sink(self, data, sink, preferred, |e| {
             CodecError::of(at!(TiffError::InvalidInput(e.to_string())))
@@ -880,7 +880,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for TiffDecodeJob {
     fn streaming_decoder(
         self,
         _data: Cow<'a, [u8]>,
-        _preferred: &[ImageSpec],
+        _preferred: &[PixelFormat],
     ) -> Result<zencodec::Unsupported<At<CodecError>>, At<CodecError>> {
         Err(CodecError::of(at!(TiffError::from(
             zencodec::UnsupportedOperation::RowLevelDecode,
@@ -890,7 +890,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for TiffDecodeJob {
     fn animation_frame_decoder(
         self,
         _data: Cow<'a, [u8]>,
-        _preferred: &[ImageSpec],
+        _preferred: &[PixelFormat],
     ) -> Result<zencodec::Unsupported<At<CodecError>>, At<CodecError>> {
         Err(CodecError::of(at!(TiffError::from(
             zencodec::UnsupportedOperation::AnimationDecode,
@@ -904,7 +904,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for TiffDecodeJob {
     /// follow-up.
     fn dyn_incremental_decoder(
         self,
-        preferred: &[ImageSpec],
+        preferred: &[PixelFormat],
     ) -> Result<
         alloc::boxed::Box<zencodec::decode::DynIncrementalDecoder>,
         zencodec::decode::BoxedError,
@@ -1208,7 +1208,7 @@ mod tests {
         let w = 4u32;
         let h = 2u32;
         let pixels: Vec<u8> = (0..w * h * 3).map(|i| (i % 256) as u8).collect();
-        let buf = PixelBuf::from_typed(pixels.clone(), w, h, ImageSpec::RGB8_SRGB).unwrap();
+        let buf = PixelBuf::from_typed(pixels.clone(), w, h, PixelFormat::RGB8_SRGB).unwrap();
         let slice = buf.as_view();
 
         let encoded = encode_pixels(slice);
@@ -1230,7 +1230,7 @@ mod tests {
         let w = 3u32;
         let h = 3u32;
         let pixels: Vec<u8> = (0..w * h).map(|i| (i * 28 % 256) as u8).collect();
-        let buf = PixelBuf::from_typed(pixels.clone(), w, h, ImageSpec::GRAY8_SRGB).unwrap();
+        let buf = PixelBuf::from_typed(pixels.clone(), w, h, PixelFormat::GRAY8_SRGB).unwrap();
         let slice = buf.as_view();
 
         let encoded = encode_pixels(slice);
@@ -1249,7 +1249,7 @@ mod tests {
         let w = 2u32;
         let h = 2u32;
         let pixels = vec![255u8; (w * h * 4) as usize];
-        let buf = PixelBuf::from_typed(pixels.clone(), w, h, ImageSpec::RGBA8_SRGB).unwrap();
+        let buf = PixelBuf::from_typed(pixels.clone(), w, h, PixelFormat::RGBA8_SRGB).unwrap();
         let encoded = encode_pixels(buf.as_view());
 
         let config = TiffDecoderCodecConfig::new();
@@ -1266,7 +1266,7 @@ mod tests {
         let w = 2u32;
         let h = 2u32;
         let pixels = vec![128u8; (w * h * 3) as usize];
-        let buf = PixelBuf::from_typed(pixels, w, h, ImageSpec::RGB8_SRGB).unwrap();
+        let buf = PixelBuf::from_typed(pixels, w, h, PixelFormat::RGB8_SRGB).unwrap();
         let encoded = encode_pixels(buf.as_view());
 
         let config = TiffDecoderCodecConfig::new();
@@ -1325,7 +1325,7 @@ mod tests {
         let w = 2u32;
         let h = 2u32;
         let pixels = vec![0u8; (w * h * 3) as usize];
-        let buf = PixelBuf::from_typed(pixels, w, h, ImageSpec::RGB8_SRGB).unwrap();
+        let buf = PixelBuf::from_typed(pixels, w, h, PixelFormat::RGB8_SRGB).unwrap();
         let encoded = encode_pixels(buf.as_view());
         let decoded = decode_bytes(encoded.data());
         let details = decoded.source_encoding_details().unwrap();
@@ -1340,7 +1340,7 @@ mod tests {
         let w = 2u32;
         let h = 2u32;
         let pixels = vec![0u8; (w * h * 3) as usize];
-        let buf = PixelBuf::from_typed(pixels, w, h, ImageSpec::RGB8_SRGB).unwrap();
+        let buf = PixelBuf::from_typed(pixels, w, h, PixelFormat::RGB8_SRGB).unwrap();
         let encoded = encode_pixels(buf.as_view());
 
         // Decode with strict policy — metadata should be suppressed

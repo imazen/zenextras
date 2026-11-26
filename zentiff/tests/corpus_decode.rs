@@ -5,7 +5,7 @@
 #![allow(deprecated)]
 
 use enough::Unstoppable;
-use zenpixels::{AlphaMode, ChannelOrder, ColorSpace, ImageSpec, SampleLayout, SampleType};
+use zenpixels::{AlphaMode, ChannelOrder, ColorSpace, PixelFormat, SampleLayout, SampleType};
 use zentiff::{TiffDecodeConfig, decode, probe};
 
 fn try_all_files_in(dir: &std::path::Path, results: &mut Vec<(String, Result<String, String>)>) {
@@ -44,7 +44,7 @@ fn try_all_files_in(dir: &std::path::Path, results: &mut Vec<(String, Result<Str
         let config = TiffDecodeConfig::none();
         match decode(&data, &config, &Unstoppable) {
             Ok(output) => {
-                let desc = output.pixels.spec();
+                let desc = output.pixels.format();
                 let info = format!(
                     "{}x{} {:?}/{:?} ch={} bd={}",
                     output.info.width,
@@ -200,70 +200,70 @@ fn decoding_result_info(r: &tiff::decoder::DecodingResult) -> (usize, &'static s
 }
 
 /// Replicate zentiff's descriptor_for logic for diagnosis.
-fn descriptor_for_diag(ct: tiff::ColorType, is_float: bool) -> ImageSpec {
+fn descriptor_for_diag(ct: tiff::ColorType, is_float: bool) -> PixelFormat {
     match ct {
         tiff::ColorType::Gray(d) => match d {
-            1..=8 => ImageSpec::GRAY8_SRGB,
-            9..=16 if is_float => ImageSpec::GRAYF32_LINEAR,
-            9..=16 => ImageSpec::GRAY16_SRGB,
-            _ if is_float => ImageSpec::GRAYF32_LINEAR,
-            _ => ImageSpec::GRAY16_SRGB,
+            1..=8 => PixelFormat::GRAY8_SRGB,
+            9..=16 if is_float => PixelFormat::GRAYF32_LINEAR,
+            9..=16 => PixelFormat::GRAY16_SRGB,
+            _ if is_float => PixelFormat::GRAYF32_LINEAR,
+            _ => PixelFormat::GRAY16_SRGB,
         },
         tiff::ColorType::GrayA(d) => match d {
-            1..=8 => ImageSpec::GRAYA8_SRGB,
-            9..=16 if is_float => ImageSpec::new(
+            1..=8 => PixelFormat::GRAYA8_SRGB,
+            9..=16 if is_float => PixelFormat::new(
                 SampleLayout::new(SampleType::F32, ChannelOrder::GrayAlpha),
                 ColorSpace::GRAY_LINEAR.with_alpha(AlphaMode::Straight),
             ),
-            9..=16 => ImageSpec::new(
+            9..=16 => PixelFormat::new(
                 SampleLayout::new(SampleType::U16, ChannelOrder::GrayAlpha),
                 ColorSpace::GRAY_SRGB.with_alpha(AlphaMode::Straight),
             ),
-            _ if is_float => ImageSpec::new(
+            _ if is_float => PixelFormat::new(
                 SampleLayout::new(SampleType::F32, ChannelOrder::GrayAlpha),
                 ColorSpace::GRAY_LINEAR.with_alpha(AlphaMode::Straight),
             ),
-            _ => ImageSpec::new(
+            _ => PixelFormat::new(
                 SampleLayout::new(SampleType::U16, ChannelOrder::GrayAlpha),
                 ColorSpace::GRAY_SRGB.with_alpha(AlphaMode::Straight),
             ),
         },
         tiff::ColorType::RGB(d) | tiff::ColorType::YCbCr(d) | tiff::ColorType::Lab(d) => match d {
-            1..=8 => ImageSpec::RGB8_SRGB,
-            9..=16 if is_float => ImageSpec::RGBF32_LINEAR,
-            9..=16 => ImageSpec::RGB16_SRGB,
-            _ if is_float => ImageSpec::RGBF32_LINEAR,
-            _ => ImageSpec::RGB16_SRGB,
+            1..=8 => PixelFormat::RGB8_SRGB,
+            9..=16 if is_float => PixelFormat::RGBF32_LINEAR,
+            9..=16 => PixelFormat::RGB16_SRGB,
+            _ if is_float => PixelFormat::RGBF32_LINEAR,
+            _ => PixelFormat::RGB16_SRGB,
         },
         tiff::ColorType::RGBA(d) => match d {
-            1..=8 => ImageSpec::RGBA8_SRGB,
-            9..=16 if is_float => ImageSpec::RGBAF32_LINEAR,
-            9..=16 => ImageSpec::RGBA16_SRGB,
-            _ if is_float => ImageSpec::RGBAF32_LINEAR,
-            _ => ImageSpec::RGBA16_SRGB,
+            1..=8 => PixelFormat::RGBA8_SRGB,
+            9..=16 if is_float => PixelFormat::RGBAF32_LINEAR,
+            9..=16 => PixelFormat::RGBA16_SRGB,
+            _ if is_float => PixelFormat::RGBAF32_LINEAR,
+            _ => PixelFormat::RGBA16_SRGB,
         },
-        tiff::ColorType::Palette(_) => ImageSpec::RGB8_SRGB,
+        tiff::ColorType::Palette(_) => PixelFormat::RGB8_SRGB,
         tiff::ColorType::CMYK(d) | tiff::ColorType::CMYKA(d) => match d {
-            1..=8 => ImageSpec::RGBA8_SRGB,
-            9..=16 if is_float => ImageSpec::RGBAF32_LINEAR,
-            9..=16 => ImageSpec::RGBA16_SRGB,
-            _ if is_float => ImageSpec::RGBAF32_LINEAR,
-            _ => ImageSpec::RGBA16_SRGB,
+            1..=8 => PixelFormat::RGBA8_SRGB,
+            9..=16 if is_float => PixelFormat::RGBAF32_LINEAR,
+            9..=16 => PixelFormat::RGBA16_SRGB,
+            _ if is_float => PixelFormat::RGBAF32_LINEAR,
+            _ => PixelFormat::RGBA16_SRGB,
         },
         tiff::ColorType::Multiband {
             bit_depth,
             num_samples,
         } => match (num_samples, bit_depth) {
-            (1, 1..=8) => ImageSpec::GRAY8_SRGB,
-            (1, _) => ImageSpec::GRAY16_SRGB,
-            (3, 1..=8) => ImageSpec::RGB8_SRGB,
-            (3, _) => ImageSpec::RGB16_SRGB,
-            (4, 1..=8) => ImageSpec::RGBA8_SRGB,
-            (4, _) => ImageSpec::RGBA16_SRGB,
-            (_, 1..=8) => ImageSpec::RGBA8_SRGB,
-            _ => ImageSpec::RGBA16_SRGB,
+            (1, 1..=8) => PixelFormat::GRAY8_SRGB,
+            (1, _) => PixelFormat::GRAY16_SRGB,
+            (3, 1..=8) => PixelFormat::RGB8_SRGB,
+            (3, _) => PixelFormat::RGB16_SRGB,
+            (4, 1..=8) => PixelFormat::RGBA8_SRGB,
+            (4, _) => PixelFormat::RGBA16_SRGB,
+            (_, 1..=8) => PixelFormat::RGBA8_SRGB,
+            _ => PixelFormat::RGBA16_SRGB,
         },
-        _ => ImageSpec::RGBA8_SRGB,
+        _ => PixelFormat::RGBA8_SRGB,
     }
 }
 

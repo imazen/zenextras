@@ -138,19 +138,19 @@ fn limits_accept_within_bounds() {
 fn push_decoder() {
     use std::fmt::Write as _;
     use zencodec::decode::{DecodeRowSink, SinkError};
-    use zenpixels::{AlphaMode, ImageSpec, PixelViewMut};
+    use zenpixels::{AlphaMode, PixelFormat, PixelViewMut};
 
     struct CollectSink {
         data: Vec<u8>,
         stride: usize,
-        spec: Option<ImageSpec>,
+        format: Option<PixelFormat>,
     }
 
     impl DecodeRowSink for CollectSink {
-        fn begin(&mut self, width: u32, height: u32, spec: ImageSpec) -> Result<(), SinkError> {
+        fn begin(&mut self, width: u32, height: u32, format: PixelFormat) -> Result<(), SinkError> {
             assert_eq!((width, height), (6, 4));
-            assert_eq!(spec.color.alpha(), AlphaMode::Straight);
-            self.spec = Some(spec);
+            assert_eq!(format.color.alpha(), AlphaMode::Straight);
+            self.format = Some(format);
             self.stride = width as usize * 4 + 7;
             self.data.resize(self.stride * height as usize, 0xA5);
             Ok(())
@@ -161,17 +161,17 @@ fn push_decoder() {
             y: u32,
             height: u32,
             width: u32,
-            descriptor: ImageSpec,
+            descriptor: PixelFormat,
         ) -> Result<PixelViewMut<'_>, SinkError> {
-            assert_eq!(self.spec.as_ref(), Some(&descriptor));
+            assert_eq!(self.format.as_ref(), Some(&descriptor));
             let start = y as usize * self.stride;
             let end = start + height as usize * self.stride;
-            PixelViewMut::new_with_spec_cow(
+            PixelViewMut::new_with_format_cow(
                 &mut self.data[start..end],
                 width,
                 height,
                 self.stride,
-                zenpixels::SpecCow::from_owned(descriptor),
+                zenpixels::FormatCow::from_owned(descriptor),
             )
             .map_err(|e| -> SinkError { e.to_string().into() })
         }
@@ -215,7 +215,7 @@ fn push_decoder() {
     let mut sink = CollectSink {
         data: Vec::new(),
         stride: 0,
-        spec: None,
+        format: None,
     };
     let info = dec
         .job()
@@ -223,7 +223,7 @@ fn push_decoder() {
         .unwrap();
     assert_eq!((info.width, info.height), (6, 4));
     assert_eq!((one.width(), one.height()), (6, 4));
-    assert_eq!(one.pixels().spec(), sink.spec.as_ref().unwrap());
+    assert_eq!(one.pixels().format(), sink.format.as_ref().unwrap());
     assert_eq!(sink.data.len(), 4 * sink.stride);
     for (y, row) in sink.data.chunks_exact(sink.stride).enumerate() {
         assert_eq!(&row[..24], one.pixels().row(y as u32));
@@ -287,8 +287,8 @@ fn alloc_pref_modes_render_byte_identical() {
 #[test]
 fn estimate_decode_resources_scales_with_output() {
     use zencodec::estimate::{ComputeEnvironment, ImageCharacteristics, ThreadingInformation};
-    use zenpixels::ImageSpec;
-    let img = ImageCharacteristics::new(595, 841, ImageSpec::RGBA8_SRGB);
+    use zenpixels::PixelFormat;
+    let img = ImageCharacteristics::new(595, 841, PixelFormat::RGBA8_SRGB);
     let env = ComputeEnvironment::conservative().with_cores(8);
     let est = PdfDecoderConfig::new().estimate_decode_resources(&img, &env);
     let output = 595u64 * 841 * 4;

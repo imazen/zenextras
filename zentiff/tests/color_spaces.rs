@@ -185,8 +185,8 @@ fn extra_samples_keep_their_declared_roles() {
             &[],
         );
         let out = decode(&data, &TiffDecodeConfig::default(), &Unstoppable).unwrap();
-        assert_eq!(out.pixels.spec().layout.order, order);
-        assert_eq!(out.pixels.spec().color.alpha(), mode);
+        assert_eq!(out.pixels.format().layout.order, order);
+        assert_eq!(out.pixels.format().color.alpha(), mode);
         assert_eq!(
             out.pixels.as_view().as_contiguous_bytes().unwrap(),
             &[64, 32, 16, 128][..order.channels()]
@@ -274,17 +274,17 @@ fn valid_rgb_and_gray_alpha_icc_profiles_describe_native_samples() {
                 out.pixels.as_view().as_contiguous_bytes().unwrap(),
                 expected
             );
-            assert_eq!(out.pixels.spec().color.alpha(), alpha);
+            assert_eq!(out.pixels.format().color.alpha(), alpha);
             assert_eq!(out.pixels.origin().icc.as_deref(), want_icc);
             if tagged {
-                assert!(matches!(&out.pixels.spec().color,
+                assert!(matches!(&out.pixels.format().color,
                     ColorSpace::Icc { profile: active, channels: count, .. }
                     if active.as_ref() == profile && u16::from(*count) == channels));
             } else {
                 // Untagged TIFF leaves transfer unspecified. RGB uses the
                 // adapter's BT.709 chromaticity fallback.
                 assert!(matches!(
-                    &out.pixels.spec().color,
+                    &out.pixels.format().color,
                     ColorSpace::Gray {
                         transfer: Transfer::Unknown,
                         ..

@@ -25,7 +25,7 @@ use exr::prelude::{ReadChannels, ReadLayers, SampleType};
 use std::cell::RefCell;
 use std::io::{self, Cursor, Read, Seek, SeekFrom};
 use whereat::{At, at};
-use zenpixels::{AlphaMode, CustomPrimaries, DiffuseWhite, ImageSpec, PixelBuf, Primaries};
+use zenpixels::{AlphaMode, CustomPrimaries, DiffuseWhite, PixelBuf, PixelFormat, Primaries};
 
 whereat::define_at_crate_info!();
 
@@ -156,18 +156,18 @@ impl ExrDecoderConfig {
                 CustomPrimaries::new(xy(c.red), xy(c.green), xy(c.blue), xy(c.white))
                     .map_or(Primaries::Unknown, Primaries::Custom)
             });
-        let mut spec = if channels == 4 {
-            ImageSpec::RGBAF32_LINEAR.with_alpha(AlphaMode::Premultiplied)
+        let mut format = if channels == 4 {
+            PixelFormat::RGBAF32_LINEAR.with_alpha(AlphaMode::Premultiplied)
         } else {
-            ImageSpec::RGBF32_LINEAR
+            PixelFormat::RGBF32_LINEAR
         };
-        spec = spec.with_primaries(primaries);
+        format = format.with_primaries(primaries);
         if let Some(white) = header
             .own_attributes
             .white_luminance
             .and_then(DiffuseWhite::try_new)
         {
-            spec = spec.with_white(white);
+            format = format.with_white(white);
         }
         let samples = bytes / size_of::<f32>();
         let mut storage = Vec::new();
@@ -203,7 +203,7 @@ impl ExrDecoderConfig {
             .map_err(|e| upstream_error(e, stop))?;
         check_stop(stop)?;
         let samples = image.layer_data.channel_data.pixels;
-        let pixels = PixelBuf::from_typed(samples, width, height, spec)
+        let pixels = PixelBuf::from_typed(samples, width, height, format)
             .map_err(|_| at!(ExrError::Allocation))?;
         Ok(ExrImage { pixels, header })
     }

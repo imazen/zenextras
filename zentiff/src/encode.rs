@@ -3,7 +3,7 @@
 use alloc::vec::Vec;
 use enough::Stop;
 use whereat::{ResultAtExt, at};
-use zenpixels::{ChannelOrder, ImageSpec, PixelView, SampleType};
+use zenpixels::{ChannelOrder, PixelFormat, PixelView, SampleType};
 
 use crate::error::{Result, TiffError};
 
@@ -363,7 +363,7 @@ pub mod internal_params {
 /// integer horizontal differencing is invalid for IEEE floating-point samples.
 /// An explicit `None` remains unpredicted.
 fn effective_predictor(
-    desc: &ImageSpec,
+    desc: &PixelFormat,
     requested: tiff::encoder::Predictor,
 ) -> tiff::encoder::Predictor {
     if desc.layout.order == ChannelOrder::GrayAlpha {
@@ -392,7 +392,7 @@ pub fn encode(
 ) -> Result<Vec<u8>> {
     cancel.check().map_err(|e| at!(TiffError::from(e)))?;
 
-    let desc = pixels.spec();
+    let desc = pixels.format();
     if !desc.layout.packing.is_full() {
         return Err(at!(TiffError::InvalidInput(
             "TIFF encoding requires full-width samples".into()
@@ -444,7 +444,7 @@ pub(crate) fn encode_with_meta(
 
     cancel.check().map_err(|e| at!(TiffError::from(e)))?;
 
-    let desc = pixels.spec();
+    let desc = pixels.format();
     if !desc.layout.packing.is_full() {
         return Err(at!(TiffError::InvalidInput(
             "TIFF encoding requires full-width samples".into()
@@ -534,7 +534,7 @@ fn write_image<W: std::io::Write + std::io::Seek, K: tiff::encoder::TiffKind>(
     enc: &mut tiff::encoder::TiffEncoder<W, K>,
     width: u32,
     height: u32,
-    desc: &ImageSpec,
+    desc: &PixelFormat,
     data: &[u8],
 ) -> Result<()> {
     use tiff::encoder::colortype;
@@ -680,7 +680,7 @@ fn write_image_with_meta<W: std::io::Write + std::io::Seek, K: tiff::encoder::Ti
     enc: &mut tiff::encoder::TiffEncoder<W, K>,
     width: u32,
     height: u32,
-    desc: &ImageSpec,
+    desc: &PixelFormat,
     data: &[u8],
     meta: &TiffEncodeMeta,
 ) -> Result<()> {
@@ -1415,8 +1415,8 @@ mod tests {
             icc: Some(icc.clone()),
             ..Default::default()
         };
-        let buf =
-            zenpixels::PixelBuf::from_typed(vec![7u8; 3 * 4], 2, 2, ImageSpec::RGB8_SRGB).unwrap();
+        let buf = zenpixels::PixelBuf::from_typed(vec![7u8; 3 * 4], 2, 2, PixelFormat::RGB8_SRGB)
+            .unwrap();
         for big_tiff in [false, true] {
             let config = TiffEncodeConfig::default().with_big_tiff(big_tiff);
             let data =

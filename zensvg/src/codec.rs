@@ -10,7 +10,7 @@ use zencodec::decode::{
     DecodeCapabilities, DecodeOutput, DecodePolicy, DecodeRowSink, OutputInfo, SinkError,
 };
 use zencodec::{CodecError, ImageFormat, ImageInfo, ResourceLimits, SharedPulse};
-use zenpixels::{ImageSpec, PixelBuf};
+use zenpixels::{PixelBuf, PixelFormat};
 
 use enough::Stop;
 
@@ -45,7 +45,7 @@ static SVG_DECODE_CAPS: DecodeCapabilities = DecodeCapabilities::new()
     .with_enforces_max_input_bytes(true)
     .with_inventory(cfg!(feature = "inventory"));
 
-static SVG_DECODE_DESCRIPTORS: &[ImageSpec] = &[ImageSpec::RGBA8_SRGB];
+static SVG_DECODE_DESCRIPTORS: &[PixelFormat] = &[PixelFormat::RGBA8_SRGB];
 
 // ══════════════════════════════════════════════════════════════════════
 // SvgDecoderConfig
@@ -133,7 +133,7 @@ impl zencodec::decode::DecoderConfig for SvgDecoderConfig {
         &FORMATS
     }
 
-    fn supported_descriptors() -> &'static [ImageSpec] {
+    fn supported_descriptors() -> &'static [PixelFormat] {
         SVG_DECODE_DESCRIPTORS
     }
 
@@ -325,7 +325,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for SvgDecodeJob {
             &self.config.render_options,
             self.limits.max_memory_bytes,
         )?;
-        Ok(OutputInfo::full_decode(w, h, ImageSpec::RGBA8_SRGB).with_alpha(true))
+        Ok(OutputInfo::full_decode(w, h, PixelFormat::RGBA8_SRGB).with_alpha(true))
     }
 
     fn extensions(&self) -> Option<&dyn core::any::Any> {
@@ -339,7 +339,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for SvgDecodeJob {
     fn decoder(
         self,
         data: Cow<'a, [u8]>,
-        _preferred: &[ImageSpec],
+        _preferred: &[PixelFormat],
     ) -> Result<SvgDecoder<'a>, At<CodecError>> {
         self.check_input_size(data.len())?;
         self.check_stop()?;
@@ -366,7 +366,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for SvgDecodeJob {
         self,
         data: Cow<'a, [u8]>,
         sink: &mut dyn DecodeRowSink,
-        preferred: &[ImageSpec],
+        preferred: &[PixelFormat],
     ) -> Result<OutputInfo, Self::Error> {
         zencodec::helpers::copy_decode_to_sink(self, data, sink, preferred, wrap_sink_error)
     }
@@ -374,7 +374,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for SvgDecodeJob {
     fn streaming_decoder(
         self,
         _data: Cow<'a, [u8]>,
-        _preferred: &[ImageSpec],
+        _preferred: &[PixelFormat],
     ) -> Result<zencodec::Unsupported<At<CodecError>>, At<CodecError>> {
         Err(SvgError::Unsupported(zencodec::UnsupportedOperation::RowLevelDecode).into())
     }
@@ -382,7 +382,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for SvgDecodeJob {
     fn animation_frame_decoder(
         self,
         _data: Cow<'a, [u8]>,
-        _preferred: &[ImageSpec],
+        _preferred: &[PixelFormat],
     ) -> Result<zencodec::Unsupported<At<CodecError>>, At<CodecError>> {
         Err(SvgError::Unsupported(zencodec::UnsupportedOperation::AnimationDecode).into())
     }
@@ -392,7 +392,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for SvgDecodeJob {
     /// file is offered. An SVG document parses as a whole before it renders.
     fn dyn_incremental_decoder(
         self,
-        preferred: &[ImageSpec],
+        preferred: &[PixelFormat],
     ) -> Result<Box<zencodec::decode::DynIncrementalDecoder>, zencodec::decode::BoxedError> {
         Ok(zencodec::decode::erase_incremental(
             zencodec::helpers::WholeFileIncremental::new(self, preferred),
@@ -456,7 +456,7 @@ impl zencodec::decode::Decode for SvgDecoder<'_> {
             result.data,
             result.width,
             result.height,
-            ImageSpec::RGBA8_SRGB,
+            PixelFormat::RGBA8_SRGB,
         )
         .map_err(|e| SvgError::PixelBufferMismatch(format!("{e}")))?;
 
@@ -530,7 +530,7 @@ mod tests {
     #[test]
     fn estimate_decode_resources_scales_with_output() {
         use zencodec::estimate::{ComputeEnvironment, ImageCharacteristics, ThreadingInformation};
-        let img = ImageCharacteristics::new(800, 600, ImageSpec::RGBA8_SRGB);
+        let img = ImageCharacteristics::new(800, 600, PixelFormat::RGBA8_SRGB);
         let env = ComputeEnvironment::conservative().with_cores(8);
         let est = SvgDecoderConfig::new().estimate_decode_resources(&img, &env);
         let output = 800u64 * 600 * 4;

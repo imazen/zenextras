@@ -16,7 +16,7 @@ use zencodec::decode::{
 };
 use zencodec::{CodecError, ImageFormat, ImageInfo, ResourceLimits, SharedPulse, Unsupported};
 use zenpixels::{
-    AlphaMode, ChannelOrder, ColorOrigin, ColorSpace, IccColorSpace, ImageSpec, PixelBuf,
+    AlphaMode, ChannelOrder, ColorOrigin, ColorSpace, IccColorSpace, PixelBuf, PixelFormat,
     SampleLayout, SampleType, Transfer,
 };
 
@@ -53,15 +53,15 @@ fn alloc_pref_from_zencodec(pref: zencodec::AllocPreference) -> AllocPref {
 /// Eight-bit samples use a U8 layout by default. Higher precision uses U16
 /// normalized to the full unsigned range. Embedded profiles determine the
 /// active color independently of this list of representative formats.
-static DECODE_DESCRIPTORS: &[ImageSpec] = &[
-    ImageSpec::RGB8_SRGB,
-    ImageSpec::RGBA8_SRGB,
-    ImageSpec::GRAY8_SRGB,
-    ImageSpec::GRAYA8_SRGB,
-    ImageSpec::RGB16_SRGB,
-    ImageSpec::RGBA16_SRGB,
-    ImageSpec::GRAY16_SRGB,
-    ImageSpec::new(
+static DECODE_DESCRIPTORS: &[PixelFormat] = &[
+    PixelFormat::RGB8_SRGB,
+    PixelFormat::RGBA8_SRGB,
+    PixelFormat::GRAY8_SRGB,
+    PixelFormat::GRAYA8_SRGB,
+    PixelFormat::RGB16_SRGB,
+    PixelFormat::RGBA16_SRGB,
+    PixelFormat::GRAY16_SRGB,
+    PixelFormat::new(
         SampleLayout::new(SampleType::U16, ChannelOrder::GrayAlpha),
         ColorSpace::Gray {
             transfer: Transfer::Srgb,
@@ -140,7 +140,7 @@ impl DecoderConfig for Jp2DecoderConfig {
         &FORMATS
     }
 
-    fn supported_descriptors() -> &'static [ImageSpec] {
+    fn supported_descriptors() -> &'static [PixelFormat] {
         DECODE_DESCRIPTORS
     }
 
@@ -265,7 +265,7 @@ impl<'a> DecodeJob<'a> for Jp2DecodeJob {
         self,
         data: Cow<'a, [u8]>,
         sink: &mut dyn DecodeRowSink,
-        preferred: &[ImageSpec],
+        preferred: &[PixelFormat],
     ) -> core::result::Result<OutputInfo, Self::Error> {
         // JP2 doesn't support streaming — decode full image, then copy to sink.
         zencodec::helpers::copy_decode_to_sink(self, data, sink, preferred, |e| {
@@ -276,7 +276,7 @@ impl<'a> DecodeJob<'a> for Jp2DecodeJob {
     fn decoder(
         self,
         data: Cow<'a, [u8]>,
-        preferred: &[ImageSpec],
+        preferred: &[PixelFormat],
     ) -> core::result::Result<Self::Dec, Self::Error> {
         // Pre-flight limit checks on input size
         if let Some(ref limits) = self.limits
@@ -313,7 +313,7 @@ impl<'a> DecodeJob<'a> for Jp2DecodeJob {
     fn streaming_decoder(
         self,
         _data: Cow<'a, [u8]>,
-        _preferred: &[ImageSpec],
+        _preferred: &[PixelFormat],
     ) -> core::result::Result<Self::StreamDec, Self::Error> {
         Err(Jp2Error::UnsupportedOperation(zencodec::UnsupportedOperation::RowLevelDecode).into())
     }
@@ -321,7 +321,7 @@ impl<'a> DecodeJob<'a> for Jp2DecodeJob {
     fn animation_frame_decoder(
         self,
         _data: Cow<'a, [u8]>,
-        _preferred: &[ImageSpec],
+        _preferred: &[PixelFormat],
     ) -> core::result::Result<Self::AnimationFrameDec, Self::Error> {
         Err(Jp2Error::UnsupportedOperation(zencodec::UnsupportedOperation::AnimationDecode).into())
     }
@@ -331,7 +331,7 @@ impl<'a> DecodeJob<'a> for Jp2DecodeJob {
     /// file is offered. The JPEG 2000 decoder reads its codestream from a complete buffer.
     fn dyn_incremental_decoder(
         self,
-        preferred: &[ImageSpec],
+        preferred: &[PixelFormat],
     ) -> Result<
         alloc::boxed::Box<zencodec::decode::DynIncrementalDecoder>,
         zencodec::decode::BoxedError,
@@ -516,7 +516,7 @@ fn pixel_spec(
     info: &ImageInfo,
     bits: u8,
     preferred: &[SampleLayout],
-) -> ImageSpec {
+) -> PixelFormat {
     use hayro_jpeg2000::ColorSpace as SourceSpace;
     let source = image.color_space();
     let channels = source.num_channels();
@@ -593,14 +593,14 @@ fn pixel_spec(
             alpha,
         },
     };
-    ImageSpec::new(SampleLayout::new(sample, order), color)
+    PixelFormat::new(SampleLayout::new(sample, order), color)
 }
 
 fn interleave(
     decoded: &hayro_jpeg2000::DecodedImage<'_>,
     width: u32,
     height: u32,
-    spec: ImageSpec,
+    spec: PixelFormat,
     alloc_pref: AllocPref,
 ) -> CodecResult<PixelBuf> {
     let components = decoded.components();
@@ -669,7 +669,7 @@ fn check_pulse(stop: &dyn enough::Stop) -> core::result::Result<(), At<CodecErro
 fn check_limits(
     image: &hayro_jpeg2000::Image<'_>,
     limits: Option<&ResourceLimits>,
-    descriptor: &ImageSpec,
+    descriptor: &PixelFormat,
 ) -> CodecResult<()> {
     let Some(limits) = limits else {
         return Ok(());
@@ -794,7 +794,7 @@ mod tests {
     #[test]
     fn estimate_decode_resources_scales_with_output() {
         use zencodec::estimate::{ComputeEnvironment, ImageCharacteristics, ThreadingInformation};
-        let img = ImageCharacteristics::new(1000, 1000, ImageSpec::RGBA8_SRGB);
+        let img = ImageCharacteristics::new(1000, 1000, PixelFormat::RGBA8_SRGB);
         let env = ComputeEnvironment::conservative().with_cores(8);
         let est = Jp2DecoderConfig::new().estimate_decode_resources(&img, &env);
         // Peak holds output (1000*1000*4 = 4 MB) at least twice plus scratch.

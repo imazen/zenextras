@@ -8,7 +8,7 @@
 use std::borrow::Cow;
 use zencodec::decode::{Decode, DecodeJob, DecoderConfig};
 use zenjp2::Jp2DecoderConfig;
-use zenpixels::{ColorSpace, ImageSpec, SampleType};
+use zenpixels::{ColorSpace, PixelFormat, SampleType};
 
 #[path = "fixtures/display_p3.rs"]
 mod display_p3;
@@ -31,14 +31,14 @@ fn bx(ty: &[u8; 4], payload: &[u8]) -> Vec<u8> {
     v
 }
 
-fn decode_bytes(data: &[u8]) -> (u32, u32, ImageSpec, Vec<u8>) {
+fn decode_bytes(data: &[u8]) -> (u32, u32, PixelFormat, Vec<u8>) {
     let out = decode(data, &[]);
     let px = out.pixels();
     let bytes: Vec<u8> = (0..px.rows()).flat_map(|y| px.row(y).to_vec()).collect();
-    (out.width(), out.height(), px.spec().clone(), bytes)
+    (out.width(), out.height(), px.format().clone(), bytes)
 }
 
-fn decode(data: &[u8], preferred: &[ImageSpec]) -> zencodec::decode::DecodeOutput {
+fn decode(data: &[u8], preferred: &[PixelFormat]) -> zencodec::decode::DecodeOutput {
     Jp2DecoderConfig::new()
         .job()
         .decoder(Cow::Borrowed(data), preferred)
@@ -59,8 +59,8 @@ fn to_u8(code: u16) -> u8 {
 fn jp2_and_j2k_match_each_other_and_ffmpeg_oracle() {
     let (w1, h1, d1, px_jp2) = decode_bytes(JP2);
     let (w2, h2, d2, px_j2k) = decode_bytes(J2K);
-    assert_eq!((w1, h1, d1), (16, 16, ImageSpec::RGB8_SRGB));
-    assert_eq!((w2, h2, d2), (16, 16, ImageSpec::RGB8_SRGB));
+    assert_eq!((w1, h1, d1), (16, 16, PixelFormat::RGB8_SRGB));
+    assert_eq!((w2, h2, d2), (16, 16, PixelFormat::RGB8_SRGB));
     assert_eq!(
         px_jp2, px_j2k,
         "JP2 container and raw J2K codestream must decode identically"
@@ -121,7 +121,7 @@ fn cdef_reorders_channels_accurately() {
     f.extend(bx(b"jp2c", J2K));
 
     let (w, h, desc, swapped_rgb) = decode_bytes(&f);
-    assert_eq!((w, h, desc), (16, 16, ImageSpec::RGB8_SRGB));
+    assert_eq!((w, h, desc), (16, 16, PixelFormat::RGB8_SRGB));
     for (base_px, swap_px) in base_rgb
         .as_chunks::<3>()
         .0
@@ -189,7 +189,7 @@ fn palette_12bit_defaults_to_the_full_u16_grid() {
     let out = decode(&file, &[]);
     assert_eq!((out.width(), out.height()), (2, 2));
     let raster = out.pixels();
-    assert_eq!(raster.spec(), &info.native_format);
+    assert_eq!(raster.format(), &info.native_format);
     let raw = raster.as_contiguous_bytes().unwrap();
     let samples: Vec<_> = raw
         .as_chunks::<2>()
@@ -210,8 +210,8 @@ fn palette_12bit_defaults_to_the_full_u16_grid() {
 #[test]
 fn palette_12bit_honors_explicit_u8() {
     let (file, codes) = palette_12bit_jp2();
-    let out = decode(&file, &[ImageSpec::RGB8_SRGB]);
-    assert_eq!(out.pixels().spec(), &ImageSpec::RGB8_SRGB);
+    let out = decode(&file, &[PixelFormat::RGB8_SRGB]);
+    assert_eq!(out.pixels().format(), &PixelFormat::RGB8_SRGB);
     assert_eq!(
         out.pixels().as_contiguous_bytes().unwrap(),
         codes.into_iter().map(to_u8).collect::<Vec<_>>()
@@ -224,7 +224,7 @@ fn direct_12bit_components_preserve_adjacent_codes() {
     let out = decode(rgb12::RGB12, &[]);
     assert_eq!((out.width(), out.height()), (2, 2));
     let raster = out.pixels();
-    assert_eq!(raster.spec().layout.sample, SampleType::U16);
+    assert_eq!(raster.format().layout.sample, SampleType::U16);
     assert_eq!(
         raster.as_contiguous_bytes().unwrap(),
         RGB12_CODES
@@ -249,7 +249,7 @@ fn non_srgb_icc_is_active_on_unchanged_rgb_codes() {
 
     let out = decode(&file, &[]);
     let raster = out.pixels();
-    assert!(matches!(&raster.spec().color,
+    assert!(matches!(&raster.format().color,
         ColorSpace::Icc { profile: active, channels: 3, alpha: zenpixels::AlphaMode::None, .. }
         if active.as_ref() == profile));
     assert_eq!(raster.origin().unwrap().icc.as_deref(), Some(profile));
@@ -303,7 +303,7 @@ fn gray_plus_alpha_expands_to_rgba8() {
     f.extend(bx(b"jp2c", J2K));
 
     let (w, h, desc, rgba) = decode_bytes(&f);
-    assert_eq!((w, h, desc), (16, 16, ImageSpec::RGBA8_SRGB));
+    assert_eq!((w, h, desc), (16, 16, PixelFormat::RGBA8_SRGB));
     for (base_px, out_px) in base_rgb
         .as_chunks::<3>()
         .0
