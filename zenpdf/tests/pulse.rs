@@ -1,5 +1,5 @@
 //! The job's pulse governs a page decode, however it reaches the job: a pulse
-//! that cannot report, one that can, the legacy `with_stop`, and the
+//! that cannot report, one that can, and the
 //! type-erased job's `set_pulse`.
 //! - A stop raised before the decode refuses it, with its reason.
 //! - A one-shot stop at any later poll, including the poll between parsing the
@@ -10,7 +10,6 @@
 //!   stop raised while hayro draws is seen once the draw returns.
 //! - An unstopped pulse leaves the page byte-identical to the native renderer's.
 #![cfg(feature = "zencodec")]
-#![allow(deprecated)] // The legacy `with_stop` arm, on purpose.
 
 use std::borrow::Cow;
 use std::sync::Arc;
@@ -95,13 +94,11 @@ enum Arm {
     Quiet,
     /// `with_pulse`, with a pulse that can report.
     Reporting,
-    /// The deprecated `with_stop`.
-    Legacy,
     /// `set_pulse` on the type-erased job.
     Erased,
 }
 
-const ARMS: [Arm; 4] = [Arm::Quiet, Arm::Reporting, Arm::Legacy, Arm::Erased];
+const ARMS: [Arm; 3] = [Arm::Quiet, Arm::Reporting, Arm::Erased];
 
 type Page = (u32, u32, Vec<u8>);
 
@@ -131,7 +128,7 @@ fn decode_with(config: PdfDecoderConfig, arm: Arm, stop: AtPoll) -> Result<Page,
     let job = match arm {
         Arm::Quiet => job.with_pulse(SharedPulse::new(StopOnly::new(stop))),
         Arm::Reporting => job.with_pulse(SharedPulse::new(Reporting(stop))),
-        _ => job.with_stop(zencodec::StopToken::new(stop)),
+        Arm::Erased => unreachable!(),
     };
     job.decoder(Cow::Borrowed(PDF), &[])
         .and_then(|d| d.decode())

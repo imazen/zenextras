@@ -797,7 +797,7 @@ dependencies = [
 [[package]]
 name = "zencodec"
 version = "0.3.0"
-source = "git+https://github.com/imazen/zencodec?rev=26326a6e1ab59086c7f8683eb27f4c8e054d5e54#26326a6e1ab59086c7f8683eb27f4c8e054d5e54"
+source = "git+https://github.com/imazen/zencodec?rev=5d4f6c473404c09c95f404543f8a16a1e3cb8477#5d4f6c473404c09c95f404543f8a16a1e3cb8477"
 dependencies = [
  "almost-enough",
  "bytemuck",
@@ -835,7 +835,7 @@ dependencies = [
 [[package]]
 name = "zenpixels"
 version = "0.5.0"
-source = "git+https://github.com/imazen/zenpixels?rev=d40a957e95d19ea3fb5c29472820c86e8a34b09e#d40a957e95d19ea3fb5c29472820c86e8a34b09e"
+source = "git+https://github.com/imazen/zenpixels?rev=7fa068834f8074c2630a352b25f355f7c90751f8#7fa068834f8074c2630a352b25f355f7c90751f8"
 dependencies = [
  "bytemuck",
  "whereat",
@@ -896,4 +896,4 @@ source = "git+https://github.com/imazen/linear-srgb?rev=ae83f19426737635fee3dd16
 [[patch.unused]]
 name = "zenpixels-convert"
 version = "0.5.0"
-source = "git+https://github.com/imazen/zenpixels?rev=d40a957e95d19ea3fb5c29472820c86e8a34b09e#d40a957e95d19ea3fb5c29472820c86e8a34b09e"
+source = "git+https://github.com/imazen/zenpixels?rev=7fa068834f8074c2630a352b25f355f7c90751f8#7fa068834f8074c2630a352b25f355f7c90751f8"

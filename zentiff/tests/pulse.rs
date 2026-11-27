@@ -1,5 +1,5 @@
 //! The job's pulse governs TIFF decodes and encodes, however it reaches the
-//! job: a pulse that cannot report, one that can, the legacy `with_stop`, and
+//! job: a pulse that cannot report, one that can, and
 //! the type-erased job's `set_pulse`.
 //! - A stop raised before the operation refuses it, with its reason.
 //! - A one-shot stop at any later poll still ends it with its reason: the poll
@@ -13,7 +13,6 @@
 //!   JPEG chunk, and zenjpeg polls inside each chunk's decode.
 //! - An unstopped pulse leaves the output byte-identical to the native API's.
 #![cfg(feature = "zencodec")]
-#![allow(deprecated)] // The legacy `with_stop` arm, on purpose.
 
 use std::borrow::Cow;
 use std::sync::Arc;
@@ -107,13 +106,11 @@ enum Arm {
     Quiet,
     /// `with_pulse`, with a pulse that can report.
     Reporting,
-    /// The deprecated `with_stop`.
-    Legacy,
     /// `set_pulse` on the type-erased job.
     Erased,
 }
 
-const ARMS: [Arm; 4] = [Arm::Quiet, Arm::Reporting, Arm::Legacy, Arm::Erased];
+const ARMS: [Arm; 3] = [Arm::Quiet, Arm::Reporting, Arm::Erased];
 
 type Image = (u32, u32, PixelFormat, Vec<u8>);
 
@@ -139,7 +136,7 @@ fn decode(data: &[u8], arm: Arm, stop: AtPoll) -> Result<Image, ErrorCategory> {
     let job = match arm {
         Arm::Quiet => job.with_pulse(SharedPulse::new(StopOnly::new(stop))),
         Arm::Reporting => job.with_pulse(SharedPulse::new(Reporting(stop))),
-        _ => job.with_stop(zencodec::StopToken::new(stop)),
+        Arm::Erased => unreachable!(),
     };
     job.decoder(Cow::Borrowed(data), &[])
         .and_then(|d| d.decode())
@@ -164,7 +161,7 @@ fn encode(pixels: PixelView<'_>, arm: Arm, stop: AtPoll) -> Result<Vec<u8>, Erro
     let job = match arm {
         Arm::Quiet => job.with_pulse(SharedPulse::new(StopOnly::new(stop))),
         Arm::Reporting => job.with_pulse(SharedPulse::new(Reporting(stop))),
-        _ => job.with_stop(zencodec::StopToken::new(stop)),
+        Arm::Erased => unreachable!(),
     };
     job.encoder()
         .and_then(|e| e.encode(pixels))
@@ -332,7 +329,8 @@ mod jpeg_pages {
 
     /// The page's JPEG chunks (strips or tiles), read with image-tiff.
     fn chunks(data: &[u8]) -> usize {
-        let mut tiff = tiff::decoder::Decoder::new(std::io::Cursor::new(data)).unwrap();
+        let mut tiff = tiff::decoder::Decoder::open(std::io::Cursor::new(data)).unwrap();
+        tiff.next_image().unwrap();
         let n = match tiff.get_chunk_type() {
             tiff::decoder::ChunkType::Strip => tiff.strip_count(),
             tiff::decoder::ChunkType::Tile => tiff.tile_count(),

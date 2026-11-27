@@ -158,20 +158,18 @@ fn push_decoder() {
 
         fn provide_next_buffer(
             &mut self,
-            y: u32,
-            height: u32,
-            width: u32,
-            descriptor: PixelFormat,
+            strip: zencodec::decode::RowStrip,
+            pixel_format: PixelFormat,
         ) -> Result<PixelViewMut<'_>, SinkError> {
-            assert_eq!(self.format.as_ref(), Some(&descriptor));
-            let start = y as usize * self.stride;
-            let end = start + height as usize * self.stride;
+            assert_eq!(self.format.as_ref(), Some(&pixel_format));
+            let start = strip.y as usize * self.stride;
+            let end = start + strip.height as usize * self.stride;
             PixelViewMut::new_with_format_cow(
                 &mut self.data[start..end],
-                width,
-                height,
+                strip.width,
+                strip.height,
                 self.stride,
-                zenpixels::FormatCow::from_owned(descriptor),
+                zenpixels::FormatCow::from_owned(pixel_format),
             )
             .map_err(|e| -> SinkError { e.to_string().into() })
         }

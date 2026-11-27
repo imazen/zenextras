@@ -81,7 +81,6 @@ fn default_float_prediction_preserves_samples_and_stride() {
 
 #[cfg(feature = "zencodec")]
 #[test]
-#[expect(deprecated, reason = "exercise TIFF best-effort metadata retention")]
 fn float_shared_job_with_metadata_preserves_samples() {
     use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
     use zencodec::{Metadata, MetadataPolicy};
@@ -100,7 +99,8 @@ fn float_shared_job_with_metadata_preserves_samples() {
     let metadata = Metadata::none().with_xmp(b"<xmp>float predictor</xmp>".as_slice());
     let tagged = config
         .job()
-        .with_metadata_policy(metadata, MetadataPolicy::PreserveExact)
+        .try_with_metadata_policy(metadata, MetadataPolicy::PreserveExact)
+        .unwrap()
         .encoder()
         .unwrap()
         .encode(PixelView::new(&input, 3, 2, stride, &desc).unwrap())

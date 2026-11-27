@@ -249,7 +249,6 @@ fn roundtrip_graya8_via_traits_stays_two_channel() {
 }
 
 #[test]
-#[expect(deprecated, reason = "exercise TIFF best-effort metadata retention")]
 fn roundtrip_graya8_with_metadata_stays_two_channel() {
     // Exercises the metadata-aware encode path (write_one_graya_image): an ICC
     // profile + orientation must coexist with the Gray + ExtraSamples layout,
@@ -266,7 +265,8 @@ fn roundtrip_graya8_with_metadata_stays_two_channel() {
     let config = TiffEncoderCodecConfig::new();
     let tiff_data = config
         .job()
-        .with_metadata_policy(meta, MetadataPolicy::Web)
+        .try_with_metadata_policy(meta, MetadataPolicy::Web)
+        .unwrap()
         .encoder()
         .unwrap()
         .encode(original.as_view())
@@ -454,7 +454,6 @@ fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
 }
 
 #[test]
-#[expect(deprecated, reason = "exercise TIFF best-effort metadata retention")]
 fn metadata_web_policy_roundtrip_keeps_icc_orientation_strips_gps() {
     let icc = sample_icc();
     let exif = rich_exif_le();
@@ -467,10 +466,8 @@ fn metadata_web_policy_roundtrip_keeps_icc_orientation_strips_gps() {
         "with_exif should parse EXIF orientation 6 → Rotate90"
     );
 
-    // The filtering happens in `Metadata::filtered` (invoked by
-    // with_metadata_policy) — verify GPS is removed there, the rights tag and
-    // orientation survive, before anything is encoded.
-    #[allow(deprecated)] // Exercise the published compatibility helper intentionally.
+    // The filtering happens in `Metadata::filtered` — verify GPS is removed
+    // there, the rights tag and orientation survive, before anything is encoded.
     let filtered = meta.filtered(&MetadataPolicy::Web);
     assert_eq!(filtered.orientation, Orientation::Rotate90);
     {
@@ -489,7 +486,7 @@ fn metadata_web_policy_roundtrip_keeps_icc_orientation_strips_gps() {
     let config = TiffEncoderCodecConfig::new();
     let encoded = config
         .job()
-        .with_metadata_policy(meta, MetadataPolicy::Web)
+        .with_unfiltered_metadata(filtered)
         .encoder()
         .unwrap()
         .encode(buf.as_view())
@@ -654,7 +651,6 @@ fn read_ifd_tags(buf: &[u8], ifd_off: usize, want_ptrs: &[u16]) -> (Vec<u16>, Ve
 }
 
 #[test]
-#[expect(deprecated, reason = "exercise TIFF best-effort metadata retention")]
 fn foreign_exif_blob_decomposes_into_correct_native_ifds() {
     // Encode an image carrying a foreign 3-level EXIF blob with PreserveExact
     // (no retention stripping) so every tag must survive — routed to its IFD.
@@ -667,7 +663,7 @@ fn foreign_exif_blob_decomposes_into_correct_native_ifds() {
     let buf = make_rgb8(4, 4);
     let encoded = TiffEncoderCodecConfig::new()
         .job()
-        .with_metadata_policy(meta, MetadataPolicy::PreserveExact)
+        .with_unfiltered_metadata(meta.filtered(&MetadataPolicy::PreserveExact))
         .encoder()
         .unwrap()
         .encode(buf.as_view())
@@ -810,12 +806,8 @@ fn checked_preserve_exact_retains_supported_fields() {
 }
 
 #[test]
-#[expect(
-    deprecated,
-    reason = "exercise the public writer fallback on rejected retention"
-)]
 fn checked_preserve_exact_refuses_without_writing() {
-    use zencodec::encode::EncodePolicy;
+    use zencodec::encode::{DynEncoderConfig, EncodePolicy};
     use zencodec::{CodecErrorExt, UnsupportedOperation};
 
     let mut job = TiffEncoderCodecConfig::new().job();
@@ -837,20 +829,36 @@ fn checked_preserve_exact_refuses_without_writing() {
     )
     .unwrap();
     let encoder = job
-        .with_policy(EncodePolicy::none().with_embed_xmp(false))
+        .try_with_policy(EncodePolicy::none().with_embed_xmp(false))
+        .unwrap()
         .encoder()
         .unwrap();
-    let mut destination = Vec::new();
-    let err = zencodec_io::encode_to_writer(encoder, make_rgb8(4, 3).as_view(), &mut destination)
-        .unwrap_err();
-    let zencodec_io::EncodeWriteError::Encoder(err) = err else {
-        panic!("expected TIFF's typed refusal: {err}");
-    };
+    let err = encoder.encode(make_rgb8(4, 3).as_view()).unwrap_err();
     assert_eq!(
         err.unsupported_operation(),
         Some(&UnsupportedOperation::MetadataRetention)
     );
-    assert!(destination.is_empty());
+
+    // The type-erased path must refuse with the same typed error.
+    let mut dyn_job = TiffEncoderCodecConfig::new().dyn_job();
+    dyn_job
+        .try_set_metadata_policy(
+            Metadata::none().with_xmp(b"<meta/>".as_slice()),
+            MetadataPolicy::PreserveExact,
+        )
+        .unwrap();
+    dyn_job
+        .try_set_policy(EncodePolicy::none().with_embed_xmp(false))
+        .unwrap();
+    let err = dyn_job
+        .into_encoder()
+        .unwrap()
+        .encode(make_rgb8(4, 3).as_view())
+        .unwrap_err();
+    assert_eq!(
+        err.unsupported_operation(),
+        Some(&UnsupportedOperation::MetadataRetention)
+    );
 }
 
 fn profile_tag<'a>(icc: &'a [u8], signature: &[u8; 4]) -> Option<&'a [u8]> {
@@ -969,7 +977,6 @@ fn rgb_pq_keeps_its_transfer_and_native_samples() {
 /// TIFF emits a gray profile for gray samples, including a requested P3
 /// white and an HDR transfer. The profile's color-space signature must not be RGB.
 #[test]
-#[expect(deprecated, reason = "exercise the legacy color signaling input")]
 fn gray_pq_and_p3_emit_gray_icc_without_changing_u16_samples() {
     use zenpixels::{Cicp, Transfer};
 
@@ -987,9 +994,10 @@ fn gray_pq_and_p3_emit_gray_icc_without_changing_u16_samples() {
         .unwrap();
         let encoded = TiffEncoderCodecConfig::new()
             .job()
-            .with_metadata_policy(
-                Metadata::none().with_cicp(cicp),
-                MetadataPolicy::PreserveExact,
+            .with_unfiltered_metadata(
+                Metadata::none()
+                    .with_cicp(cicp)
+                    .filtered(&MetadataPolicy::PreserveExact),
             )
             .encoder()
             .unwrap()
@@ -1013,7 +1021,6 @@ fn gray_pq_and_p3_emit_gray_icc_without_changing_u16_samples() {
 }
 
 #[test]
-#[expect(deprecated, reason = "exercise TIFF best-effort metadata retention")]
 fn srgb_cicp_only_source_embeds_no_icc() {
     use zencodec::Cicp;
 
@@ -1024,7 +1031,7 @@ fn srgb_cicp_only_source_embeds_no_icc() {
 
     let encoded = TiffEncoderCodecConfig::new()
         .job()
-        .with_metadata_policy(meta, MetadataPolicy::PreserveExact)
+        .with_unfiltered_metadata(meta.filtered(&MetadataPolicy::PreserveExact))
         .encoder()
         .unwrap()
         .encode(buf.as_view())

@@ -205,7 +205,7 @@ impl zencodec::encode::EncoderConfig for TiffEncoderCodecConfig {
         ImageFormat::Tiff
     }
 
-    fn supported_descriptors() -> &'static [PixelFormat] {
+    fn supported_pixel_formats() -> &'static [PixelFormat] {
         TIFF_ENCODE_DESCRIPTORS
     }
 
@@ -230,14 +230,14 @@ impl zencodec::encode::EncoderConfig for TiffEncoderCodecConfig {
         compute: &zencodec::estimate::ComputeEnvironment,
     ) -> zencodec::estimate::ResourceEstimate {
         use zencodec::estimate::{ResourceEstimate, ThreadingInformation};
-        let input = image.input_bytes();
+        let input = image.uncompressed_frame_bytes();
         let scratch = 1u64 << 20;
         // input + ~output + scratch
         let typ = input.saturating_add(input).saturating_add(scratch);
         // ~200 Mpix/s rough (uncalibrated, structural)
         let time_ms = (image.pixels() as f64 / 200_000.0) as f32;
         ResourceEstimate::new(typ, time_ms as u64)
-            .with_peak_max(typ.saturating_mul(2))
+            .with_peak_memory_bytes_max(typ.saturating_mul(2))
             .with_threading(ThreadingInformation::SERIAL)
             .at_cores(compute.cores())
     }
@@ -276,16 +276,23 @@ impl zencodec::encode::EncodeJob for TiffEncodeJob {
         self
     }
 
-    fn with_policy(mut self, policy: EncodePolicy) -> Self {
+    fn try_set_policy(
+        &mut self,
+        policy: EncodePolicy,
+    ) -> Result<(), zencodec::UnsupportedOperation> {
+        let mut admitted = EncodePolicy::none();
+        admitted.color = policy.color;
+        admitted.embed_icc = policy.embed_icc;
+        admitted.embed_exif = policy.embed_exif;
+        admitted.embed_xmp = policy.embed_xmp;
+        if admitted != policy {
+            return Err(zencodec::UnsupportedOperation::EncodePolicy);
+        }
         self.policy = policy;
-        self
+        Ok(())
     }
 
-    // `with_metadata` is deprecated in favor of `with_metadata_policy`, but the
-    // codec must still implement it (the provided `with_metadata_policy` filters
-    // then delegates here). Store the (already-filtered) metadata to embed.
-    #[allow(deprecated)]
-    fn with_metadata(mut self, meta: Metadata) -> Self {
+    fn with_unfiltered_metadata(mut self, meta: Metadata) -> Self {
         if !self.require_metadata {
             self.metadata = Some(meta);
         }
@@ -439,7 +446,7 @@ impl zencodec::encode::Encoder for TiffCodecEncoder {
 }
 
 /// Lower the requested [`Metadata`] (already filtered by any
-/// [`with_metadata_policy`](zencodec::encode::EncodeJob::with_metadata_policy))
+/// [`try_with_metadata_policy`](zencodec::encode::EncodeJob::try_with_metadata_policy))
 /// plus the color-emit policy into the format-agnostic
 /// [`crate::encode::TiffEncodeMeta`] the encoder writes.
 ///
@@ -628,7 +635,7 @@ impl zencodec::decode::DecoderConfig for TiffDecoderCodecConfig {
         &[ImageFormat::Tiff]
     }
 
-    fn supported_descriptors() -> &'static [PixelFormat] {
+    fn supported_pixel_formats() -> &'static [PixelFormat] {
         TIFF_DECODE_DESCRIPTORS
     }
 
@@ -654,7 +661,7 @@ impl zencodec::decode::DecoderConfig for TiffDecoderCodecConfig {
         compute: &zencodec::estimate::ComputeEnvironment,
     ) -> zencodec::estimate::ResourceEstimate {
         use zencodec::estimate::{ResourceEstimate, ThreadingInformation};
-        let bpp = image.descriptor().layout.bytes_per_pixel() as u64;
+        let bpp = image.pixel_format().layout.bytes_per_pixel() as u64;
         // Final output buffer: W * H * bytes-per-output-pixel.
         let output = image.pixels().saturating_mul(bpp);
         // Measured (heaptrack, benchmarks/tiff_decode_mem_2026-06-23): ~350 KiB
@@ -666,7 +673,7 @@ impl zencodec::decode::DecoderConfig for TiffDecoderCodecConfig {
         // ~120 Mpix/s rough (uncalibrated, structural).
         let time_ms = (image.pixels() as f64 / 120_000.0) as u64;
         ResourceEstimate::new(typ, time_ms)
-            .with_peak_max(peak_max)
+            .with_peak_memory_bytes_max(peak_max)
             .with_threading(ThreadingInformation::SERIAL)
             .at_cores(compute.cores())
     }
@@ -753,9 +760,23 @@ impl<'a> zencodec::decode::DecodeJob<'a> for TiffDecodeJob {
         self
     }
 
-    fn with_policy(mut self, policy: DecodePolicy) -> Self {
+    fn try_set_policy(
+        &mut self,
+        policy: DecodePolicy,
+    ) -> Result<(), zencodec::UnsupportedOperation> {
+        if policy == DecodePolicy::none() {
+            self.policy = None;
+            return Ok(());
+        }
+        let mut admitted = DecodePolicy::none();
+        admitted.allow_icc = policy.allow_icc;
+        admitted.allow_exif = policy.allow_exif;
+        admitted.allow_xmp = policy.allow_xmp;
+        if admitted != policy {
+            return Err(zencodec::UnsupportedOperation::DecodePolicy);
+        }
         self.policy = Some(policy);
-        self
+        Ok(())
     }
 
     fn with_orientation(mut self, hint: OrientationHint) -> Self {
@@ -1307,14 +1328,14 @@ mod tests {
     fn encoder_config_traits() {
         assert_eq!(TiffEncoderCodecConfig::format(), ImageFormat::Tiff);
         assert!(TiffEncoderCodecConfig::capabilities().lossless());
-        assert!(!TiffEncoderCodecConfig::supported_descriptors().is_empty());
+        assert!(!TiffEncoderCodecConfig::supported_pixel_formats().is_empty());
     }
 
     #[test]
     fn decoder_config_traits() {
         assert_eq!(TiffDecoderCodecConfig::formats(), &[ImageFormat::Tiff]);
         assert!(TiffDecoderCodecConfig::capabilities().cheap_probe());
-        assert!(!TiffDecoderCodecConfig::supported_descriptors().is_empty());
+        assert!(!TiffDecoderCodecConfig::supported_pixel_formats().is_empty());
     }
 
     #[test]
@@ -1337,7 +1358,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(deprecated)] // Exercises the legacy best-effort policy setter on purpose.
     fn decode_policy_suppresses_metadata() {
         // Encode a simple image
         let w = 2u32;
@@ -1346,11 +1366,15 @@ mod tests {
         let buf = PixelBuf::from_typed(pixels, w, h, PixelFormat::RGB8_SRGB).unwrap();
         let encoded = encode_pixels(buf.as_view());
 
-        // Decode with strict policy — metadata should be suppressed
+        // Decode with metadata suppression policy
         let config = TiffDecoderCodecConfig::new();
-        let job = config.job().with_policy(DecodePolicy::strict());
+        let policy = DecodePolicy::none()
+            .with_allow_icc(false)
+            .with_allow_exif(false)
+            .with_allow_xmp(false);
+        let job = config.job().try_with_policy(policy).unwrap();
         let info = job.probe(encoded.data()).unwrap();
-        // ICC, EXIF, XMP should all be None with strict policy
+        // ICC, EXIF, XMP should all be None
         assert!(info.source_color.icc_profile.is_none());
         assert!(info.embedded_metadata.exif.is_none());
         assert!(info.embedded_metadata.xmp.is_none());

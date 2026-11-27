@@ -6,9 +6,7 @@
 use std::borrow::Cow;
 
 use whereat::At;
-use zencodec::decode::{
-    DecodeCapabilities, DecodeOutput, DecodePolicy, DecodeRowSink, OutputInfo, SinkError,
-};
+use zencodec::decode::{DecodeCapabilities, DecodeOutput, DecodeRowSink, OutputInfo, SinkError};
 use zencodec::{CodecError, ImageFormat, ImageInfo, ResourceLimits, SharedPulse};
 use zenpixels::{PixelBuf, PixelFormat};
 
@@ -133,7 +131,7 @@ impl zencodec::decode::DecoderConfig for SvgDecoderConfig {
         &FORMATS
     }
 
-    fn supported_descriptors() -> &'static [PixelFormat] {
+    fn supported_pixel_formats() -> &'static [PixelFormat] {
         SVG_DECODE_DESCRIPTORS
     }
 
@@ -170,7 +168,7 @@ impl zencodec::decode::DecoderConfig for SvgDecoderConfig {
         // pixel than a block decode and varies wildly with path complexity.
         let time_ms = (image.pixels() as f64 / 30_000.0) as u64;
         ResourceEstimate::new(typ, time_ms)
-            .with_peak_max(output.saturating_mul(8).saturating_add(fixed))
+            .with_peak_memory_bytes_max(output.saturating_mul(8).saturating_add(fixed))
             .with_threading(ThreadingInformation::SERIAL)
             .at_cores(compute.cores())
     }
@@ -244,10 +242,6 @@ impl<'a> zencodec::decode::DecodeJob<'a> for SvgDecodeJob {
         }
         self.limits = limits;
         self
-    }
-
-    fn with_policy(self, _policy: DecodePolicy) -> Self {
-        self // SVG decoding doesn't have strict/permissive modes
     }
 
     fn probe(&self, data: &[u8]) -> Result<ImageInfo, At<CodecError>> {

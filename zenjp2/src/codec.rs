@@ -140,7 +140,7 @@ impl DecoderConfig for Jp2DecoderConfig {
         &FORMATS
     }
 
-    fn supported_descriptors() -> &'static [PixelFormat] {
+    fn supported_pixel_formats() -> &'static [PixelFormat] {
         DECODE_DESCRIPTORS
     }
 
@@ -164,7 +164,7 @@ impl DecoderConfig for Jp2DecoderConfig {
         compute: &zencodec::estimate::ComputeEnvironment,
     ) -> zencodec::estimate::ResourceEstimate {
         use zencodec::estimate::{ResourceEstimate, ThreadingInformation};
-        let bpp = image.descriptor().layout.bytes_per_pixel() as u64;
+        let bpp = image.pixel_format().layout.bytes_per_pixel() as u64;
         // Full output pixel plane: W * H * bytes-per-output-pixel.
         let output = image.pixels().saturating_mul(bpp);
         // Wavelet/tile working set: hayro reconstructs tile-by-tile, holding
@@ -177,7 +177,7 @@ impl DecoderConfig for Jp2DecoderConfig {
         // heavier per pixel than a DCT or row-filter decode).
         let time_ms = (image.pixels() as f64 / 60_000.0) as u64;
         ResourceEstimate::new(typ, time_ms)
-            .with_peak_max(typ.saturating_mul(2))
+            .with_peak_memory_bytes_max(typ.saturating_mul(2))
             .with_threading(ThreadingInformation::SERIAL)
             .at_cores(compute.cores())
     }
@@ -220,9 +220,23 @@ impl<'a> DecodeJob<'a> for Jp2DecodeJob {
         self
     }
 
-    fn with_policy(mut self, policy: DecodePolicy) -> Self {
+    fn try_set_policy(
+        &mut self,
+        policy: DecodePolicy,
+    ) -> core::result::Result<(), zencodec::UnsupportedOperation> {
+        if policy == DecodePolicy::none() {
+            self.policy = None;
+            return Ok(());
+        }
+        let mut admitted = DecodePolicy::none();
+        admitted.allow_icc = policy.allow_icc;
+        admitted.allow_exif = policy.allow_exif;
+        admitted.allow_xmp = policy.allow_xmp;
+        if admitted != policy {
+            return Err(zencodec::UnsupportedOperation::DecodePolicy);
+        }
         self.policy = Some(policy);
-        self
+        Ok(())
     }
 
     fn probe(&self, data: &[u8]) -> core::result::Result<ImageInfo, Self::Error> {

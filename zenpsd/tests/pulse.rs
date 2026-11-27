@@ -1,5 +1,5 @@
 //! The job's pulse governs a merged-image decode, however it reaches the job:
-//! a pulse that cannot report, one that can, the legacy `with_stop`, and the
+//! a pulse that cannot report, one that can, and the
 //! type-erased job's `set_pulse`.
 //! - A stop raised before the decode refuses it, with its reason.
 //! - A one-shot stop at any later poll, including the polls while the RLE
@@ -11,7 +11,6 @@
 //!   taller image polls more often and a stop can interrupt the decode part way.
 //! - An unstopped pulse leaves the pixels byte-identical to the native decoder's.
 #![cfg(feature = "zencodec")]
-#![allow(deprecated)] // The legacy `with_stop` arm, on purpose.
 
 use std::borrow::Cow;
 use std::sync::Arc;
@@ -137,13 +136,11 @@ enum Arm {
     Quiet,
     /// `with_pulse`, with a pulse that can report.
     Reporting,
-    /// The deprecated `with_stop`.
-    Legacy,
     /// `set_pulse` on the type-erased job.
     Erased,
 }
 
-const ARMS: [Arm; 4] = [Arm::Quiet, Arm::Reporting, Arm::Legacy, Arm::Erased];
+const ARMS: [Arm; 3] = [Arm::Quiet, Arm::Reporting, Arm::Erased];
 
 type Image = (u32, u32, Vec<u8>);
 
@@ -169,7 +166,7 @@ fn decode(data: &[u8], arm: Arm, stop: AtPoll) -> Result<Image, ErrorCategory> {
     let job = match arm {
         Arm::Quiet => job.with_pulse(SharedPulse::new(StopOnly::new(stop))),
         Arm::Reporting => job.with_pulse(SharedPulse::new(Reporting(stop))),
-        _ => job.with_stop(zencodec::StopToken::new(stop)),
+        Arm::Erased => unreachable!(),
     };
     job.decoder(Cow::Borrowed(data), &[])
         .and_then(|d| d.decode())

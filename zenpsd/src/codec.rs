@@ -115,7 +115,7 @@ impl DecoderConfig for PsdDecoderConfig {
         &*FORMATS
     }
 
-    fn supported_descriptors() -> &'static [PixelFormat] {
+    fn supported_pixel_formats() -> &'static [PixelFormat] {
         DECODE_DESCRIPTORS
     }
 
@@ -129,13 +129,13 @@ impl DecoderConfig for PsdDecoderConfig {
         compute: &zencodec::estimate::ComputeEnvironment,
     ) -> zencodec::estimate::ResourceEstimate {
         use zencodec::estimate::{ResourceEstimate, ThreadingInformation};
-        let bpp = image.descriptor().layout.bytes_per_pixel() as u64;
+        let bpp = image.pixel_format().layout.bytes_per_pixel() as u64;
         let output = image.pixels().saturating_mul(bpp);
         // Planar channel buffer + interleaved output buffer.
         let typ = output.saturating_mul(2).saturating_add(64 << 10);
         let time_ms = (image.pixels() as f64 / 200_000.0) as u64;
         ResourceEstimate::new(typ, time_ms)
-            .with_peak_max(typ.saturating_mul(2))
+            .with_peak_memory_bytes_max(typ.saturating_mul(2))
             .with_threading(ThreadingInformation::SERIAL)
             .at_cores(compute.cores())
     }
@@ -174,9 +174,24 @@ impl<'a> DecodeJob<'a> for PsdDecodeJob {
         self
     }
 
-    fn with_policy(mut self, policy: DecodePolicy) -> Self {
+    fn try_set_policy(
+        &mut self,
+        policy: DecodePolicy,
+    ) -> core::result::Result<(), zencodec::UnsupportedOperation> {
+        if policy == DecodePolicy::none() {
+            self.policy = None;
+            return Ok(());
+        }
+        let mut admitted = DecodePolicy::none();
+        admitted.allow_icc = policy.allow_icc;
+        admitted.allow_exif = policy.allow_exif;
+        admitted.allow_xmp = policy.allow_xmp;
+        admitted.strict = policy.strict;
+        if admitted != policy {
+            return Err(zencodec::UnsupportedOperation::DecodePolicy);
+        }
         self.policy = Some(policy);
-        self
+        Ok(())
     }
 
     fn probe(&self, data: &[u8]) -> CodecResult<ImageInfo> {

@@ -7,7 +7,10 @@ fn native_fixture_policy_and_inventory_contracts() {
         let dec = SvgDecoderConfig::new();
         let expected = dec.clone().job().decoder(Cow::Borrowed(bytes), &[])
             .unwrap().decode().unwrap().metadata();
-        for (policy, accepted) in [(DecodePolicy::none(), true), (DecodePolicy::strict(), false)] {
+        for (policy, accepted) in [
+            (DecodePolicy::none(), true),
+            (DecodePolicy::untrusted_minimal(), false),
+        ] {
             zencodec_testkit::check_decode_policy_admission(dec.clone(), bytes,
                 DecodePolicy::none(), policy, accepted, &expected).unwrap();
         }

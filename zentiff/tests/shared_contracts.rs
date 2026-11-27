@@ -19,7 +19,8 @@ fn strided_fixture_policy_and_inventory_contracts() {
         .metadata();
     for (policy, accepted) in [
         (EncodePolicy::none(), true),
-        (EncodePolicy::strip_all(), false),
+        (EncodePolicy::strip_all(), true),
+        (EncodePolicy::none().with_strict(true), false),
     ] {
         zencodec_testkit::check_encode_policy_admission(
             E::new(),
@@ -35,7 +36,14 @@ fn strided_fixture_policy_and_inventory_contracts() {
     }
     for (policy, accepted) in [
         (DecodePolicy::none(), true),
-        (DecodePolicy::strict(), false),
+        (
+            DecodePolicy::none()
+                .with_allow_icc(false)
+                .with_allow_exif(false)
+                .with_allow_xmp(false),
+            true,
+        ),
+        (DecodePolicy::untrusted_minimal(), false),
     ] {
         zencodec_testkit::check_decode_policy_admission(
             D::new(),

@@ -399,7 +399,8 @@ fn metadata_extraction_and_version_info_handling() {
     // Strict DecodePolicy rejects has_real_merged_data = false
     let res_strict = PsdDecoderConfig::new()
         .job()
-        .with_policy(DecodePolicy::default().with_strict(true))
+        .try_with_policy(DecodePolicy::default().with_strict(true))
+        .unwrap()
         .decoder(Cow::Borrowed(psd.as_slice()), &[])
         .and_then(|d| d.decode());
     assert!(res_strict.is_err());
