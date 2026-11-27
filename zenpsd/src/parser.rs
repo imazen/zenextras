@@ -293,7 +293,7 @@ impl PsdHeader {
         {
             spec.color = ColorSpace::Icc {
                 profile: Arc::from(profile),
-                channels: 3,
+                color_channels: 3,
                 alpha: spec.color.alpha(),
                 intent: Default::default(),
             };

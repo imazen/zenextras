@@ -194,7 +194,7 @@ fn orientation_correct_decode_bakes_upright_pixels() {
     let (sw, sh) = STORED;
     for sy in 0..sh {
         for sx in 0..sw {
-            let (dx, dy) = Orientation::Rotate90.forward_map(sx, sy, sw, sh);
+            let (dx, dy) = Orientation::Rotate90.map_pixel_coordinates((sx, sy), (sw, sh));
             assert_eq!(
                 px(&out, dx, dy),
                 color_at(sx, sy),
@@ -238,7 +238,7 @@ fn orientation_exact_transform_ignores_exif() {
     let (sw, sh) = STORED;
     for sy in 0..sh {
         for sx in 0..sw {
-            let (dx, dy) = Orientation::FlipH.forward_map(sx, sy, sw, sh);
+            let (dx, dy) = Orientation::FlipH.map_pixel_coordinates((sx, sy), (sw, sh));
             assert_eq!(px(&out, dx, dy), color_at(sx, sy), "flipped ({sx},{sy})");
         }
     }
@@ -266,7 +266,7 @@ fn orientation_exact_transpose_swaps_axes_and_bakes() {
     let (sw, sh) = STORED;
     for sy in 0..sh {
         for sx in 0..sw {
-            let (dx, dy) = Orientation::Transpose.forward_map(sx, sy, sw, sh);
+            let (dx, dy) = Orientation::Transpose.map_pixel_coordinates((sx, sy), (sw, sh));
             assert_eq!(
                 px(&out, dx, dy),
                 color_at(sx, sy),
@@ -299,7 +299,7 @@ fn orientation_correct_and_transform_composes() {
     let (sw, sh) = STORED;
     for sy in 0..sh {
         for sx in 0..sw {
-            let (dx, dy) = net.forward_map(sx, sy, sw, sh);
+            let (dx, dy) = net.map_pixel_coordinates((sx, sy), (sw, sh));
             assert_eq!(
                 px(&out, dx, dy),
                 color_at(sx, sy),

@@ -169,7 +169,7 @@ fn roundtrip_rgb8_via_traits() {
     assert_eq!(decoded.width(), 8);
     assert_eq!(decoded.height(), 4);
     assert_eq!(
-        decoded.pixels().contiguous_bytes().unwrap().as_ref(),
+        decoded.pixels().to_contiguous_bytes().unwrap().as_ref(),
         original.as_view().as_contiguous_bytes().unwrap()
     );
 }
@@ -210,7 +210,7 @@ fn roundtrip_gray8_via_traits() {
     assert_eq!(decoded.width(), 4);
     assert_eq!(decoded.height(), 4);
     assert_eq!(
-        decoded.pixels().contiguous_bytes().unwrap().as_ref(),
+        decoded.pixels().to_contiguous_bytes().unwrap().as_ref(),
         original.as_view().as_contiguous_bytes().unwrap()
     );
 }
@@ -242,7 +242,7 @@ fn roundtrip_graya8_via_traits_stays_two_channel() {
     );
     assert_eq!(desc.layout.sample, zenpixels::SampleType::U8);
     assert_eq!(
-        decoded.pixels().contiguous_bytes().unwrap().as_ref(),
+        decoded.pixels().to_contiguous_bytes().unwrap().as_ref(),
         original.as_view().as_contiguous_bytes().unwrap(),
         "GrayAlpha8 pixels must round-trip byte-identically"
     );
@@ -299,7 +299,7 @@ fn roundtrip_graya8_with_metadata_stays_two_channel() {
     assert_eq!(desc.layout.order, zenpixels::ChannelOrder::GrayAlpha);
     assert_eq!(desc.layout.sample, zenpixels::SampleType::U8);
     assert_eq!(
-        decoded.pixels().contiguous_bytes().unwrap().as_ref(),
+        decoded.pixels().to_contiguous_bytes().unwrap().as_ref(),
         original.as_view().as_contiguous_bytes().unwrap()
     );
 }
@@ -528,7 +528,7 @@ fn metadata_web_policy_roundtrip_keeps_icc_orientation_strips_gps() {
     // Embedding metadata must not corrupt the pixels: the decoded image is
     // byte-identical to the source (orientation is metadata, not baked here).
     assert_eq!(
-        decoded.pixels().contiguous_bytes().unwrap().as_ref(),
+        decoded.pixels().to_contiguous_bytes().unwrap().as_ref(),
         buf.as_view().as_contiguous_bytes().unwrap(),
         "pixels must survive the metadata-embedding encode path unchanged"
     );
@@ -766,7 +766,7 @@ fn checked_preserve_exact_retains_supported_fields() {
     let pixels = [231, 66, 12, 17, 154, 199];
     let color = ColorSpace::Icc {
         profile: profile.into(),
-        channels: 3,
+        color_channels: 3,
         alpha: AlphaMode::None,
         intent: Default::default(),
     };
@@ -1081,7 +1081,7 @@ fn decode_bytes_under_pref(encoded: &[u8], pref: Option<zencodec::AllocPreferenc
         .unwrap()
         .into_buffer()
         .as_view()
-        .contiguous_bytes()
+        .to_contiguous_bytes()
         .unwrap()
         .into_owned()
 }

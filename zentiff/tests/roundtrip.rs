@@ -71,8 +71,8 @@ fn roundtrip_rgb8_lzw() {
     assert_eq!(output.pixels.format().layout.sample, SampleType::U8);
 
     // Lossless — pixel data should match exactly
-    let original = buf.as_view().contiguous_bytes().unwrap();
-    let decoded = output.pixels.as_view().contiguous_bytes().unwrap();
+    let original = buf.as_view().to_contiguous_bytes().unwrap();
+    let decoded = output.pixels.as_view().to_contiguous_bytes().unwrap();
     assert_eq!(original.as_ref(), decoded.as_ref());
 }
 
@@ -90,8 +90,8 @@ fn roundtrip_rgba8_deflate() {
     assert_eq!(output.pixels.format().layout.order, ChannelOrder::Rgba);
     assert_eq!(output.pixels.format().layout.sample, SampleType::U8);
 
-    let original = buf.as_view().contiguous_bytes().unwrap();
-    let decoded = output.pixels.as_view().contiguous_bytes().unwrap();
+    let original = buf.as_view().to_contiguous_bytes().unwrap();
+    let decoded = output.pixels.as_view().to_contiguous_bytes().unwrap();
     assert_eq!(original.as_ref(), decoded.as_ref());
 }
 
@@ -109,8 +109,8 @@ fn roundtrip_gray8_uncompressed() {
     assert_eq!(output.pixels.format().layout.order, ChannelOrder::Gray);
     assert_eq!(output.pixels.format().layout.sample, SampleType::U8);
 
-    let original = buf.as_view().contiguous_bytes().unwrap();
-    let decoded = output.pixels.as_view().contiguous_bytes().unwrap();
+    let original = buf.as_view().to_contiguous_bytes().unwrap();
+    let decoded = output.pixels.as_view().to_contiguous_bytes().unwrap();
     assert_eq!(original.as_ref(), decoded.as_ref());
 }
 
@@ -128,8 +128,8 @@ fn roundtrip_rgb16_packbits() {
     assert_eq!(output.pixels.format().layout.order, ChannelOrder::Rgb);
     assert_eq!(output.pixels.format().layout.sample, SampleType::U16);
 
-    let original = buf.as_view().contiguous_bytes().unwrap();
-    let decoded = output.pixels.as_view().contiguous_bytes().unwrap();
+    let original = buf.as_view().to_contiguous_bytes().unwrap();
+    let decoded = output.pixels.as_view().to_contiguous_bytes().unwrap();
     assert_eq!(original.as_ref(), decoded.as_ref());
 }
 
@@ -167,8 +167,8 @@ fn bigtiff_roundtrip() {
     assert_eq!(output.info.width, 32);
     assert_eq!(output.info.height, 32);
 
-    let original = buf.as_view().contiguous_bytes().unwrap();
-    let decoded = output.pixels.as_view().contiguous_bytes().unwrap();
+    let original = buf.as_view().to_contiguous_bytes().unwrap();
+    let decoded = output.pixels.as_view().to_contiguous_bytes().unwrap();
     assert_eq!(original.as_ref(), decoded.as_ref());
 }
 
@@ -248,8 +248,8 @@ fn roundtrip_graya8_stays_two_channel() {
     assert_eq!(output.pixels.format().layout.order, ChannelOrder::GrayAlpha);
     assert_eq!(output.pixels.format().layout.sample, SampleType::U8);
 
-    let original = buf.as_view().contiguous_bytes().unwrap();
-    let decoded = output.pixels.as_view().contiguous_bytes().unwrap();
+    let original = buf.as_view().to_contiguous_bytes().unwrap();
+    let decoded = output.pixels.as_view().to_contiguous_bytes().unwrap();
     assert_eq!(
         original.as_ref(),
         decoded.as_ref(),
@@ -273,8 +273,8 @@ fn roundtrip_graya16_stays_two_channel() {
     assert_eq!(output.pixels.format().layout.order, ChannelOrder::GrayAlpha);
     assert_eq!(output.pixels.format().layout.sample, SampleType::U16);
 
-    let original = buf.as_view().contiguous_bytes().unwrap();
-    let decoded = output.pixels.as_view().contiguous_bytes().unwrap();
+    let original = buf.as_view().to_contiguous_bytes().unwrap();
+    let decoded = output.pixels.as_view().to_contiguous_bytes().unwrap();
     assert_eq!(original.as_ref(), decoded.as_ref());
 }
 
@@ -296,8 +296,8 @@ fn roundtrip_grayaf32_stays_two_channel() {
     assert_eq!(output.pixels.format().layout.order, ChannelOrder::GrayAlpha);
     assert_eq!(output.pixels.format().layout.sample, SampleType::F32);
 
-    let original = buf.as_view().contiguous_bytes().unwrap();
-    let decoded = output.pixels.as_view().contiguous_bytes().unwrap();
+    let original = buf.as_view().to_contiguous_bytes().unwrap();
+    let decoded = output.pixels.as_view().to_contiguous_bytes().unwrap();
     assert_eq!(
         original.as_ref(),
         decoded.as_ref(),
@@ -315,7 +315,7 @@ fn graya8_encodes_smaller_than_rgba_widening() {
     let mut rgba_bytes = Vec::with_capacity(64 * 64 * 4);
     for chunk in graya
         .as_view()
-        .contiguous_bytes()
+        .to_contiguous_bytes()
         .unwrap()
         .as_chunks::<2>()
         .0
@@ -353,6 +353,6 @@ fn encode_1x1_pixel() {
     let output = decode(&encoded, &TiffDecodeConfig::default(), &Unstoppable).unwrap();
     assert_eq!(output.info.width, 1);
     assert_eq!(output.info.height, 1);
-    let decoded = output.pixels.as_view().contiguous_bytes().unwrap();
+    let decoded = output.pixels.as_view().to_contiguous_bytes().unwrap();
     assert_eq!(decoded.as_ref(), &[255u8, 0, 128]);
 }

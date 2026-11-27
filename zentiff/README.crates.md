@@ -57,7 +57,7 @@ let rgba = convert_to_buf_with_peak(
     &ConvertPolicy::permissive(),
     PeakSource::Measured,
 )?;
-let bytes = rgba.try_into_vec::<u8>()?;
+let bytes = rgba.into_vec::<u8>()?;
 ```
 
 ### Errors and limits (servers)

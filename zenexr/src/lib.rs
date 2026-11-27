@@ -165,7 +165,7 @@ impl ExrDecoderConfig {
         if let Some(white) = header
             .own_attributes
             .white_luminance
-            .and_then(DiffuseWhite::try_new)
+            .and_then(DiffuseWhite::new)
         {
             format = format.with_white(white);
         }

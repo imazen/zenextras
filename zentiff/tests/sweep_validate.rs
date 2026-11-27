@@ -100,7 +100,7 @@ fn sweep_cells_decode_exactly_and_steps_are_live() {
             let out = decode(&tif, &TiffDecodeConfig::default(), &enough::Unstoppable)
                 .unwrap_or_else(|e| panic!("UNDECODABLE {} on {}: {e:?}", cell.id, img.name));
             // …and roundtrip EXACTLY.
-            let decoded = out.pixels.as_view().contiguous_bytes().unwrap();
+            let decoded = out.pixels.as_view().to_contiguous_bytes().unwrap();
             if decoded.as_ref() != img.rgb.as_slice() {
                 failures.push(format!(
                     "LOSSLESS ROUNDTRIP MISMATCH: {} on {}",

@@ -490,7 +490,7 @@ mod tests {
             .expect("decoder construction succeeds")
             .decode()
             .expect("render succeeds");
-        out.pixels().contiguous_bytes().unwrap().into_owned()
+        out.pixels().to_contiguous_bytes().unwrap().into_owned()
     }
 
     /// Rendering the same SVG under all three allocation modes must produce

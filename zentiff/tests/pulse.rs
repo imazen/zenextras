@@ -118,8 +118,8 @@ const ARMS: [Arm; 4] = [Arm::Quiet, Arm::Reporting, Arm::Legacy, Arm::Erased];
 type Image = (u32, u32, PixelFormat, Vec<u8>);
 
 fn image(px: PixelView<'_>) -> Image {
-    let bytes = (0..px.rows()).flat_map(|y| px.row(y).to_vec()).collect();
-    (px.width(), px.rows(), px.format().clone(), bytes)
+    let bytes = (0..px.height()).flat_map(|y| px.row(y).to_vec()).collect();
+    (px.width(), px.height(), px.format().clone(), bytes)
 }
 
 /// Decodes `data` with `stop` installed through `arm`.

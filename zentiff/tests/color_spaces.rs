@@ -278,7 +278,7 @@ fn valid_rgb_and_gray_alpha_icc_profiles_describe_native_samples() {
             assert_eq!(out.pixels.origin().icc.as_deref(), want_icc);
             if tagged {
                 assert!(matches!(&out.pixels.format().color,
-                    ColorSpace::Icc { profile: active, channels: count, .. }
+                    ColorSpace::Icc { profile: active, color_channels: count, .. }
                     if active.as_ref() == profile && u16::from(*count) == channels));
             } else {
                 // Untagged TIFF leaves transfer unspecified. RGB uses the

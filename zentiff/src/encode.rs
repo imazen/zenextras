@@ -399,9 +399,9 @@ pub fn encode(
         )));
     }
     let width = pixels.width();
-    let height = pixels.rows();
+    let height = pixels.height();
     let data = pixels
-        .contiguous_bytes()
+        .to_contiguous_bytes()
         .map_err(|err| err.map_error(TiffError::from))?;
 
     let compression = config.compression.to_tiff()?;
@@ -451,9 +451,9 @@ pub(crate) fn encode_with_meta(
         )));
     }
     let width = pixels.width();
-    let height = pixels.rows();
+    let height = pixels.height();
     let data = pixels
-        .contiguous_bytes()
+        .to_contiguous_bytes()
         .map_err(|err| err.map_error(TiffError::from))?;
 
     let compression = config.compression.to_tiff()?;

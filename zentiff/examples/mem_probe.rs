@@ -48,8 +48,8 @@ fn main() {
     let cfg = zentiff::TiffDecodeConfig::none();
     let out = zentiff::decode(&data, &cfg, &Unstoppable).expect("decode");
 
-    // High-water mark immediately, before the contiguous_bytes() copy below can
-    // inflate it. VmHWM is monotonic, so this reflects the peak *during* decode.
+    // High-water mark immediately, before the contiguous view access below.
+    // VmHWM is monotonic, so this reflects the peak *during* decode.
     let peak_kb = status_kb("VmHWM:");
 
     let (w, h) = (out.info.width, out.info.height);

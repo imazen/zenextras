@@ -237,7 +237,7 @@ fn rgb_profile_describes_the_unmodified_samples() {
         assert_eq!(out.info().source_color.icc_profile.as_deref(), tag);
         if tag.is_some() {
             assert!(matches!(&px.format().color,
-                ColorSpace::Icc { profile: active, channels: 3, .. } if active.as_ref() == profile));
+                ColorSpace::Icc { profile: active, color_channels: 3, .. } if active.as_ref() == profile));
         } else {
             assert_eq!(px.format().color, ColorSpace::SRGB);
             assert_eq!(px.origin().unwrap().kind, OriginKind::Assumed);

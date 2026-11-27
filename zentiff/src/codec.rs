@@ -360,7 +360,7 @@ impl TiffCodecEncoder {
     fn check_limits(&self, pixels: &PixelView<'_>) -> Result<(), At<TiffError>> {
         if let Some(ref limits) = self.limits {
             let width = pixels.width();
-            let height = pixels.rows();
+            let height = pixels.height();
             let pixel_count = width as u64 * height as u64;
             if let Some(max_px) = limits.max_pixels
                 && pixel_count > max_px
@@ -1222,7 +1222,10 @@ mod tests {
 
         // Verify pixel data roundtrips
         let out_pixels = decoded.pixels();
-        assert_eq!(out_pixels.contiguous_bytes().unwrap().as_ref(), &pixels[..]);
+        assert_eq!(
+            out_pixels.to_contiguous_bytes().unwrap().as_ref(),
+            &pixels[..]
+        );
     }
 
     #[test]
@@ -1238,7 +1241,7 @@ mod tests {
         assert_eq!(decoded.width(), w);
         assert_eq!(decoded.height(), h);
         assert_eq!(
-            decoded.pixels().contiguous_bytes().unwrap().as_ref(),
+            decoded.pixels().to_contiguous_bytes().unwrap().as_ref(),
             &pixels[..]
         );
     }

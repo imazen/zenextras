@@ -148,8 +148,8 @@ const ARMS: [Arm; 4] = [Arm::Quiet, Arm::Reporting, Arm::Legacy, Arm::Erased];
 type Image = (u32, u32, Vec<u8>);
 
 fn image(px: zenpixels::PixelView<'_>) -> Image {
-    let bytes = (0..px.rows()).flat_map(|y| px.row(y).to_vec()).collect();
-    (px.width(), px.rows(), bytes)
+    let bytes = (0..px.height()).flat_map(|y| px.row(y).to_vec()).collect();
+    (px.width(), px.height(), bytes)
 }
 
 /// Decodes `data` with `stop` installed through `arm`.
@@ -235,7 +235,7 @@ fn an_unstopped_pulse_changes_nothing() {
     let view = native.pixels().as_view();
     let expected = (
         view.width(),
-        view.rows(),
+        view.height(),
         view.as_contiguous_bytes().unwrap().to_vec(),
     );
     assert_eq!(view.format(), &zenpixels::PixelFormat::RGB8_SRGB);

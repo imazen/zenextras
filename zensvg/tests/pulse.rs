@@ -109,8 +109,8 @@ type Image = (u32, u32, Vec<u8>);
 
 fn image(output: &zencodec::decode::DecodeOutput) -> Image {
     let px = output.pixels();
-    let bytes = (0..px.rows()).flat_map(|y| px.row(y).to_vec()).collect();
-    (px.width(), px.rows(), bytes)
+    let bytes = (0..px.height()).flat_map(|y| px.row(y).to_vec()).collect();
+    (px.width(), px.height(), bytes)
 }
 
 /// Renders the fixture with `stop` installed through `arm`.

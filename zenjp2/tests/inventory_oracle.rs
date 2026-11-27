@@ -411,7 +411,7 @@ fn corpus_unconsumed_bytes_do_not_change_pixels() {
             .and_then(|x| x.decode())
             .ok()?;
         let px = out.pixels();
-        let mut v: Vec<u8> = (0..px.rows()).flat_map(|y| px.row(y).to_vec()).collect();
+        let mut v: Vec<u8> = (0..px.height()).flat_map(|y| px.row(y).to_vec()).collect();
         v.extend_from_slice(
             out.info()
                 .source_color
@@ -516,7 +516,7 @@ fn corpus_planted_tile_slack_is_unconsumed() {
             .and_then(|x| x.decode())
             .ok()?;
         let px = out.pixels();
-        Some((0..px.rows()).flat_map(|y| px.row(y).to_vec()).collect())
+        Some((0..px.height()).flat_map(|y| px.row(y).to_vec()).collect())
     };
     let text = b"PLANT-SLACK: owner Jane Doe, serial 12345, appended after the last packet.";
     let (mut planted, mut packed) = (0, 0);
@@ -604,7 +604,7 @@ fn corpus_planted_ppt_header_slack() {
             .and_then(|x| x.decode())
             .ok()?;
         let px = out.pixels();
-        Some((0..px.rows()).flat_map(|y| px.row(y).to_vec()).collect())
+        Some((0..px.height()).flat_map(|y| px.row(y).to_vec()).collect())
     };
     let text = b"PPT-HEADER-SLACK: owner Jane Doe, serial 12345";
     let (mut unchanged, mut changed) = (Vec::new(), Vec::new());

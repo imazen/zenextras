@@ -34,7 +34,7 @@ fn bx(ty: &[u8; 4], payload: &[u8]) -> Vec<u8> {
 fn decode_bytes(data: &[u8]) -> (u32, u32, PixelFormat, Vec<u8>) {
     let out = decode(data, &[]);
     let px = out.pixels();
-    let bytes: Vec<u8> = (0..px.rows()).flat_map(|y| px.row(y).to_vec()).collect();
+    let bytes: Vec<u8> = (0..px.height()).flat_map(|y| px.row(y).to_vec()).collect();
     (out.width(), out.height(), px.format().clone(), bytes)
 }
 
@@ -250,7 +250,7 @@ fn non_srgb_icc_is_active_on_unchanged_rgb_codes() {
     let out = decode(&file, &[]);
     let raster = out.pixels();
     assert!(matches!(&raster.format().color,
-        ColorSpace::Icc { profile: active, channels: 3, alpha: zenpixels::AlphaMode::None, .. }
+        ColorSpace::Icc { profile: active, color_channels: 3, alpha: zenpixels::AlphaMode::None, .. }
         if active.as_ref() == profile));
     assert_eq!(raster.origin().unwrap().icc.as_deref(), Some(profile));
     assert_eq!(

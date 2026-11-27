@@ -551,13 +551,13 @@ fn pixel_spec(
     let color = match (icc, profile) {
         (Some(IccColorSpace::Gray), Some(profile)) if order.is_gray_family() => ColorSpace::Icc {
             profile: profile.clone(),
-            channels: 1,
+            color_channels: 1,
             alpha,
             intent: Default::default(),
         },
         (Some(IccColorSpace::Rgb), Some(profile)) if order.is_rgb_family() => ColorSpace::Icc {
             profile: profile.clone(),
-            channels: 3,
+            color_channels: 3,
             alpha,
             intent: Default::default(),
         },
@@ -589,7 +589,7 @@ fn pixel_spec(
             ColorSpace::SRGB.with_alpha(alpha).with_transfer(transfer)
         }
         _ => ColorSpace::Untagged {
-            channels: order.channels() as u8,
+            total_channels: order.channels() as u8,
             alpha,
         },
     };

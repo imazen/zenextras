@@ -139,7 +139,7 @@ fn windows_chromaticities_and_luminance_metadata_are_retained() {
     } if actual == expected));
     assert_eq!(
         decoded.pixels().format().color.white(),
-        Some(DiffuseWhite::new(203.0))
+        Some(DiffuseWhite::new_or_panic(203.0))
     );
     // No exposure scaling, primary conversion, unpremultiplication or canvas padding.
     let ordinary = config
@@ -379,7 +379,7 @@ fn ap0_chromaticities_keep_the_aces_matrix_and_sample_bits() {
         panic!("expected linear AP0 sample meaning")
     };
     assert_eq!(transfer, zenpixels::Transfer::Linear);
-    assert_eq!(white, Some(DiffuseWhite::new(203.0)));
+    assert_eq!(white, Some(DiffuseWhite::new_or_panic(203.0)));
     assert_eq!(actual, CustomPrimaries::ACES_AP0);
     let matrix = Primaries::Custom(actual).rgb_to_xyz_f64().unwrap();
     // SMPTE ST 2065-1 AP0 to XYZ, with the ACES white point.

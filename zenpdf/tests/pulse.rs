@@ -107,8 +107,8 @@ type Page = (u32, u32, Vec<u8>);
 
 fn page(output: &zencodec::decode::DecodeOutput) -> Page {
     let px = output.pixels();
-    let bytes = (0..px.rows()).flat_map(|y| px.row(y).to_vec()).collect();
-    (px.width(), px.rows(), bytes)
+    let bytes = (0..px.height()).flat_map(|y| px.row(y).to_vec()).collect();
+    (px.width(), px.height(), bytes)
 }
 
 /// Decodes the fixture's first page with `stop` installed through `arm`.
@@ -202,8 +202,8 @@ fn an_unstopped_pulse_changes_nothing() {
     let px = native.buffer.as_view();
     let expected: Page = (
         px.width(),
-        px.rows(),
-        (0..px.rows()).flat_map(|y| px.row(y).to_vec()).collect(),
+        px.height(),
+        (0..px.height()).flat_map(|y| px.row(y).to_vec()).collect(),
     );
     let plain = PdfDecoderConfig::new()
         .job()

@@ -1239,7 +1239,7 @@ pub(crate) fn descriptor_for_info(info: &TiffInfo) -> Result<PixelFormat> {
     if let Some(icc) = &info.icc_profile
         && let Some(class) = icc_color_space(icc)
     {
-        let channels = match class {
+        let color_channels = match class {
             IccColorSpace::Gray if spec.layout.order.is_gray_family() => 1,
             IccColorSpace::Rgb
                 if spec.layout.order.is_rgb_family()
@@ -1255,7 +1255,7 @@ pub(crate) fn descriptor_for_info(info: &TiffInfo) -> Result<PixelFormat> {
         let alpha = spec.color.alpha();
         spec.color = ColorSpace::Icc {
             profile: Arc::from(icc.as_slice()),
-            channels,
+            color_channels,
             alpha,
             intent: RenderingIntent::RelativeColorimetric,
         };
