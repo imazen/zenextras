@@ -1,0 +1,36 @@
+[package]
+name = "zenvp9"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+license = "AGPL-3.0-only OR LicenseRef-Imazen-Commercial"
+repository = "https://github.com/imazen/zenextras"
+publish = false
+description = "Pure-Rust VP9 uncompressed header/superframe parser (#![no_std]) and zencodec-media VP9 video decoder/encoder sessions"
+categories = ["multimedia::video"]
+keywords = ["vp9", "video", "codec", "webm", "mp4", "no-std"]
+include = ["/src/**", "/README.md", "/LICENSE*"]
+
+[features]
+default = ["std", "rusty-vp9-std", "media"]
+std = ["zencodec?/std"]
+rusty-vp9-std = ["std", "dep:rusty_vp9"]
+media = ["dep:enough", "dep:zencodec", "dep:zencodec-media", "dep:zenpixels"]
+
+[dependencies]
+enough = { version = "0.4.5", default-features = false, optional = true }
+rusty_vp9 = { version = "=0.3.0", optional = true }
+zencodec = { version = ">=0.3.0, <0.5.0", default-features = false, optional = true }
+zencodec-media = { version = "0.2.0", optional = true }
+zenpixels = { version = ">=0.5.0, <0.6.0", default-features = false, optional = true }
+
+[dev-dependencies]
+zencodec = { version = ">=0.3.0, <0.5.0" }
+zencodec-media = { version = "0.2.0" }
+zencodec-media-testkit = { version = "0.2.0" }
+zenivf = { path = "../zenivf" }
+zenwebm = { path = "../zenwebm" }
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"

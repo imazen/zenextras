@@ -1,19 +1,24 @@
 //! The sans-I/O WebM reader.
 
+use alloc::boxed::Box;
 use alloc::collections::VecDeque;
 use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
 
-use zencodec::Cicp;
+use zencodec::source::{NativeBound, SourceAccess};
 use zencodec::time::{FrameDuration, TimeBase, Timestamp};
+use zencodec::{Cicp, JobResources};
 use zencodec_media::container::{
-    AccessPattern, DemuxEvent, DemuxProgress, Demuxer, Input, InputRequest, SeekMode, SeekResult,
-    SeekStatus, SeekTarget,
+    AccessPattern, DemuxEvent, DemuxProgress, Demuxer, DynDemuxer, Input, InputRequest, SeekMode,
+    SeekOffer, SeekResult, SeekStatus, SeekTarget, SeekableDemuxer, erase_seekable_demuxer,
 };
 use zencodec_media::limits::{MediaLimitExceeded, MediaLimits};
 use zencodec_media::packet::{Discard, Packet, PacketAddition, PacketPayload, RandomAccess};
+use zencodec_media::registry::{
+    ContainerId, ContainerProbe, DemuxFactory, DemuxNeeds, DemuxOffer, MediaError, ProbeLimits,
+};
 use zencodec_media::session::{SessionError, UnsupportedMedia};
 use zencodec_media::track::{AudioTrackInfo, ChannelOrder, TrackInfo, TrackKind, VideoTrackInfo};
 
@@ -1134,5 +1139,232 @@ impl Demuxer for WebmDemuxer {
         });
         self.state = State::Scanning;
         Ok(SeekStatus::Scanning)
+    }
+}
+
+impl SeekableDemuxer for WebmDemuxer {
+    fn seek_offer(&self, target: &SeekTarget) -> Res<SeekOffer> {
+        if !self.headers_sent {
+            return err(WebmError::HeadersFirst);
+        }
+        if target.track as usize >= self.tracks.len() {
+            return err(WebmError::NoSuchFrame);
+        }
+        if self.index_complete {
+            let e = self.pick(target)?;
+            let landing = SeekResult::new(
+                Timestamp::new(e.pts, self.time_base),
+                e.ordinal,
+                if e.key {
+                    RandomAccess::Yes
+                } else {
+                    RandomAccess::No
+                },
+                0,
+            );
+            return Ok(
+                SeekOffer::new(AccessPattern::RandomAccess, NativeBound::Exact(0))
+                    .with_landing_estimate(landing)
+                    .with_requires_index(false),
+            );
+        }
+        Ok(
+            SeekOffer::new(AccessPattern::RandomAccess, NativeBound::Unknown)
+                .with_requires_index(true),
+        )
+    }
+
+    fn begin_seek(
+        &mut self,
+        target: &SeekTarget,
+        pulse: Option<&dyn zencodec::Pulse>,
+    ) -> Res<SeekStatus> {
+        if let Some(p) = pulse {
+            p.check()?;
+        }
+        self.seek(target)
+    }
+}
+
+/// Shareable [`DemuxFactory`] for WebM / Matroska containers backed by [`WebmDemuxer`].
+#[derive(Clone, Debug)]
+pub struct WebmDemuxFactory {
+    limits: MediaLimits,
+}
+
+impl Default for WebmDemuxFactory {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl WebmDemuxFactory {
+    /// Create a factory using [`MediaLimits::DEFAULT`].
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            limits: MediaLimits::DEFAULT,
+        }
+    }
+
+    /// Create a factory with custom [`MediaLimits`].
+    #[must_use]
+    pub const fn with_limits(limits: MediaLimits) -> Self {
+        Self { limits }
+    }
+
+    fn effective_limits(&self, run: &JobResources) -> MediaLimits {
+        let mut limits = self.limits;
+        if let Some(mem) = run.limits().max_memory_bytes {
+            limits.max_header_bytes = limits.max_header_bytes.min(mem);
+            let pkt = usize::try_from(mem).unwrap_or(usize::MAX);
+            if pkt < limits.max_packet_bytes {
+                limits.max_packet_bytes = pkt;
+            }
+        }
+        if let Some(max_in) = run.limits().max_input_bytes {
+            let pkt = usize::try_from(max_in).unwrap_or(usize::MAX);
+            if pkt < limits.max_packet_bytes {
+                limits.max_packet_bytes = pkt;
+            }
+        }
+        limits
+    }
+}
+
+impl DemuxFactory for WebmDemuxFactory {
+    fn probe(&self, input: Input<'_>, caps: &ProbeLimits) -> Result<ContainerProbe, MediaError> {
+        if input.offset != 0 || caps.max_boxes == 0 {
+            return Ok(ContainerProbe::NoMatch);
+        }
+        let max_bytes = caps.max_probe_bytes;
+        if max_bytes < 4 {
+            return Ok(ContainerProbe::NoMatch);
+        }
+        let b = &input.bytes[..input.bytes.len().min(max_bytes)];
+        if b.len() < 4 {
+            return if input.reaches_end() {
+                Ok(ContainerProbe::NoMatch)
+            } else {
+                Ok(ContainerProbe::Need {
+                    min_bytes: 32usize.min(max_bytes),
+                })
+            };
+        }
+        if b[..4] != [0x1A, 0x45, 0xDF, 0xA3] {
+            return Ok(ContainerProbe::NoMatch);
+        }
+        let h = match ebml::header(b) {
+            Ok(Some(h)) => h,
+            Ok(None) => {
+                return if input.reaches_end() || b.len() >= max_bytes {
+                    Ok(ContainerProbe::NoMatch)
+                } else {
+                    Ok(ContainerProbe::Need {
+                        min_bytes: 64usize.min(max_bytes),
+                    })
+                };
+            }
+            Err(_) => return Ok(ContainerProbe::NoMatch),
+        };
+        if h.id != id::EBML {
+            return Ok(ContainerProbe::NoMatch);
+        }
+        let Some(total) = h.total() else {
+            return Ok(ContainerProbe::NoMatch);
+        };
+        let Ok(total_usize) = usize::try_from(total) else {
+            return Ok(ContainerProbe::NoMatch);
+        };
+        if total_usize > max_bytes {
+            return Ok(ContainerProbe::NoMatch);
+        }
+        if b.len() < total_usize {
+            return if input.reaches_end() {
+                Ok(ContainerProbe::NoMatch)
+            } else {
+                Ok(ContainerProbe::Need {
+                    min_bytes: total_usize,
+                })
+            };
+        }
+        let body = &b[h.len..total_usize];
+        let mut doc = None;
+        let mut boxes_seen = 1u32;
+        let mut iter = ebml::children(body);
+        loop {
+            if iter.is_empty() {
+                break;
+            }
+            // Check box budget BEFORE parsing the next child element header.
+            if boxes_seen >= caps.max_boxes {
+                return Ok(ContainerProbe::NoMatch);
+            }
+            let Some(child) = iter.next() else {
+                break;
+            };
+            boxes_seen = boxes_seen.saturating_add(1);
+            let Ok((cid, p)) = child else {
+                return Ok(ContainerProbe::NoMatch);
+            };
+            if cid == id::DOC_TYPE {
+                doc = Some(p);
+            }
+        }
+        match doc {
+            Some(b"webm") | Some(b"matroska") => Ok(ContainerProbe::Confirmed {
+                container: ContainerId::Webm,
+                confidence: 95,
+            }),
+            _ => Ok(ContainerProbe::NoMatch),
+        }
+    }
+
+    fn quote(
+        &self,
+        need: &DemuxNeeds,
+        source: &SourceAccess,
+        run: &JobResources,
+    ) -> Result<DemuxOffer, MediaError> {
+        run.check_stop()?;
+        if run.limits().max_memory_bytes == Some(0) {
+            return Err(MediaError::Invalid(
+                "WebM demuxer refused zero memory limit",
+            ));
+        }
+        if need.immutable_replay_required && !source.immutable {
+            return Err(MediaError::Unsupported(UnsupportedMedia::Seek));
+        }
+        let access = if need.seek.is_some() {
+            if source.access_pattern != AccessPattern::RandomAccess {
+                return Err(MediaError::Unsupported(UnsupportedMedia::Seek));
+            }
+            AccessPattern::RandomAccess
+        } else {
+            AccessPattern::Sequential
+        };
+        let mut offer =
+            DemuxOffer::new(ContainerId::Webm, access).with_workspace(NativeBound::Unknown);
+        if need.seek.is_some() {
+            offer = offer.with_seek_offer(
+                SeekOffer::new(AccessPattern::RandomAccess, NativeBound::Unknown)
+                    .with_requires_index(true),
+            );
+        }
+        Ok(offer)
+    }
+
+    fn open(
+        &self,
+        offer: &DemuxOffer,
+        run: &JobResources,
+    ) -> Result<Box<dyn DynDemuxer + Send>, MediaError> {
+        run.check_stop()?;
+        if offer.container != ContainerId::Webm {
+            return Err(MediaError::Unsupported(UnsupportedMedia::Container));
+        }
+        Ok(erase_seekable_demuxer(WebmDemuxer::new(
+            self.effective_limits(run),
+        )))
     }
 }
