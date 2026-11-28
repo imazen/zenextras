@@ -35,5 +35,5 @@ let info = probe(&data).unwrap();
 println!("{}x{} {:?}", info.header.width, info.header.height, info.header.color_mode);
 
 let image = decode(&data).unwrap();
-println!("decoded {}x{} ({:?})", image.pixels().width(), image.pixels().height(), image.pixels().descriptor());
+println!("decoded {}x{} ({:?})", image.pixels().width(), image.pixels().height(), image.pixels().format());
 ```

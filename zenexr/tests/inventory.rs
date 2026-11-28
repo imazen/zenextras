@@ -113,8 +113,8 @@ fn decoded(bytes: &[u8]) -> Result<Decoded, String> {
             Ok(Decoded {
                 width: pixels.width(),
                 height: pixels.height(),
-                descriptor: format!("{:?}", pixels.descriptor()),
-                pixels: pixels.copy_to_contiguous_bytes(),
+                descriptor: format!("{:?}", pixels.format()),
+                pixels: pixels.as_view().as_contiguous_bytes().unwrap().to_vec(),
             })
         }
     }
@@ -633,6 +633,7 @@ fn attributes_fixture(compression: Compression) -> Vec<u8> {
         perforations_per_count: 20,
     });
     layer.software_name = Some(Text::from("SOFTWARE-zenexr test"));
+    layer.white_luminance = Some(203.0);
     layer.other.insert(
         Text::from("cameraSerial"),
         AttributeValue::Text(Text::from("SN-PRIVATE-0042")),
@@ -727,11 +728,13 @@ fn attributes_fixture_dispositions() {
                 .unwrap()
                 .contains("SN-PRIVATE-0042")
         );
-        let chroma = find(&inv, "chromaticities")[0];
-        assert_eq!(
-            chroma.disposition(),
-            Disposition::Metadata(MetadataKind::Colour)
-        );
+        for tag in ["chromaticities", "whiteLuminance"] {
+            assert_eq!(
+                find(&inv, tag)[0].disposition(),
+                Disposition::Metadata(MetadataKind::Colour),
+                "{tag}"
+            );
+        }
         let long = find(&inv, "a custom attribute name longer than thirty-two bytes");
         assert_eq!(long.len(), 1, "{inv}");
         let m = mutate_both_directions(&bytes);

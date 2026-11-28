@@ -18,12 +18,12 @@ extern crate alloc;
 use alloc::borrow::Cow;
 
 use whereat::At;
-use zencodec::decode::{DecodeCapabilities, DecodeOutput, DecodePolicy, OutputInfo};
+use zencodec::decode::{DecodeCapabilities, DecodeOutput, OutputInfo};
 use zencodec::{
     CodecError, ImageFormat, ImageFormatDefinition, ImageInfo, ImageSequence, ResourceLimits,
     SharedPulse, Unsupported, UnsupportedOperation,
 };
-use zenpixels::{PixelBuffer, PixelDescriptor};
+use zenpixels::PixelFormat;
 
 use crate::alloc_util::AllocPref;
 use crate::error::PdfError;
@@ -147,7 +147,7 @@ impl Default for PdfDecoderConfig {
     }
 }
 
-static DECODE_DESCRIPTORS: &[PixelDescriptor] = &[PixelDescriptor::RGBA8_SRGB];
+static DECODE_DESCRIPTORS: &[PixelFormat] = &[PixelFormat::RGBA8_SRGB];
 
 impl zencodec::decode::DecoderConfig for PdfDecoderConfig {
     type Error = At<CodecError>;
@@ -157,7 +157,7 @@ impl zencodec::decode::DecoderConfig for PdfDecoderConfig {
         &PDF_FORMATS
     }
 
-    fn supported_descriptors() -> &'static [PixelDescriptor] {
+    fn supported_pixel_formats() -> &'static [PixelFormat] {
         DECODE_DESCRIPTORS
     }
 
@@ -174,7 +174,7 @@ impl zencodec::decode::DecoderConfig for PdfDecoderConfig {
     /// transparency groups), not just the output width × height. The output
     /// raster is a firm lower bound — the final RGBA8 buffer is W × H × 4 — and
     /// zenpdf's `pixmap_to_buffer` briefly holds the hayro pixmap and the
-    /// converted [`PixelBuffer`] concurrently (≈ 2× the raster). On top of that,
+    /// converted [`zenpixels::PixelBuf`] concurrently (≈ 2× the raster). On top of that,
     /// this estimate budgets a generous working-set multiple for the parsed
     /// document and embedded resources, and reports a wide `peak_max`.
     /// Rendering is single-threaded. Treat the numbers as a structural floor,
@@ -197,7 +197,7 @@ impl zencodec::decode::DecoderConfig for PdfDecoderConfig {
         // slower per output pixel than a block decode and varies with content.
         let time_ms = (image.pixels() as f64 / 25_000.0) as u64;
         ResourceEstimate::new(typ, time_ms)
-            .with_peak_max(output.saturating_mul(8).saturating_add(fixed))
+            .with_peak_memory_bytes_max(output.saturating_mul(8).saturating_add(fixed))
             .with_threading(ThreadingInformation::SERIAL)
             .at_cores(compute.cores())
     }
@@ -251,7 +251,7 @@ impl PdfDecodeJob {
             (0.0, 0.0)
         };
         let (w, h) = compute_output_dims(&self.config.bounds, page_w, page_h)?;
-        let info = OutputInfo::full_decode(w, h, PixelDescriptor::RGBA8_SRGB);
+        let info = OutputInfo::full_decode(w, h, PixelFormat::RGBA8_SRGB);
         self.check_limits_on_output(&info)?;
         Ok(SelectedPage {
             page,
@@ -303,10 +303,6 @@ impl<'a> zencodec::decode::DecodeJob<'a> for PdfDecodeJob {
 
     fn with_limits(mut self, limits: ResourceLimits) -> Self {
         self.limits = limits;
-        self
-    }
-
-    fn with_policy(self, _policy: DecodePolicy) -> Self {
         self
     }
 
@@ -376,7 +372,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for PdfDecodeJob {
     fn decoder(
         self,
         data: Cow<'a, [u8]>,
-        _preferred: &[PixelDescriptor],
+        _preferred: &[PixelFormat],
     ) -> Result<PdfDecoder, At<CodecError>> {
         self.check_input_size(&data)?;
         check_pulse(&self.pulse)?;
@@ -405,7 +401,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for PdfDecodeJob {
         self,
         data: Cow<'a, [u8]>,
         sink: &mut dyn zencodec::decode::DecodeRowSink,
-        preferred: &[PixelDescriptor],
+        preferred: &[PixelFormat],
     ) -> Result<OutputInfo, At<CodecError>> {
         zencodec::helpers::copy_decode_to_sink(self, data, sink, preferred, |e| {
             PdfError::Sink(e).into()
@@ -415,7 +411,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for PdfDecodeJob {
     fn streaming_decoder(
         self,
         _data: Cow<'a, [u8]>,
-        _preferred: &[PixelDescriptor],
+        _preferred: &[PixelFormat],
     ) -> Result<Unsupported<At<CodecError>>, At<CodecError>> {
         Err(PdfError::Unsupported(UnsupportedOperation::RowLevelDecode).into())
     }
@@ -423,7 +419,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for PdfDecodeJob {
     fn animation_frame_decoder(
         self,
         _data: Cow<'a, [u8]>,
-        _preferred: &[PixelDescriptor],
+        _preferred: &[PixelFormat],
     ) -> Result<Unsupported<At<CodecError>>, At<CodecError>> {
         Err(PdfError::Unsupported(UnsupportedOperation::AnimationDecode).into())
     }
@@ -433,7 +429,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for PdfDecodeJob {
     /// file is offered. A PDF's cross-reference table sits at the end of the file.
     fn dyn_incremental_decoder(
         self,
-        preferred: &[PixelDescriptor],
+        preferred: &[PixelFormat],
     ) -> Result<
         alloc::boxed::Box<zencodec::decode::DynIncrementalDecoder>,
         zencodec::decode::BoxedError,
@@ -500,8 +496,7 @@ impl zencodec::decode::Decode for PdfDecoder {
                 random_access: true,
             });
 
-        let pixels: PixelBuffer = rendered.buffer.erase();
-        Ok(DecodeOutput::new(pixels, info))
+        Ok(DecodeOutput::new(rendered.buffer, info))
     }
 }
 

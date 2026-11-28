@@ -3,12 +3,12 @@ use std::borrow::Cow;
 use zencodec::Metadata;
 use zencodec::decode::{Decode, DecodeJob, DecodePolicy, DecoderConfig};
 use zencodec::encode::{EncodeJob, EncodePolicy, EncoderConfig};
-use zenpixels::{PixelDescriptor, PixelSlice};
+use zenpixels::PixelView;
 use zentiff::codec::{TiffDecoderCodecConfig as D, TiffEncoderCodecConfig as E};
 #[test]
 fn strided_fixture_policy_and_inventory_contracts() {
     let bytes = [1, 2, 3, 4, 5, 6, 255, 255, 255, 7, 8, 9, 10, 11, 12];
-    let pixels = PixelSlice::new(&bytes, 2, 2, 9, PixelDescriptor::RGB8_SRGB).unwrap();
+    let pixels = PixelView::new(&bytes, 2, 2, 9, &zenpixels::formats::RGB8_SRGB).unwrap();
     let encoded = E::new().job().encode(pixels.clone()).unwrap();
     let expected = D::new()
         .job()
@@ -19,7 +19,8 @@ fn strided_fixture_policy_and_inventory_contracts() {
         .metadata();
     for (policy, accepted) in [
         (EncodePolicy::none(), true),
-        (EncodePolicy::strip_all(), false),
+        (EncodePolicy::strip_all(), true),
+        (EncodePolicy::none().with_strict(true), false),
     ] {
         zencodec_testkit::check_encode_policy_admission(
             E::new(),
@@ -35,7 +36,14 @@ fn strided_fixture_policy_and_inventory_contracts() {
     }
     for (policy, accepted) in [
         (DecodePolicy::none(), true),
-        (DecodePolicy::strict(), false),
+        (
+            DecodePolicy::none()
+                .with_allow_icc(false)
+                .with_allow_exif(false)
+                .with_allow_xmp(false),
+            true,
+        ),
+        (DecodePolicy::untrusted_minimal(), false),
     ] {
         zencodec_testkit::check_decode_policy_admission(
             D::new(),

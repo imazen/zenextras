@@ -122,7 +122,6 @@ fn every_stop_poll_retains_a_one_shot_timeout() {
 
 #[cfg(feature = "inventory")]
 #[test]
-#[allow(deprecated)] // Exercises the legacy best-effort policy setter on purpose.
 fn configured_icc_suppression_changes_inventory_disposition() {
     use zencodec::decode::DecodePolicy;
     use zencodec::inventory::{Disposition, MetadataKind};
@@ -147,7 +146,8 @@ fn configured_icc_suppression_changes_inventory_disposition() {
     let policy = DecodePolicy::default().with_allow_icc(false);
     let filtered = Jp2DecoderConfig::new()
         .job()
-        .with_policy(policy)
+        .try_with_policy(policy)
+        .unwrap()
         .inventory(&input)
         .unwrap();
     let selected: Vec<_> = normal

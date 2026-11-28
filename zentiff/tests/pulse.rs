@@ -1,5 +1,5 @@
 //! The job's pulse governs TIFF decodes and encodes, however it reaches the
-//! job: a pulse that cannot report, one that can, the legacy `with_stop`, and
+//! job: a pulse that cannot report, one that can, and
 //! the type-erased job's `set_pulse`.
 //! - A stop raised before the operation refuses it, with its reason.
 //! - A one-shot stop at any later poll still ends it with its reason: the poll
@@ -13,7 +13,6 @@
 //!   JPEG chunk, and zenjpeg polls inside each chunk's decode.
 //! - An unstopped pulse leaves the output byte-identical to the native API's.
 #![cfg(feature = "zencodec")]
-#![allow(deprecated)] // The legacy `with_stop` arm, on purpose.
 
 use std::borrow::Cow;
 use std::sync::Arc;
@@ -26,7 +25,7 @@ use zencodec::how_far::{
     Child, Execution, PhaseSpec, PlanError, Pulse, Report, SharedPulse, StopOnly, Total,
 };
 use zencodec::{CategorizedError as _, CodecErrorExt as _, ErrorCategory};
-use zenpixels::{PixelBuffer, PixelDescriptor, PixelSlice};
+use zenpixels::{PixelBuf, PixelFormat, PixelView};
 use zentiff::codec::{TiffDecoderCodecConfig, TiffEncoderCodecConfig};
 use zentiff::{TiffDecodeConfig, TiffEncodeConfig};
 
@@ -38,9 +37,9 @@ const DECODE_CHECKPOINTS: usize = 2;
 /// the pixels are gathered, before image-tiff compresses and writes them.
 const ENCODE_CHECKPOINTS: usize = 2;
 
-fn rgb8(w: u32, h: u32) -> PixelBuffer {
+fn rgb8(w: u32, h: u32) -> PixelBuf {
     let data = (0..w * h * 3).map(|i| (i * 7 % 251) as u8).collect();
-    PixelBuffer::from_vec(data, w, h, PixelDescriptor::RGB8_SRGB).unwrap()
+    PixelBuf::from_typed(data, w, h, PixelFormat::RGB8_SRGB).unwrap()
 }
 
 /// Counts its polls; poll number `at` (from 0) returns `reason` and every
@@ -107,19 +106,17 @@ enum Arm {
     Quiet,
     /// `with_pulse`, with a pulse that can report.
     Reporting,
-    /// The deprecated `with_stop`.
-    Legacy,
     /// `set_pulse` on the type-erased job.
     Erased,
 }
 
-const ARMS: [Arm; 4] = [Arm::Quiet, Arm::Reporting, Arm::Legacy, Arm::Erased];
+const ARMS: [Arm; 3] = [Arm::Quiet, Arm::Reporting, Arm::Erased];
 
-type Image = (u32, u32, PixelDescriptor, Vec<u8>);
+type Image = (u32, u32, PixelFormat, Vec<u8>);
 
-fn image(px: PixelSlice<'_>) -> Image {
-    let bytes = (0..px.rows()).flat_map(|y| px.row(y).to_vec()).collect();
-    (px.width(), px.rows(), px.descriptor(), bytes)
+fn image(px: PixelView<'_>) -> Image {
+    let bytes = (0..px.height()).flat_map(|y| px.row(y).to_vec()).collect();
+    (px.width(), px.height(), px.format().clone(), bytes)
 }
 
 /// Decodes `data` with `stop` installed through `arm`.
@@ -139,7 +136,7 @@ fn decode(data: &[u8], arm: Arm, stop: AtPoll) -> Result<Image, ErrorCategory> {
     let job = match arm {
         Arm::Quiet => job.with_pulse(SharedPulse::new(StopOnly::new(stop))),
         Arm::Reporting => job.with_pulse(SharedPulse::new(Reporting(stop))),
-        _ => job.with_stop(zencodec::StopToken::new(stop)),
+        Arm::Erased => unreachable!(),
     };
     job.decoder(Cow::Borrowed(data), &[])
         .and_then(|d| d.decode())
@@ -148,7 +145,7 @@ fn decode(data: &[u8], arm: Arm, stop: AtPoll) -> Result<Image, ErrorCategory> {
 }
 
 /// Encodes `pixels` with `stop` installed through `arm`.
-fn encode(pixels: PixelSlice<'_>, arm: Arm, stop: AtPoll) -> Result<Vec<u8>, ErrorCategory> {
+fn encode(pixels: PixelView<'_>, arm: Arm, stop: AtPoll) -> Result<Vec<u8>, ErrorCategory> {
     let config = TiffEncoderCodecConfig::new();
     if let Arm::Erased = arm {
         let dynamic: &dyn DynEncoderConfig = &config;
@@ -164,7 +161,7 @@ fn encode(pixels: PixelSlice<'_>, arm: Arm, stop: AtPoll) -> Result<Vec<u8>, Err
     let job = match arm {
         Arm::Quiet => job.with_pulse(SharedPulse::new(StopOnly::new(stop))),
         Arm::Reporting => job.with_pulse(SharedPulse::new(Reporting(stop))),
-        _ => job.with_stop(zencodec::StopToken::new(stop)),
+        Arm::Erased => unreachable!(),
     };
     job.encoder()
         .and_then(|e| e.encode(pixels))
@@ -172,9 +169,9 @@ fn encode(pixels: PixelSlice<'_>, arm: Arm, stop: AtPoll) -> Result<Vec<u8>, Err
         .map_err(|e| e.category())
 }
 
-fn native_tiff(pixels: &PixelBuffer) -> Vec<u8> {
+fn native_tiff(pixels: &PixelBuf) -> Vec<u8> {
     zentiff::encode(
-        &pixels.as_slice(),
+        &pixels.as_view(),
         &TiffEncodeConfig::default(),
         &Unstoppable,
     )
@@ -194,7 +191,7 @@ fn a_stopped_job_decodes_and_encodes_nothing() {
                 "decode {arm:?} {reason:?}"
             );
             assert_eq!(
-                encode(pixels.as_slice(), arm, AtPoll::new(0, reason)).map(|_| ()),
+                encode(pixels.as_view(), arm, AtPoll::new(0, reason)).map(|_| ()),
                 stopped,
                 "encode {arm:?} {reason:?}"
             );
@@ -223,7 +220,7 @@ fn every_poll_keeps_a_one_shot_stop() {
             );
         }
         let unstopped = AtPoll::new(usize::MAX, StopReason::TimedOut);
-        encode(pixels.as_slice(), arm, unstopped.clone()).expect("an unstopped encode");
+        encode(pixels.as_view(), arm, unstopped.clone()).expect("an unstopped encode");
         assert_eq!(
             unstopped.polls(),
             ENCODE_CHECKPOINTS,
@@ -231,12 +228,7 @@ fn every_poll_keeps_a_one_shot_stop() {
         );
         for at in 0..ENCODE_CHECKPOINTS {
             assert_eq!(
-                encode(
-                    pixels.as_slice(),
-                    arm,
-                    AtPoll::new(at, StopReason::TimedOut)
-                )
-                .map(|_| ()),
+                encode(pixels.as_view(), arm, AtPoll::new(at, StopReason::TimedOut)).map(|_| ()),
                 timed_out,
                 "encode {arm:?} poll {at} of {ENCODE_CHECKPOINTS}"
             );
@@ -254,7 +246,7 @@ fn strip_pages_poll_only_between_native_calls() {
             let decoded = AtPoll::new(usize::MAX, StopReason::TimedOut);
             decode(&tiff, arm, decoded.clone()).expect("an unstopped decode");
             let encoded = AtPoll::new(usize::MAX, StopReason::TimedOut);
-            encode(pixels.as_slice(), arm, encoded.clone()).expect("an unstopped encode");
+            encode(pixels.as_view(), arm, encoded.clone()).expect("an unstopped encode");
             println!(
                 "{arm:?} {w}x{h}: decode {} polls, encode {} polls",
                 decoded.polls(),
@@ -275,13 +267,20 @@ fn an_unstopped_pulse_changes_nothing() {
     let pixels = rgb8(64, 48);
     let tiff = native_tiff(&pixels);
     let native = zentiff::decode(&tiff, &TiffDecodeConfig::default(), &Unstoppable).unwrap();
-    let expected = image(native.pixels.as_slice());
+    let expected = image(native.pixels.as_view());
+    assert!(matches!(
+        expected.2.color,
+        zenpixels::ColorSpace::Rgb {
+            transfer: zenpixels::Transfer::Unknown,
+            ..
+        }
+    ));
     // TIFF carries no transfer function, so the decode labels it unknown;
     // the samples come back exactly.
-    let (w, h, _, bytes) = image(pixels.as_slice());
+    let (w, h, _, bytes) = image(pixels.as_view());
     assert_eq!(
-        (expected.0, expected.1, expected.2.format, &expected.3),
-        (w, h, PixelDescriptor::RGB8_SRGB.format, &bytes),
+        (expected.0, expected.1, expected.2.layout, &expected.3),
+        (w, h, PixelFormat::RGB8_SRGB.layout, &bytes),
         "lossless round trip"
     );
     for arm in ARMS {
@@ -293,7 +292,7 @@ fn an_unstopped_pulse_changes_nothing() {
         );
         let stop = AtPoll::new(usize::MAX, StopReason::TimedOut);
         assert_eq!(
-            encode(pixels.as_slice(), arm, stop).as_ref(),
+            encode(pixels.as_view(), arm, stop).as_ref(),
             Ok(&tiff),
             "encode {arm:?}"
         );
@@ -330,7 +329,8 @@ mod jpeg_pages {
 
     /// The page's JPEG chunks (strips or tiles), read with image-tiff.
     fn chunks(data: &[u8]) -> usize {
-        let mut tiff = tiff::decoder::Decoder::new(std::io::Cursor::new(data)).unwrap();
+        let mut tiff = tiff::decoder::Decoder::open(std::io::Cursor::new(data)).unwrap();
+        tiff.next_image().unwrap();
         let n = match tiff.get_chunk_type() {
             tiff::decoder::ChunkType::Strip => tiff.strip_count(),
             tiff::decoder::ChunkType::Tile => tiff.tile_count(),

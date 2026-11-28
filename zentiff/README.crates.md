@@ -23,13 +23,13 @@ enough = "0.4.3"
 use zentiff::{decode, probe, encode, TiffDecodeConfig, TiffEncodeConfig};
 use enough::Unstoppable;
 
-// Decode TIFF bytes to a native-format PixelBuffer.
+// Decode TIFF bytes to a native-format PixelBuf.
 let data: &[u8] = &[]; // your TIFF bytes
 let output = decode(data, &TiffDecodeConfig::default(), &Unstoppable)?;
 println!("{}x{}", output.info.width, output.info.height);
 
 // Re-encode (LZW by default).
-let encoded = encode(&output.pixels.as_slice(), &TiffEncodeConfig::default(), &Unstoppable)?;
+let encoded = encode(&output.pixels.as_view(), &TiffEncodeConfig::default(), &Unstoppable)?;
 # Ok::<(), whereat::At<zentiff::TiffError>>(())
 ```
 
@@ -38,21 +38,26 @@ let encoded = encode(&output.pixels.as_slice(), &TiffEncodeConfig::default(), &U
 
 ### Getting packed RGBA8 pixels
 
-`output.pixels` is a [`zenpixels::PixelBuffer`](https://docs.rs/zenpixels) in the
+`output.pixels` is a [`zenpixels::PixelBuf`](https://docs.rs/zenpixels) in the
 file's **native** format — TIFF can be Gray8 / RGB8 / RGBA16 / RGBF32 / … — so
 "decode to RGBA8" needs one normalization step via
 [`zenpixels-convert`](https://crates.io/crates/zenpixels-convert):
 
-```toml
-# Cargo.toml — add alongside zentiff
-zenpixels-convert = { version = "0.2.13", features = ["rgb"] }
-```
-
 ```rust,ignore
-use zenpixels_convert::PixelBufferConvertTypedExt; // brings to_rgba8() into scope
+use zenpixels_convert::{
+    ConvertPolicy, PeakSource, PixelFormat, Transfer, convert_to_buf_with_peak,
+};
 
-let rgba = output.pixels.to_rgba8();                   // PixelBuffer<Rgba<u8>>, always 8-bit RGBA
-let bytes: Vec<u8> = rgba.copy_to_contiguous_bytes();  // width * height * 4, no row padding
+// Supply a transfer assumption only when the file and its metadata warrant it.
+let format = output.pixels.format().clone().with_transfer(Transfer::Srgb);
+let pixels = output.pixels.relabel_format(format)?;
+let rgba = convert_to_buf_with_peak(
+    &pixels.as_view(),
+    &PixelFormat::RGBA8_SRGB,
+    &ConvertPolicy::permissive(),
+    PeakSource::Measured,
+)?;
+let bytes = rgba.into_vec::<u8>()?;
 ```
 
 ### Errors and limits (servers)
@@ -91,6 +96,16 @@ All color types and sample depths handled by the `tiff` crate:
 
 Higher-depth integers (u32/u64/i8-i64) are widened to the next supported depth.
 Sub-byte samples (1/2/4/6-bit) are unpacked and scaled to 0-255.
+
+RGB pages with an unspecified fourth sample in `ExtraSamples` deliver three
+color channels. Associated and unassociated alpha retain the fourth sample
+with premultiplied and straight alpha semantics respectively. A matching RGB
+or Gray ICC profile describes the decoded samples. Untagged TIFF has an
+unknown transfer, with BT.709 as the RGB primaries fallback.
+
+On the zencodec adapter, checked metadata retention accepts ICC bytes, XMP
+bytes and orientation. Required fields that TIFF must translate or lacks a
+carrier for, such as EXIF blobs or CICP, return a typed refusal.
 
 ## Encode support
 

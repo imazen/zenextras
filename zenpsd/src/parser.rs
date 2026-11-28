@@ -1,13 +1,17 @@
 //! Core PSD (v1) and PSB (v2) header, resource, and merged-image parser.
 
 use alloc::string::String;
+use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
 use core::ops::Range;
 
 use enough::Stop;
 use whereat::at;
-use zenpixels::{PixelBuffer, PixelDescriptor};
+use zenpixels::{
+    AlphaMode, ChannelOrder, ColorOrigin, ColorSpace, IccColorSpace, PixelBuf, PixelFormat,
+    SampleLayout, SampleType,
+};
 
 use crate::alloc_util::{AllocPref, alloc_zeroed};
 use crate::error::{PsdError, Result};
@@ -247,48 +251,70 @@ impl PsdHeader {
         }
     }
 
-    /// Output [`PixelDescriptor`] produced when decoding this PSD/PSB.
-    pub fn output_descriptor(&self, metadata: &PsdMetadata) -> PixelDescriptor {
+    /// Output [`PixelFormat`] produced when decoding this PSD/PSB.
+    pub fn output_descriptor(&self, metadata: &PsdMetadata) -> PixelFormat {
         let alpha = self.has_alpha(metadata);
-        match (self.color_mode, self.depth, alpha) {
-            (ColorMode::Bitmap, _, _) => PixelDescriptor::GRAY8_SRGB,
+        let mut spec = match (self.color_mode, self.depth, alpha) {
+            (ColorMode::Bitmap, _, _) => PixelFormat::GRAY8_SRGB,
             (ColorMode::Grayscale | ColorMode::Duotone, BitDepth::Eight, false) => {
-                PixelDescriptor::GRAY8_SRGB
+                PixelFormat::GRAY8_SRGB
             }
             (ColorMode::Grayscale | ColorMode::Duotone, BitDepth::Eight, true) => {
-                PixelDescriptor::GRAYA8_SRGB
+                PixelFormat::GRAYA8_SRGB
             }
             (ColorMode::Grayscale | ColorMode::Duotone, BitDepth::Sixteen, false) => {
-                PixelDescriptor::GRAY16_SRGB
+                PixelFormat::GRAY16_SRGB
             }
             (ColorMode::Grayscale | ColorMode::Duotone, BitDepth::Sixteen, true) => {
-                PixelDescriptor::GRAYA16_SRGB
+                PixelFormat::new(
+                    SampleLayout::new(SampleType::U16, ChannelOrder::GrayAlpha),
+                    ColorSpace::GRAY_SRGB.with_alpha(AlphaMode::Straight),
+                )
             }
             (ColorMode::Grayscale | ColorMode::Duotone, BitDepth::ThirtyTwo, false) => {
-                PixelDescriptor::GRAYF32_LINEAR
+                PixelFormat::GRAYF32_LINEAR
             }
             (ColorMode::Grayscale | ColorMode::Duotone, BitDepth::ThirtyTwo, true) => {
-                PixelDescriptor::RGBAF32_LINEAR
+                PixelFormat::RGBAF32_LINEAR
             }
-            (ColorMode::Indexed, _, false) => PixelDescriptor::RGB8_SRGB,
-            (ColorMode::Indexed, _, true) => PixelDescriptor::RGBA8_SRGB,
-            (ColorMode::Rgb | ColorMode::Cmyk, BitDepth::Eight, false) => {
-                PixelDescriptor::RGB8_SRGB
-            }
-            (ColorMode::Rgb | ColorMode::Cmyk, BitDepth::Eight, true) => {
-                PixelDescriptor::RGBA8_SRGB
-            }
-            (ColorMode::Rgb | ColorMode::Cmyk, BitDepth::Sixteen, false) => {
-                PixelDescriptor::RGB16_SRGB
-            }
-            (ColorMode::Rgb | ColorMode::Cmyk, BitDepth::Sixteen, true) => {
-                PixelDescriptor::RGBA16_SRGB
-            }
-            (ColorMode::Rgb, BitDepth::ThirtyTwo, false) => PixelDescriptor::RGBF32_LINEAR,
-            (ColorMode::Rgb, BitDepth::ThirtyTwo, true) => PixelDescriptor::RGBAF32_LINEAR,
-            _ => PixelDescriptor::RGBA8_SRGB,
+            (ColorMode::Indexed, _, false) => PixelFormat::RGB8_SRGB,
+            (ColorMode::Indexed, _, true) => PixelFormat::RGBA8_SRGB,
+            (ColorMode::Rgb | ColorMode::Cmyk, BitDepth::Eight, false) => PixelFormat::RGB8_SRGB,
+            (ColorMode::Rgb | ColorMode::Cmyk, BitDepth::Eight, true) => PixelFormat::RGBA8_SRGB,
+            (ColorMode::Rgb | ColorMode::Cmyk, BitDepth::Sixteen, false) => PixelFormat::RGB16_SRGB,
+            (ColorMode::Rgb | ColorMode::Cmyk, BitDepth::Sixteen, true) => PixelFormat::RGBA16_SRGB,
+            (ColorMode::Rgb, BitDepth::ThirtyTwo, false) => PixelFormat::RGBF32_LINEAR,
+            (ColorMode::Rgb, BitDepth::ThirtyTwo, true) => PixelFormat::RGBAF32_LINEAR,
+            _ => PixelFormat::RGBA8_SRGB,
+        };
+        if self.color_mode == ColorMode::Rgb
+            && let Some(profile) = metadata.icc_profile.as_deref()
+            && is_rgb_icc(profile)
+        {
+            spec.color = ColorSpace::Icc {
+                profile: Arc::from(profile),
+                color_channels: 3,
+                alpha: spec.color.alpha(),
+                intent: Default::default(),
+            };
         }
+        spec
     }
+}
+
+/// Recognize a structurally present RGB profile. Its color transforms are
+/// interpreted by a CMS when a caller requests conversion.
+fn is_rgb_icc(bytes: &[u8]) -> bool {
+    let Some((declared, tags)) = bytes.first_chunk::<4>().zip(bytes.get(128..132)) else {
+        return false;
+    };
+    let declared = u32::from_be_bytes(*declared) as usize;
+    let tags = u32::from_be_bytes(tags.try_into().expect("four bytes")) as usize;
+    bytes.get(36..40) == Some(b"acsp")
+        && declared <= bytes.len()
+        && tags != 0
+        && tags <= declared.saturating_sub(132) / 12
+        && IccColorSpace::from_icc(bytes) == Some(IccColorSpace::Rgb)
 }
 
 /// Metadata extracted from the PSD/PSB Image Resources section.
@@ -340,18 +366,18 @@ pub(crate) struct ParsedLayout {
 /// Decoded PSD/PSB image and metadata.
 #[derive(Debug)]
 pub struct DecodedPsd {
-    pixels: PixelBuffer,
+    pixels: PixelBuf,
     info: PsdInfo,
 }
 
 impl DecodedPsd {
     /// Borrow the decoded pixel buffer.
-    pub fn pixels(&self) -> &PixelBuffer {
+    pub fn pixels(&self) -> &PixelBuf {
         &self.pixels
     }
 
     /// Consume and return the decoded pixel buffer.
-    pub fn into_pixels(self) -> PixelBuffer {
+    pub fn into_pixels(self) -> PixelBuf {
         self.pixels
     }
 
@@ -717,13 +743,13 @@ fn parse_image_resources(res_bytes: &[u8]) -> Result<PsdMetadata> {
 }
 
 /// Decompress and interleave the merged Image Data section.
-/// Returns `(PixelBuffer, end_offset_in_file)`.
+/// Returns `(PixelBuf, end_offset_in_file)`.
 pub(crate) fn decode_merged_image(
     data: &[u8],
     layout: &ParsedLayout,
     stop: &dyn Stop,
     alloc_pref: AllocPref,
-) -> Result<(PixelBuffer, usize)> {
+) -> Result<(PixelBuf, usize)> {
     let header = &layout.info.header;
     let total_channels = header.channels as usize;
     let used_channels = header.used_channels() as usize;
@@ -1029,7 +1055,7 @@ fn apply_zip_prediction(
     Ok(())
 }
 
-/// Convert decoded planar channel data into an interleaved [`PixelBuffer`].
+/// Convert decoded planar channel data into an interleaved [`PixelBuf`].
 fn interleave_planes(
     planes: &mut [u8],
     header: &PsdHeader,
@@ -1038,7 +1064,7 @@ fn interleave_planes(
     row_bytes: usize,
     plane_bytes: usize,
     alloc_pref: AllocPref,
-) -> Result<PixelBuffer> {
+) -> Result<PixelBuf> {
     let width = header.width;
     let height = header.height;
     let w = width as usize;
@@ -1048,7 +1074,7 @@ fn interleave_planes(
         .ok_or_else(|| at!(PsdError::Malformed("pixel count overflow")))?;
     let descriptor = header.output_descriptor(metadata);
     let out_bytes = num_pixels
-        .checked_mul(descriptor.bytes_per_pixel())
+        .checked_mul(descriptor.layout.bytes_per_pixel())
         .ok_or_else(|| at!(PsdError::Malformed("output buffer size overflow")))?;
     let has_alpha = header.has_alpha(metadata);
 
@@ -1384,6 +1410,17 @@ fn interleave_planes(
         }
     };
 
-    PixelBuffer::from_vec(out, width, height, descriptor)
+    let origin = metadata
+        .icc_profile
+        .as_deref()
+        .map_or_else(ColorOrigin::assumed, |icc| {
+            let profile = match &descriptor.color {
+                ColorSpace::Icc { profile, .. } => profile.clone(),
+                _ => Arc::from(icc),
+            };
+            ColorOrigin::from_icc(profile)
+        });
+    PixelBuf::from_bytes(out, width, height, descriptor)
+        .map(|pixels| pixels.with_origin(origin))
         .map_err(|e| at!(PsdError::PixelBuffer(alloc::format!("{e}"))))
 }

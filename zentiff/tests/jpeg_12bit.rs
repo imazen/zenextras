@@ -260,7 +260,7 @@ fn twelve_bit_jpeg_pages_decode_to_native_samples() {
                     (out.pixels.width(), out.pixels.height()),
                     (width as u32, height as u32)
                 );
-                let bytes = out.pixels.copy_to_contiguous_bytes();
+                let bytes = out.pixels.as_view().as_contiguous_bytes().unwrap();
                 let decoded: Vec<u16> = bytes
                     .as_chunks::<2>()
                     .0

@@ -15,9 +15,13 @@ use zencodec::decode::{
     DecoderConfig, OutputInfo,
 };
 use zencodec::{CodecError, ImageFormat, ImageInfo, ResourceLimits, SharedPulse, Unsupported};
-use zenpixels::{PixelBuffer, PixelDescriptor};
+use zenpixels::{
+    AlphaMode, ChannelOrder, ColorOrigin, ColorSpace, IccColorSpace, PixelBuf, PixelFormat,
+    SampleLayout, SampleType, Transfer,
+};
 
-use crate::alloc_util::AllocPref;
+use crate::alloc_util::{AllocPref, alloc_zeroed, vec_with_capacity};
+use crate::boxes::read_box;
 use crate::error::Jp2Error;
 
 /// Shorthand for this codec's zencodec-facing error type — the shared
@@ -46,12 +50,26 @@ fn alloc_pref_from_zencodec(pref: zencodec::AllocPreference) -> AllocPref {
 
 /// Pixel formats the decoder can produce.
 ///
-/// hayro-jpeg2000 always outputs 8-bit interleaved, so we support
-/// the sRGB 8-bit formats.
-static DECODE_DESCRIPTORS: &[PixelDescriptor] = &[
-    PixelDescriptor::RGB8_SRGB,
-    PixelDescriptor::RGBA8_SRGB,
-    PixelDescriptor::GRAY8_SRGB,
+/// Eight-bit samples use a U8 layout by default. Higher precision uses U16
+/// normalized to the full unsigned range. Embedded profiles determine the
+/// active color independently of this list of representative formats.
+static DECODE_DESCRIPTORS: &[PixelFormat] = &[
+    PixelFormat::RGB8_SRGB,
+    PixelFormat::RGBA8_SRGB,
+    PixelFormat::GRAY8_SRGB,
+    PixelFormat::GRAYA8_SRGB,
+    PixelFormat::RGB16_SRGB,
+    PixelFormat::RGBA16_SRGB,
+    PixelFormat::GRAY16_SRGB,
+    PixelFormat::new(
+        SampleLayout::new(SampleType::U16, ChannelOrder::GrayAlpha),
+        ColorSpace::Gray {
+            transfer: Transfer::Srgb,
+            range: zenpixels::SignalRange::Full,
+            alpha: AlphaMode::Straight,
+            white: None,
+        },
+    ),
 ];
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -122,7 +140,7 @@ impl DecoderConfig for Jp2DecoderConfig {
         &FORMATS
     }
 
-    fn supported_descriptors() -> &'static [PixelDescriptor] {
+    fn supported_pixel_formats() -> &'static [PixelFormat] {
         DECODE_DESCRIPTORS
     }
 
@@ -146,7 +164,7 @@ impl DecoderConfig for Jp2DecoderConfig {
         compute: &zencodec::estimate::ComputeEnvironment,
     ) -> zencodec::estimate::ResourceEstimate {
         use zencodec::estimate::{ResourceEstimate, ThreadingInformation};
-        let bpp = image.descriptor().bytes_per_pixel() as u64;
+        let bpp = image.pixel_format().layout.bytes_per_pixel() as u64;
         // Full output pixel plane: W * H * bytes-per-output-pixel.
         let output = image.pixels().saturating_mul(bpp);
         // Wavelet/tile working set: hayro reconstructs tile-by-tile, holding
@@ -159,7 +177,7 @@ impl DecoderConfig for Jp2DecoderConfig {
         // heavier per pixel than a DCT or row-filter decode).
         let time_ms = (image.pixels() as f64 / 60_000.0) as u64;
         ResourceEstimate::new(typ, time_ms)
-            .with_peak_max(typ.saturating_mul(2))
+            .with_peak_memory_bytes_max(typ.saturating_mul(2))
             .with_threading(ThreadingInformation::SERIAL)
             .at_cores(compute.cores())
     }
@@ -202,9 +220,23 @@ impl<'a> DecodeJob<'a> for Jp2DecodeJob {
         self
     }
 
-    fn with_policy(mut self, policy: DecodePolicy) -> Self {
+    fn try_set_policy(
+        &mut self,
+        policy: DecodePolicy,
+    ) -> core::result::Result<(), zencodec::UnsupportedOperation> {
+        if policy == DecodePolicy::none() {
+            self.policy = None;
+            return Ok(());
+        }
+        let mut admitted = DecodePolicy::none();
+        admitted.allow_icc = policy.allow_icc;
+        admitted.allow_exif = policy.allow_exif;
+        admitted.allow_xmp = policy.allow_xmp;
+        if admitted != policy {
+            return Err(zencodec::UnsupportedOperation::DecodePolicy);
+        }
         self.policy = Some(policy);
-        self
+        Ok(())
     }
 
     fn probe(&self, data: &[u8]) -> core::result::Result<ImageInfo, Self::Error> {
@@ -236,16 +268,18 @@ impl<'a> DecodeJob<'a> for Jp2DecodeJob {
     }
 
     fn output_info(&self, data: &[u8]) -> core::result::Result<OutputInfo, Self::Error> {
-        let info = self.probe(data)?;
-        let descriptor = descriptor_for_info(&info);
-        Ok(OutputInfo::full_decode(info.width, info.height, descriptor))
+        let image = hayro_jpeg2000::Image::new(data, &self.settings).map_err(Jp2Error::Decode)?;
+        let info = image_to_info(&image);
+        let bits = output_precision(data, image.original_bit_depth());
+        let spec = pixel_spec(&image, &info, bits, &[]);
+        Ok(OutputInfo::full_decode(image.width(), image.height(), spec))
     }
 
     fn push_decoder(
         self,
         data: Cow<'a, [u8]>,
         sink: &mut dyn DecodeRowSink,
-        preferred: &[PixelDescriptor],
+        preferred: &[PixelFormat],
     ) -> core::result::Result<OutputInfo, Self::Error> {
         // JP2 doesn't support streaming — decode full image, then copy to sink.
         zencodec::helpers::copy_decode_to_sink(self, data, sink, preferred, |e| {
@@ -256,7 +290,7 @@ impl<'a> DecodeJob<'a> for Jp2DecodeJob {
     fn decoder(
         self,
         data: Cow<'a, [u8]>,
-        _preferred: &[PixelDescriptor],
+        preferred: &[PixelFormat],
     ) -> core::result::Result<Self::Dec, Self::Error> {
         // Pre-flight limit checks on input size
         if let Some(ref limits) = self.limits
@@ -273,14 +307,6 @@ impl<'a> DecodeJob<'a> for Jp2DecodeJob {
         }
         check_pulse(&self.pulse)?;
 
-        // Lower the zencodec 3-mode allocation preference onto the
-        // crate-internal decoder. zenjp2's output buffer is allocated inside
-        // hayro_jpeg2000 (a transitive allocation this crate does not own), so
-        // the preference has no zenjp2-owned site to govern today; it is
-        // threaded here for boundary parity with the sibling codecs and so a
-        // future crate-owned post-process buffer can honor it. The direct
-        // (non-zencodec) decode API leaves it `CodecDefault` → behavior
-        // unchanged.
         let alloc_pref = self
             .limits
             .as_ref()
@@ -293,6 +319,7 @@ impl<'a> DecodeJob<'a> for Jp2DecodeJob {
             limits: self.limits,
             policy: self.policy,
             alloc_pref,
+            preferred: preferred.iter().map(|spec| spec.layout).collect(),
             pulse: self.pulse,
         })
     }
@@ -300,7 +327,7 @@ impl<'a> DecodeJob<'a> for Jp2DecodeJob {
     fn streaming_decoder(
         self,
         _data: Cow<'a, [u8]>,
-        _preferred: &[PixelDescriptor],
+        _preferred: &[PixelFormat],
     ) -> core::result::Result<Self::StreamDec, Self::Error> {
         Err(Jp2Error::UnsupportedOperation(zencodec::UnsupportedOperation::RowLevelDecode).into())
     }
@@ -308,7 +335,7 @@ impl<'a> DecodeJob<'a> for Jp2DecodeJob {
     fn animation_frame_decoder(
         self,
         _data: Cow<'a, [u8]>,
-        _preferred: &[PixelDescriptor],
+        _preferred: &[PixelFormat],
     ) -> core::result::Result<Self::AnimationFrameDec, Self::Error> {
         Err(Jp2Error::UnsupportedOperation(zencodec::UnsupportedOperation::AnimationDecode).into())
     }
@@ -318,7 +345,7 @@ impl<'a> DecodeJob<'a> for Jp2DecodeJob {
     /// file is offered. The JPEG 2000 decoder reads its codestream from a complete buffer.
     fn dyn_incremental_decoder(
         self,
-        preferred: &[PixelDescriptor],
+        preferred: &[PixelFormat],
     ) -> Result<
         alloc::boxed::Box<zencodec::decode::DynIncrementalDecoder>,
         zencodec::decode::BoxedError,
@@ -339,11 +366,8 @@ pub struct Jp2Decoder<'a> {
     settings: hayro_jpeg2000::DecodeSettings,
     limits: Option<ResourceLimits>,
     policy: Option<DecodePolicy>,
-    /// Lowered allocation preference. zenjp2 performs no width × height-sized
-    /// Rust allocation of its own in the decode path (the output buffer is
-    /// hayro-owned), so this is currently a no-op carried for boundary parity;
-    /// see [`crate::alloc_util`].
     alloc_pref: AllocPref,
+    preferred: Vec<SampleLayout>,
     /// The job's pulse, polled when the decode starts and again once the
     /// header is parsed, before the codestream is decoded.
     pulse: SharedPulse,
@@ -354,73 +378,42 @@ impl Decode for Jp2Decoder<'_> {
 
     fn decode(self) -> core::result::Result<DecodeOutput, Self::Error> {
         check_pulse(&self.pulse)?;
-        // The output pixel buffer is allocated inside `hayro_jpeg2000` below,
-        // which this crate cannot route through a `try_reserve`, so the lowered
-        // allocation preference has no zenjp2-owned site to apply to. Bind it
-        // explicitly to document that the plumbing is intentionally a no-op
-        // here (it would govern a future crate-owned post-process buffer).
-        let _ = self.alloc_pref;
-
         let image =
             hayro_jpeg2000::Image::new(&self.data, &self.settings).map_err(Jp2Error::Decode)?;
 
-        // Enforce dimension/pixel limits before decoding
-        check_limits(&image, self.limits.as_ref())?;
+        let mut info = image_to_info(&image);
+        let header_bits = output_precision(&self.data, image.original_bit_depth());
+        let descriptor = pixel_spec(&image, &info, header_bits, &self.preferred);
+        check_limits(&image, self.limits.as_ref(), &descriptor)?;
         check_pulse(&self.pulse)?;
-
-        let width = image.width();
-        let height = image.height();
-        let has_alpha = image.has_alpha();
-        let color_space = image.color_space().clone();
 
         let mut ctx = hayro_jpeg2000::DecoderContext::default();
         let decoded = image.decode(&mut ctx).map_err(Jp2Error::Decode)?;
-
-        let (descriptor, icc_profile) = pixel_format_and_icc(&color_space, has_alpha);
         let components = decoded.components();
-        if components.is_empty() {
-            return Err(Jp2Error::PixelBuffer(alloc::string::String::from(
-                "decoded JPEG 2000 image has 0 components",
-            ))
-            .into());
-        }
-        let sample_count = components[0].samples().len();
-        let raw_bytes_len = sample_count.checked_mul(components.len()).ok_or_else(|| {
-            Jp2Error::PixelBuffer(alloc::string::String::from("pixel buffer size overflow"))
-        })?;
-        let mut raw_u8 = crate::alloc_util::alloc_zeroed(self.alloc_pref, true, raw_bytes_len)
-            .map_err(CodecError::of)?;
-        decoded.store_u8_into(&mut raw_u8);
-
-        let pixels_u8 = if components.len() == 2 && descriptor == PixelDescriptor::RGBA8_SRGB {
-            // Gray + Alpha ([G, A] per pixel) -> expand to RGBA8 ([G, G, G, A]).
-            let out_len = sample_count.checked_mul(4).ok_or_else(|| {
-                Jp2Error::PixelBuffer(alloc::string::String::from("RGBA8 buffer size overflow"))
+        let bits = components
+            .iter()
+            .map(|c| c.bit_depth())
+            .max()
+            .ok_or_else(|| {
+                Jp2Error::PixelBuffer(alloc::string::String::from(
+                    "decoded JPEG 2000 has no components",
+                ))
             })?;
-            let mut rgba = crate::alloc_util::alloc_zeroed(self.alloc_pref, true, out_len)
-                .map_err(CodecError::of)?;
-            for (&[g, a], out) in raw_u8
-                .as_chunks::<2>()
-                .0
-                .iter()
-                .zip(rgba.as_chunks_mut::<4>().0)
-            {
-                *out = [g, g, g, a];
-            }
-            rgba
-        } else {
-            raw_u8
-        };
-
-        let pixel_buffer = PixelBuffer::from_vec(pixels_u8, width, height, descriptor)
-            .map_err(|e| Jp2Error::PixelBuffer(alloc::format!("{e}")))?;
-
-        let mut info = ImageInfo::new(width, height, ImageFormat::Jp2).with_alpha(has_alpha);
-
-        // Attach ICC profile if present
-        if let Some(icc) = icc_profile {
-            info.source_color.icc_profile = Some(Arc::from(icc.as_slice()));
-        }
+        let descriptor = pixel_spec(&image, &info, bits, &self.preferred);
+        check_limits(&image, self.limits.as_ref(), &descriptor)?;
+        let pixel_buffer = interleave(
+            &decoded,
+            image.width(),
+            image.height(),
+            descriptor,
+            self.alloc_pref,
+        )?
+        .with_origin(
+            info.source_color
+                .icc_profile
+                .clone()
+                .map_or_else(ColorOrigin::assumed, ColorOrigin::from_icc),
+        );
 
         apply_policy_to_info(&mut info, self.policy.as_ref());
 
@@ -445,68 +438,235 @@ fn image_to_info(image: &hayro_jpeg2000::Image<'_>) -> ImageInfo {
     info
 }
 
-/// Choose the appropriate [`PixelDescriptor`] and extract ICC profile.
-fn pixel_format_and_icc(
-    color_space: &hayro_jpeg2000::ColorSpace,
-    has_alpha: bool,
-) -> (PixelDescriptor, Option<Vec<u8>>) {
-    match color_space {
-        hayro_jpeg2000::ColorSpace::Gray => {
-            if has_alpha {
-                // GrayA: hayro interleaves [G, A] per pixel; expand to RGBA8.
-                (PixelDescriptor::RGBA8_SRGB, None)
-            } else {
-                (PixelDescriptor::GRAY8_SRGB, None)
+/// Determine output precision without decoding. Hayro's header accessor
+/// reports the first codestream component, even when a palette supplies the
+/// actual output. Validate component counts and mapping offsets as we read.
+fn output_precision(data: &[u8], fallback: u8) -> u8 {
+    fn boxes(data: &[u8]) -> impl Iterator<Item = ([u8; 4], &[u8])> {
+        let mut pos = 0;
+        core::iter::from_fn(move || {
+            let b = read_box(data, pos, data.len() as u64).ok()?;
+            pos = b.end;
+            let body = b.payload();
+            Some((b.ty, &data[body.start as usize..body.end as usize]))
+        })
+    }
+
+    fn component_precisions(codestream: &[u8]) -> impl Iterator<Item = u8> {
+        let count = codestream
+            .get(40..42)
+            .map_or(0, |c| u16::from_be_bytes([c[0], c[1]]) as usize);
+        codestream
+            .get(42..)
+            .unwrap_or_default()
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .take(count)
+            .map(|c| (c[0] & 0x7f) + 1)
+    }
+
+    if data.starts_with(&[0xff, 0x4f]) {
+        return component_precisions(data).max().unwrap_or(fallback);
+    }
+    let mut header = &[][..];
+    let mut codestream = &[][..];
+    for (ty, body) in boxes(data) {
+        match &ty {
+            b"jp2h" => header = body,
+            b"jp2c" => codestream = body,
+            _ => {}
+        }
+    }
+
+    let mut palette = None;
+    let mut mapping = None;
+    for (ty, body) in boxes(header) {
+        match &ty {
+            b"pclr" => {
+                let columns = body.get(2).copied().unwrap_or(0) as usize;
+                palette = body.get(3..3 + columns);
             }
+            b"cmap" => mapping = Some(body.as_chunks::<4>().0),
+            _ => {}
         }
-        hayro_jpeg2000::ColorSpace::RGB => {
-            if has_alpha {
-                (PixelDescriptor::RGBA8_SRGB, None)
-            } else {
-                (PixelDescriptor::RGB8_SRGB, None)
-            }
-        }
-        hayro_jpeg2000::ColorSpace::CMYK => {
-            // CMYK: 4-channel, hayro outputs raw CMYK bytes.
-            // Report RGBA8 as container for 4-channel data; caller handles CMS.
-            (PixelDescriptor::RGBA8_SRGB, None)
-        }
-        hayro_jpeg2000::ColorSpace::Icc {
-            profile,
-            num_channels,
-        } => {
-            let icc = Some(profile.clone());
-            match (*num_channels, has_alpha) {
-                (1, false) => (PixelDescriptor::GRAY8_SRGB, icc),
-                (3, false) => (PixelDescriptor::RGB8_SRGB, icc),
-                (3, true) => (PixelDescriptor::RGBA8_SRGB, icc),
-                (4, false) => (PixelDescriptor::RGBA8_SRGB, icc),
-                _ => {
-                    if has_alpha {
-                        (PixelDescriptor::RGBA8_SRGB, icc)
-                    } else {
-                        (PixelDescriptor::RGB8_SRGB, icc)
-                    }
-                }
-            }
-        }
-        hayro_jpeg2000::ColorSpace::Unknown { num_channels } => match (*num_channels, has_alpha) {
-            (1, false) => (PixelDescriptor::GRAY8_SRGB, None),
-            (1, true) => (PixelDescriptor::RGBA8_SRGB, None),
-            (3, false) => (PixelDescriptor::RGB8_SRGB, None),
-            (3, true) | (4, false) => (PixelDescriptor::RGBA8_SRGB, None),
-            _ => (PixelDescriptor::RGBA8_SRGB, None),
-        },
+    }
+    let Some(palette) = palette else {
+        return component_precisions(codestream).max().unwrap_or(fallback);
+    };
+    let palette_depth = |column: &u8| (column & 0x7f) + 1;
+    if let Some(mapping) = mapping {
+        mapping
+            .iter()
+            .filter_map(|&[hi, lo, method, column]| match method {
+                0 => component_precisions(codestream).nth(u16::from_be_bytes([hi, lo]) as usize),
+                1 => palette.get(usize::from(column)).map(palette_depth),
+                _ => None,
+            })
+            .max()
+            .unwrap_or(fallback)
+    } else {
+        palette.iter().map(palette_depth).max().unwrap_or(fallback)
     }
 }
 
-/// Choose descriptor for output_info (without decoding).
-fn descriptor_for_info(info: &ImageInfo) -> PixelDescriptor {
-    if info.has_alpha {
-        PixelDescriptor::RGBA8_SRGB
-    } else {
-        PixelDescriptor::RGB8_SRGB
+fn active_icc(profile: &[u8]) -> Option<IccColorSpace> {
+    let declared = u32::from_be_bytes(profile.get(..4)?.try_into().ok()?) as usize;
+    let tags = u32::from_be_bytes(profile.get(128..132)?.try_into().ok()?) as usize;
+    if profile.get(36..40)? != b"acsp"
+        || declared > profile.len()
+        || tags == 0
+        || tags > declared.saturating_sub(132) / 12
+    {
+        return None;
     }
+    IccColorSpace::from_icc(profile)
+}
+
+/// Describe the interleaved raster produced by the adapter, including color
+/// meaning without applying any transform to ICC-based components.
+fn pixel_spec(
+    image: &hayro_jpeg2000::Image<'_>,
+    info: &ImageInfo,
+    bits: u8,
+    preferred: &[SampleLayout],
+) -> PixelFormat {
+    use hayro_jpeg2000::ColorSpace as SourceSpace;
+    let source = image.color_space();
+    let channels = source.num_channels();
+    let has_alpha = image.has_alpha();
+    let profile = info.source_color.icc_profile.as_ref();
+    let icc = profile.and_then(|p| active_icc(p));
+    let order = match (channels, has_alpha, icc) {
+        (1, false, _) => ChannelOrder::Gray,
+        (1, true, Some(IccColorSpace::Gray)) => ChannelOrder::GrayAlpha,
+        (1 | 3, true, _) => ChannelOrder::Rgba,
+        (3, false, _) => ChannelOrder::Rgb,
+        (4, false, _) => ChannelOrder::Cmyk,
+        (4, true, _) => ChannelOrder::Cmyka,
+        _ => ChannelOrder::Generic(channels + u8::from(has_alpha)),
+    };
+    let sample = preferred
+        .iter()
+        .find_map(|layout| {
+            (layout.order == order && matches!(layout.sample, SampleType::U8 | SampleType::U16))
+                .then_some(layout.sample)
+        })
+        .unwrap_or(if bits > 8 {
+            SampleType::U16
+        } else {
+            SampleType::U8
+        });
+    let alpha = if has_alpha {
+        AlphaMode::Straight
+    } else {
+        AlphaMode::None
+    };
+    let color = match (icc, profile) {
+        (Some(IccColorSpace::Gray), Some(profile)) if order.is_gray_family() => ColorSpace::Icc {
+            profile: profile.clone(),
+            color_channels: 1,
+            alpha,
+            intent: Default::default(),
+        },
+        (Some(IccColorSpace::Rgb), Some(profile)) if order.is_rgb_family() => ColorSpace::Icc {
+            profile: profile.clone(),
+            color_channels: 3,
+            alpha,
+            intent: Default::default(),
+        },
+        (_, _) if order.is_cmyk_family() => ColorSpace::Cmyk {
+            inverted: false,
+            alpha,
+            icc: profile
+                .filter(|_| icc == Some(IccColorSpace::Cmyk))
+                .cloned(),
+        },
+        (_, _) if order.is_gray_family() => {
+            ColorSpace::GRAY_SRGB
+                .with_alpha(alpha)
+                .with_transfer(if profile.is_some() {
+                    Transfer::Unknown
+                } else {
+                    Transfer::Srgb
+                })
+        }
+        (_, _) if order.is_rgb_family() => {
+            // Hayro already converts enumerated Lab to RGB. An opaque/malformed
+            // embedded ICC is provenance only and does not imply an sRGB TRC.
+            let transfer =
+                if matches!(source, SourceSpace::Icc { .. }) && icc != Some(IccColorSpace::Lab) {
+                    Transfer::Unknown
+                } else {
+                    Transfer::Srgb
+                };
+            ColorSpace::SRGB.with_alpha(alpha).with_transfer(transfer)
+        }
+        _ => ColorSpace::Untagged {
+            total_channels: order.channels() as u8,
+            alpha,
+        },
+    };
+    PixelFormat::new(SampleLayout::new(sample, order), color)
+}
+
+fn interleave(
+    decoded: &hayro_jpeg2000::DecodedImage<'_>,
+    width: u32,
+    height: u32,
+    spec: PixelFormat,
+    alloc_pref: AllocPref,
+) -> CodecResult<PixelBuf> {
+    let components = decoded.components();
+    let sample_count = components[0].samples().len();
+    let channels = spec.layout.channels();
+    let expand_gray = components.len() == 2 && spec.layout.order == ChannelOrder::Rgba;
+    if components.iter().any(|c| c.samples().len() != sample_count)
+        || (!expand_gray && channels != components.len())
+    {
+        return Err(Jp2Error::PixelBuffer("unequal or unexpected component layout".into()).into());
+    }
+    let count = sample_count
+        .checked_mul(channels)
+        .ok_or_else(|| Jp2Error::PixelBuffer("pixel buffer size overflow".into()))?;
+    let order = if expand_gray {
+        &[0, 0, 0, 1][..]
+    } else {
+        &[][..]
+    };
+    let indices = (0..channels).map(|c| order.get(c).copied().unwrap_or(c));
+
+    let result = if spec.layout.sample == SampleType::U8
+        && !expand_gray
+        && components.iter().all(|c| c.bit_depth() < 32)
+    {
+        let mut raw = alloc_zeroed(alloc_pref, true, count).map_err(CodecError::of)?;
+        decoded.store_u8_into(&mut raw);
+        PixelBuf::from_typed(raw, width, height, spec)
+    } else {
+        // Use f64 so an integer code through 16 bits rounds to the exact
+        // full-range U16 grid, e.g. round(code * 65535 / 4095) for 12-bit data.
+        let scale: Vec<_> = components
+            .iter()
+            .map(|c| 1.0 / (2.0f64.powi(i32::from(c.bit_depth())) - 1.0))
+            .collect();
+        let samples = (0..sample_count).flat_map(|i| {
+            indices.clone().map({
+                let scale = &scale;
+                move |c| f64::from(components[c].samples()[i]) * scale[c]
+            })
+        });
+        if spec.layout.sample == SampleType::U16 {
+            let mut raw = vec_with_capacity(alloc_pref, true, count).map_err(CodecError::of)?;
+            raw.extend(samples.map(|s| (s * 65535.0).round() as u16));
+            PixelBuf::from_typed(raw, width, height, spec)
+        } else {
+            let mut raw = vec_with_capacity(alloc_pref, true, count).map_err(CodecError::of)?;
+            raw.extend(samples.map(|s| (s * 255.0).round() as u8));
+            PixelBuf::from_typed(raw, width, height, spec)
+        }
+    };
+    result.map_err(|err| Jp2Error::PixelBuffer(alloc::format!("{err}")).into())
 }
 
 /// Poll the job's pulse; a stop keeps its reason.
@@ -523,6 +683,7 @@ fn check_pulse(stop: &dyn enough::Stop) -> core::result::Result<(), At<CodecErro
 fn check_limits(
     image: &hayro_jpeg2000::Image<'_>,
     limits: Option<&ResourceLimits>,
+    descriptor: &PixelFormat,
 ) -> CodecResult<()> {
     let Some(limits) = limits else {
         return Ok(());
@@ -560,8 +721,9 @@ fn check_limits(
         .into());
     }
     if let Some(max_mem) = limits.max_memory_bytes {
-        // Conservative estimate: 4 bytes per pixel (RGBA worst case)
-        let estimated_memory = pixels.saturating_mul(4);
+        // Preserve the existing four-byte minimum and account for wider output.
+        let bytes_per_pixel = descriptor.layout.bytes_per_pixel().max(4) as u64;
+        let estimated_memory = pixels.saturating_mul(bytes_per_pixel);
         if estimated_memory > max_mem {
             return Err(Jp2Error::Limit(zencodec::LimitExceeded::Memory {
                 actual: estimated_memory,
@@ -646,7 +808,7 @@ mod tests {
     #[test]
     fn estimate_decode_resources_scales_with_output() {
         use zencodec::estimate::{ComputeEnvironment, ImageCharacteristics, ThreadingInformation};
-        let img = ImageCharacteristics::new(1000, 1000, PixelDescriptor::RGBA8_SRGB);
+        let img = ImageCharacteristics::new(1000, 1000, PixelFormat::RGBA8_SRGB);
         let env = ComputeEnvironment::conservative().with_cores(8);
         let est = Jp2DecoderConfig::new().estimate_decode_resources(&img, &env);
         // Peak holds output (1000*1000*4 = 4 MB) at least twice plus scratch.

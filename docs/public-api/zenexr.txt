@@ -6,7 +6,7 @@
 # impls omitted; re-export duplicates annotated `[also: path]`.
 # DO NOT EDIT BY HAND — commit regenerated changes with the code.
 #
-# files: zenexr.txt 24 lines (supported surface) | zenexr.features.txt 4 added (features: inventory,zencodec) | zenexr.internal.txt 0 lines (0 hidden + 0 excluded-feature)
+# files: zenexr.txt 25 lines (supported surface) | zenexr.features.txt 4 added (features: inventory,zencodec) | zenexr.internal.txt 0 lines (0 hidden + 0 excluded-feature)
 
 ## summary
 #
@@ -15,8 +15,8 @@
 #   inherent methods                            9
 #   enum variants                               5
 #   trait roster entries (type × trait)         8
-#   auto-trait-complete types                   2
-#   auto-trait exceptions                       1
+#   auto-trait-complete types                   1
+#   auto-trait exceptions                       2
 #
 # per-module pub lines:
 #   (root)                           19
@@ -39,8 +39,8 @@ pub fn ExrDecoderConfig::with_max_output_bytes(self, u64) -> Self
 pub fn ExrDecoderConfig::with_max_pixels(self, u64) -> Self
 pub struct ExrImage
 pub fn ExrImage::header(&self) -> &exr::meta::header::Header
-pub fn ExrImage::into_pixels(self) -> zenpixels::buffer::PixelBuffer
-pub fn ExrImage::pixels(&self) -> &zenpixels::buffer::PixelBuffer
+pub fn ExrImage::into_pixels(self) -> zenpixels::buffer::PixelBuf
+pub fn ExrImage::pixels(&self) -> &zenpixels::buffer::PixelBuf
 pub type Result<T> = core::result::Result<T, whereat::at::At<ExrError>>
 
 ## trait impls (3 types)
@@ -51,5 +51,6 @@ ExrImage: Debug
 
 ## auto traits
 
-2 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe
+1 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe
 ExrError: !RefUnwindSafe !UnwindSafe
+ExrImage: !RefUnwindSafe !UnwindSafe

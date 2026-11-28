@@ -25,7 +25,7 @@ use exr::prelude::{ReadChannels, ReadLayers, SampleType};
 use std::cell::RefCell;
 use std::io::{self, Cursor, Read, Seek, SeekFrom};
 use whereat::{At, at};
-use zenpixels::{AlphaMode, ColorPrimaries, PixelBuffer, PixelDescriptor};
+use zenpixels::{AlphaMode, CustomPrimaries, DiffuseWhite, PixelBuf, PixelFormat, Primaries};
 
 whereat::define_at_crate_info!();
 
@@ -67,13 +67,13 @@ pub type Result<T> = std::result::Result<T, At<ExrError>>;
 /// Decoded data-window pixels and their unchanged OpenEXR header.
 #[derive(Debug)]
 pub struct ExrImage {
-    pixels: PixelBuffer,
+    pixels: PixelBuf,
     header: Header,
 }
 impl ExrImage {
     /// Linear RGB/RGBA f32. Query the pixel buffer for dimensions and row stride.
     /// Negative and supernormal values are preserved; alpha remains associated.
-    pub fn pixels(&self) -> &PixelBuffer {
+    pub fn pixels(&self) -> &PixelBuf {
         &self.pixels
     }
     /// Source metadata, including the data-window origin and display window.
@@ -81,7 +81,7 @@ impl ExrImage {
         &self.header
     }
     /// Take the pixel buffer without copying. Read needed metadata first.
-    pub fn into_pixels(self) -> PixelBuffer {
+    pub fn into_pixels(self) -> PixelBuf {
         self.pixels
     }
 }
@@ -146,21 +146,36 @@ impl ExrDecoderConfig {
         let latched = LatchedStop::new(stop);
         let stop: &dyn Stop = &latched;
         let chunks = self.open(data, stop)?;
-        let (width, height, channels, _bytes) = self.layout(chunks.headers())?;
+        let (width, height, channels, bytes) = self.layout(chunks.headers())?;
         let header = chunks.headers()[0].clone();
-        let primaries = if header.shared_attributes.chromaticities.is_none() {
-            ColorPrimaries::Bt709
+        let primaries = header
+            .shared_attributes
+            .chromaticities
+            .map_or(Primaries::Unknown, |c| {
+                let xy = |v: exr::math::Vec2<f32>| (v.x(), v.y());
+                CustomPrimaries::new(xy(c.red), xy(c.green), xy(c.blue), xy(c.white))
+                    .map_or(Primaries::Unknown, Primaries::Custom)
+            });
+        let mut format = if channels == 4 {
+            PixelFormat::RGBAF32_LINEAR.with_alpha(AlphaMode::Premultiplied)
         } else {
-            ColorPrimaries::Unknown
+            PixelFormat::RGBF32_LINEAR
         };
-        let descriptor = if channels == 4 {
-            PixelDescriptor::RGBAF32_LINEAR.with_alpha_mode(Some(AlphaMode::Premultiplied))
-        } else {
-            PixelDescriptor::RGBF32_LINEAR
-        };
-        let pixels = PixelBuffer::try_new(width, height, descriptor.with_primaries(primaries))
+        format = format.with_primaries(primaries);
+        if let Some(white) = header
+            .own_attributes
+            .white_luminance
+            .and_then(DiffuseWhite::new)
+        {
+            format = format.with_white(white);
+        }
+        let samples = bytes / size_of::<f32>();
+        let mut storage = Vec::new();
+        storage
+            .try_reserve_exact(samples)
             .map_err(|_| at!(ExrError::Allocation))?;
-        let allocated = RefCell::new(Some(pixels));
+        storage.resize(samples, 0.0_f32);
+        let allocated = RefCell::new(Some(storage));
         // The single validated part creates one largest-resolution collector.
         // Supplying its already allocated storage keeps allocation fallible.
         let image = exr::image::read::read()
@@ -173,20 +188,11 @@ impl ExrDecoderConfig {
                         .take()
                         .expect("single-part pixel collector")
                 },
-                move |pixels: &mut PixelBuffer,
+                move |samples: &mut Vec<f32>,
                       position: exr::math::Vec2<usize>,
                       (r, g, b, a): (f32, f32, f32, f32)| {
-                    let mut view = pixels.as_slice_mut();
-                    let row = view.row_mut(position.y() as u32);
-                    let offset = position.x() * channels * 4;
-                    for (dst, value) in row[offset..offset + channels * 4]
-                        .as_chunks_mut::<4>()
-                        .0
-                        .iter_mut()
-                        .zip([r, g, b, a])
-                    {
-                        dst.copy_from_slice(&value.to_ne_bytes());
-                    }
+                    let start = (position.y() * width as usize + position.x()) * channels;
+                    samples[start..start + channels].copy_from_slice(&[r, g, b, a][..channels]);
                 },
             )
             .first_valid_layer()
@@ -196,7 +202,9 @@ impl ExrDecoderConfig {
             .from_chunks(chunks)
             .map_err(|e| upstream_error(e, stop))?;
         check_stop(stop)?;
-        let pixels = image.layer_data.channel_data.pixels;
+        let samples = image.layer_data.channel_data.pixels;
+        let pixels = PixelBuf::from_typed(samples, width, height, format)
+            .map_err(|_| at!(ExrError::Allocation))?;
         Ok(ExrImage { pixels, header })
     }
 

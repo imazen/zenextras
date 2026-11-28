@@ -8,7 +8,7 @@
 //!
 //! Build-feature liveness (playbook pattern 10): `Lzw` and `Deflate`
 //! are cargo-feature-gated; the axes contain only compiled methods and
-//! [`variant_from_cell_id`] rejects ids naming methods this build
+//! `variant_from_cell_id` rejects ids naming methods this build
 //! cannot encode (encoding would error at runtime — better to reject
 //! the identity at declare time).
 //!

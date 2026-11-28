@@ -23,19 +23,28 @@
 
 extern crate alloc;
 
+use alloc::boxed::Box;
 use alloc::vec;
 use alloc::vec::Vec;
 use core::fmt;
 
+use zencodec::JobResources;
 use zencodec::encode::OutputBuffer;
+use zencodec::source::{NativeBound, SourceAccess};
 use zencodec::time::{TimeBase, Timestamp};
 use zencodec_media::container::{
-    AccessPattern, DemuxEvent, DemuxProgress, Demuxer, Input, InputRequest, MuxFinish, MuxHint,
-    MuxTiming, Muxer, Patch, SeekMode, SeekResult, SeekScope, SeekStatus, SeekTarget,
+    AccessPattern, BoundedMuxer, DemuxEvent, DemuxProgress, Demuxer, DynDemuxer, DynMuxer, Input,
+    InputRequest, MuxFinish, MuxHint, MuxOffer, MuxTiming, Muxer, PacketWrite, Patch, SeekMode,
+    SeekOffer, SeekResult, SeekScope, SeekStatus, SeekTarget, SeekableDemuxer, erase_bounded_muxer,
+    erase_seekable_demuxer,
 };
 use zencodec_media::limits::MediaLimits;
 use zencodec_media::packet::{Packet, RandomAccess};
-use zencodec_media::session::{ProtocolViolation, SessionError, UnsupportedMedia};
+use zencodec_media::registry::{
+    ContainerId, ContainerProbe, DemuxFactory, DemuxNeeds, DemuxOffer, MediaError, MuxFactory,
+    MuxNeeds, MuxPlan, ProbeLimits, TimingPolicy,
+};
+use zencodec_media::session::{ErasedError, ProtocolViolation, SessionError, UnsupportedMedia};
 use zencodec_media::track::{CodecId, CodecTag, TrackInfo, TrackKind, VideoTrackInfo};
 
 /// The IVF signature.
@@ -458,9 +467,11 @@ impl Demuxer for IvfDemuxer {
     fn step(
         &mut self,
         input: Input<'_>,
-        pulse: &dyn zencodec::Pulse,
+        pulse: Option<&dyn zencodec::Pulse>,
     ) -> Result<DemuxProgress, SessionError<IvfError>> {
-        pulse.check()?;
+        if let Some(pulse) = pulse {
+            pulse.check()?;
+        }
         self.requests.clear();
         match self.state {
             State::Header => self.header(input),
@@ -507,6 +518,190 @@ impl Demuxer for IvfDemuxer {
     }
 }
 
+impl SeekableDemuxer for IvfDemuxer {
+    fn seek_offer(&self, target: &SeekTarget) -> Result<SeekOffer, SessionError<IvfError>> {
+        if self.state == State::Header {
+            return Err(codec(IvfError::HeadersFirst));
+        }
+        if target.track != 0 {
+            return Err(codec(IvfError::NoSuchTrack));
+        }
+        if target.scope != SeekScope::Any {
+            return Err(SessionError::Unsupported(UnsupportedMedia::Seek));
+        }
+        if self.index_complete {
+            let e = self.pick(target)?;
+            let landing = SeekResult::new(
+                Timestamp::new(e.pts, self.time_base.expect("header read")),
+                e.ordinal,
+                RandomAccess::Unknown,
+                0,
+            );
+            return Ok(
+                SeekOffer::new(AccessPattern::RandomAccess, NativeBound::Exact(0))
+                    .with_landing_estimate(landing)
+                    .with_requires_index(false),
+            );
+        }
+        Ok(
+            SeekOffer::new(AccessPattern::RandomAccess, NativeBound::Unknown)
+                .with_requires_index(true),
+        )
+    }
+
+    fn begin_seek(
+        &mut self,
+        target: &SeekTarget,
+        pulse: Option<&dyn zencodec::Pulse>,
+    ) -> Result<SeekStatus, SessionError<IvfError>> {
+        if let Some(p) = pulse {
+            p.check()?;
+        }
+        self.seek(target)
+    }
+}
+
+/// Shareable [`DemuxFactory`] for IVF containers backed by [`IvfDemuxer`].
+#[derive(Clone, Debug)]
+pub struct IvfDemuxFactory {
+    limits: MediaLimits,
+}
+
+impl Default for IvfDemuxFactory {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl IvfDemuxFactory {
+    /// Create a factory using [`MediaLimits::DEFAULT`].
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            limits: MediaLimits::DEFAULT,
+        }
+    }
+
+    /// Create a factory with custom [`MediaLimits`].
+    #[must_use]
+    pub const fn with_limits(limits: MediaLimits) -> Self {
+        Self { limits }
+    }
+
+    fn effective_limits(&self, run: &JobResources) -> MediaLimits {
+        let mut limits = self.limits;
+        if let Some(mem) = run.limits().max_memory_bytes {
+            limits.max_header_bytes = limits.max_header_bytes.min(mem);
+            let pkt = usize::try_from(mem).unwrap_or(usize::MAX);
+            if pkt < limits.max_packet_bytes {
+                limits.max_packet_bytes = pkt;
+            }
+        }
+        if let Some(max_in) = run.limits().max_input_bytes {
+            let pkt = usize::try_from(max_in).unwrap_or(usize::MAX);
+            if pkt < limits.max_packet_bytes {
+                limits.max_packet_bytes = pkt;
+            }
+        }
+        limits
+    }
+}
+
+impl DemuxFactory for IvfDemuxFactory {
+    fn probe(&self, input: Input<'_>, caps: &ProbeLimits) -> Result<ContainerProbe, MediaError> {
+        if input.offset != 0 || caps.max_boxes == 0 {
+            return Ok(ContainerProbe::NoMatch);
+        }
+        let max_bytes = caps.max_probe_bytes;
+        if max_bytes < HEADER_LEN {
+            return Ok(ContainerProbe::NoMatch);
+        }
+        let b = &input.bytes[..input.bytes.len().min(max_bytes)];
+        if b.len() < 4 {
+            return if input.reaches_end() {
+                Ok(ContainerProbe::NoMatch)
+            } else {
+                Ok(ContainerProbe::Need {
+                    min_bytes: HEADER_LEN,
+                })
+            };
+        }
+        if &b[..4] != SIGNATURE {
+            return Ok(ContainerProbe::NoMatch);
+        }
+        if b.len() < HEADER_LEN {
+            return if input.reaches_end() {
+                Ok(ContainerProbe::NoMatch)
+            } else {
+                Ok(ContainerProbe::Need {
+                    min_bytes: HEADER_LEN,
+                })
+            };
+        }
+        let version = u16_at(b, 4);
+        let header_len = usize::from(u16_at(b, 6));
+        let w = u16_at(b, 12);
+        let h = u16_at(b, 14);
+        if version == 0 && header_len >= HEADER_LEN && w > 0 && h > 0 {
+            Ok(ContainerProbe::Confirmed {
+                container: ContainerId::Ivf,
+                confidence: 95,
+            })
+        } else {
+            Ok(ContainerProbe::NoMatch)
+        }
+    }
+
+    fn quote(
+        &self,
+        need: &DemuxNeeds,
+        source: &SourceAccess,
+        run: &JobResources,
+    ) -> Result<DemuxOffer, MediaError> {
+        run.check_stop()?;
+        if run.limits().max_memory_bytes == Some(0) {
+            return Err(MediaError::Invalid("IVF demuxer refused zero memory limit"));
+        }
+        if need.immutable_replay_required && !source.immutable {
+            return Err(MediaError::Unsupported(UnsupportedMedia::Seek));
+        }
+        let access = if need.seek.is_some() {
+            if source.access_pattern != AccessPattern::RandomAccess {
+                return Err(MediaError::Unsupported(UnsupportedMedia::Seek));
+            }
+            AccessPattern::RandomAccess
+        } else {
+            AccessPattern::Sequential
+        };
+        let mut offer =
+            DemuxOffer::new(ContainerId::Ivf, access).with_workspace(NativeBound::Unknown);
+        if let Some(target) = need.seek {
+            if target.scope != SeekScope::Any {
+                return Err(MediaError::Unsupported(UnsupportedMedia::Seek));
+            }
+            offer = offer.with_seek_offer(
+                SeekOffer::new(AccessPattern::RandomAccess, NativeBound::Unknown)
+                    .with_requires_index(true),
+            );
+        }
+        Ok(offer)
+    }
+
+    fn open(
+        &self,
+        offer: &DemuxOffer,
+        run: &JobResources,
+    ) -> Result<Box<dyn DynDemuxer + Send>, MediaError> {
+        run.check_stop()?;
+        if offer.container != ContainerId::Ivf {
+            return Err(MediaError::Unsupported(UnsupportedMedia::Container));
+        }
+        Ok(erase_seekable_demuxer(IvfDemuxer::new(
+            self.effective_limits(run),
+        )))
+    }
+}
+
 /// IVF writer. The header goes out at `begin`, each packet as it is
 /// written; nothing waits for `finish`.
 #[derive(Debug, Default)]
@@ -549,6 +744,10 @@ impl Muxer for IvfMuxer {
         let [track] = tracks else {
             return Err(codec(IvfError::OneVideoTrack));
         };
+        if !track.timing().is_empty() {
+            // IVF has no edit list, codec delay, or seek pre-roll carrier.
+            return Err(SessionError::Unsupported(UnsupportedMedia::Container));
+        }
         let Some(video) = track
             .video_info()
             .filter(|_| track.kind() == TrackKind::Video)
@@ -585,9 +784,11 @@ impl Muxer for IvfMuxer {
     fn write_packet(
         &mut self,
         mut packet: Packet,
-        pulse: &dyn zencodec::Pulse,
+        pulse: Option<&dyn zencodec::Pulse>,
     ) -> Result<(), SessionError<IvfError>> {
-        pulse.check()?;
+        if let Some(pulse) = pulse {
+            pulse.check()?;
+        }
         if !self.begun {
             return Err(SessionError::Protocol(ProtocolViolation::NoBegin));
         }
@@ -636,8 +837,13 @@ impl Muxer for IvfMuxer {
         self.out.take_into(into);
     }
 
-    fn finish(self, pulse: &dyn zencodec::Pulse) -> Result<MuxFinish, SessionError<IvfError>> {
-        pulse.check()?;
+    fn finish(
+        self,
+        pulse: Option<&dyn zencodec::Pulse>,
+    ) -> Result<MuxFinish, SessionError<IvfError>> {
+        if let Some(pulse) = pulse {
+            pulse.check()?;
+        }
         if !self.begun {
             return Err(SessionError::Protocol(ProtocolViolation::NoBegin));
         }
@@ -651,4 +857,253 @@ impl Muxer for IvfMuxer {
         };
         Ok(MuxFinish::new(self.out.into_remaining(), patches))
     }
+}
+
+/// [`IvfMuxer`] wrapped with output-credit backpressure implementing [`DynMuxer`]
+/// and [`BoundedMuxer`].
+#[derive(Debug)]
+pub struct BoundedIvfMuxer {
+    inner: IvfMuxer,
+    offer: MuxOffer,
+    max_pending: usize,
+}
+
+impl BoundedIvfMuxer {
+    /// Wrap `inner` with an admitted [`MuxOffer`] and pending-byte cap.
+    #[must_use]
+    pub fn new(inner: IvfMuxer, offer: MuxOffer, max_pending: usize) -> Self {
+        Self {
+            inner,
+            offer,
+            max_pending: max_pending.max(1),
+        }
+    }
+}
+
+fn erase_ivf_err(e: SessionError<IvfError>) -> SessionError<ErasedError> {
+    e.map_codec(|c| ErasedError::new(Box::new(c)))
+}
+
+impl DynMuxer for BoundedIvfMuxer {
+    fn begin_exact_timing(
+        &mut self,
+        tracks: &[TrackInfo],
+        hint: MuxHint,
+    ) -> Result<MuxTiming, SessionError<ErasedError>> {
+        if HEADER_LEN > self.max_pending {
+            return Err(SessionError::Unsupported(UnsupportedMedia::Container));
+        }
+        self.inner
+            .begin_exact_timing(tracks, hint)
+            .map_err(erase_ivf_err)
+    }
+
+    fn begin(
+        &mut self,
+        tracks: &[TrackInfo],
+        hint: MuxHint,
+    ) -> Result<MuxTiming, SessionError<ErasedError>> {
+        if HEADER_LEN > self.max_pending {
+            return Err(SessionError::Unsupported(UnsupportedMedia::Container));
+        }
+        self.inner.begin(tracks, hint).map_err(erase_ivf_err)
+    }
+
+    fn write_packet(
+        &mut self,
+        packet: Packet,
+        pulse: Option<&dyn zencodec::Pulse>,
+    ) -> Result<(), SessionError<ErasedError>> {
+        let mut slot = Some(packet);
+        match self.try_write_packet(&mut slot, pulse)? {
+            PacketWrite::Accepted => Ok(()),
+            _ => Err(SessionError::Unsupported(UnsupportedMedia::Container)),
+        }
+    }
+
+    fn pending_output(&self) -> &[u8] {
+        self.inner.pending_output()
+    }
+
+    fn consume_output(&mut self, n: usize) {
+        self.inner.consume_output(n);
+    }
+
+    fn take_output(&mut self, into: &mut Vec<u8>) {
+        self.inner.take_output(into);
+    }
+
+    fn finish(
+        self: Box<Self>,
+        pulse: Option<&dyn zencodec::Pulse>,
+    ) -> Result<MuxFinish, SessionError<ErasedError>> {
+        self.inner.finish(pulse).map_err(erase_ivf_err)
+    }
+
+    fn as_bounded(&self) -> Option<&dyn BoundedMuxer> {
+        Some(self)
+    }
+
+    fn as_bounded_mut(&mut self) -> Option<&mut dyn BoundedMuxer> {
+        Some(self)
+    }
+}
+
+impl BoundedMuxer for BoundedIvfMuxer {
+    fn admitted_offer(&self) -> &MuxOffer {
+        &self.offer
+    }
+
+    fn try_write_packet(
+        &mut self,
+        packet: &mut Option<Packet>,
+        pulse: Option<&dyn zencodec::Pulse>,
+    ) -> Result<PacketWrite, SessionError<ErasedError>> {
+        if let Some(p) = pulse {
+            p.check()?;
+        }
+        let Some(pkt_ref) = packet.as_ref() else {
+            return Err(SessionError::Protocol(ProtocolViolation::EmptyPacket));
+        };
+        let emission = 12usize.saturating_add(pkt_ref.bytes().len());
+        let pending = self.inner.pending_output().len();
+        if pending.saturating_add(emission) > self.max_pending {
+            if pending > 0 {
+                return Ok(PacketWrite::DrainOutput);
+            }
+            return Err(SessionError::Unsupported(UnsupportedMedia::Container));
+        }
+        let pkt = packet.take().expect("checked Some above");
+        self.inner.write_packet(pkt, pulse).map_err(erase_ivf_err)?;
+        Ok(PacketWrite::Accepted)
+    }
+}
+
+/// Shareable [`MuxFactory`] for IVF containers backed by [`IvfMuxer`].
+#[derive(Clone, Copy, Debug, Default)]
+pub struct IvfMuxFactory {
+    count_patch: bool,
+}
+
+impl IvfMuxFactory {
+    /// Streaming IVF writer leaving frame count 0 (no finish patches).
+    #[must_use]
+    pub const fn new() -> Self {
+        Self { count_patch: false }
+    }
+
+    /// Patch the frame count into the 32-byte header on seekable destinations.
+    #[must_use]
+    pub const fn with_count_patch(mut self) -> Self {
+        self.count_patch = true;
+        self
+    }
+}
+
+impl MuxFactory for IvfMuxFactory {
+    fn quote(&self, need: &MuxNeeds, run: &JobResources) -> Result<MuxPlan, MediaError> {
+        run.check_stop()?;
+        if need.timing == TimingPolicy::Exact {
+            // IVF stores PTS only (no DTS, no per-frame duration).
+            return Err(MediaError::Unsupported(UnsupportedMedia::ExactTiming));
+        }
+        let mut dry = if self.count_patch {
+            IvfMuxer::new().with_count_patch()
+        } else {
+            IvfMuxer::new()
+        };
+        let timing = dry
+            .begin(&need.tracks, need.destination)
+            .map_err(|e| match e {
+                SessionError::Unsupported(u) => MediaError::Unsupported(u),
+                SessionError::Codec(IvfError::UnsupportedCodec) => {
+                    MediaError::Unsupported(UnsupportedMedia::Codec)
+                }
+                SessionError::Codec(IvfError::OneVideoTrack) => {
+                    MediaError::Unsupported(UnsupportedMedia::Container)
+                }
+                other => MediaError::from(other),
+            })?;
+        let header_len = dry.pending_output().len() as u64;
+        let default_pending: u64 = 4 << 20;
+        let max_pending = match run.limits().max_memory_bytes {
+            Some(m) if m < header_len.max(1) => {
+                return Err(MediaError::Invalid(
+                    "JobResources max_memory_bytes is too small for IVF header",
+                ));
+            }
+            Some(m) => (m / 4).max(header_len).min(m).min(default_pending),
+            None => default_pending,
+        };
+        let offer = MuxOffer::new(
+            timing,
+            NativeBound::UpperBound(max_pending),
+            NativeBound::Unknown,
+            NativeBound::Exact(0),
+        );
+        let mut plan = MuxPlan::new(
+            ContainerId::Ivf,
+            need.tracks.clone(),
+            need.destination,
+            need.timing,
+            offer,
+        );
+        plan.supports_bounded_writes = true;
+        Ok(plan)
+    }
+
+    fn open(
+        &self,
+        plan: &MuxPlan,
+        run: &JobResources,
+    ) -> Result<Box<dyn DynMuxer + Send>, MediaError> {
+        run.check_stop()?;
+        if plan.container != ContainerId::Ivf {
+            return Err(MediaError::Unsupported(UnsupportedMedia::Container));
+        }
+        let max_pending = match plan.offer.maximum_pending {
+            NativeBound::Exact(n) | NativeBound::UpperBound(n) => {
+                usize::try_from(n).unwrap_or(4 << 20)
+            }
+            _ => 4 << 20,
+        };
+        let inner = if self.count_patch && plan.offer.timing.patches_at_finish() {
+            IvfMuxer::new().with_count_patch()
+        } else {
+            IvfMuxer::new()
+        };
+        Ok(erase_bounded_muxer(BoundedIvfMuxer::new(
+            inner,
+            plan.offer,
+            max_pending,
+        )))
+    }
+}
+
+/// Register [`IvfDemuxFactory`] and [`IvfMuxFactory`] in a [`zencodec::CodecSet`]
+/// under `org.imazen.ivf.zenivf`.
+pub fn register_ivf_codec_set(
+    set: zencodec::CodecSet,
+) -> Result<zencodec::CodecSet, zencodec::RegistrationError> {
+    use alloc::sync::Arc;
+    use zencodec::{NamedFactory, RegistrationId};
+    use zencodec_media::registry::{DemuxRole, MuxRole};
+
+    let id = RegistrationId::new("org.imazen.ivf.zenivf").expect("valid registration id");
+    let set = set.with_role::<DemuxRole>(
+        [ContainerId::Ivf],
+        NamedFactory::new(
+            id.clone(),
+            env!("CARGO_PKG_VERSION"),
+            Arc::new(IvfDemuxFactory::new()) as Arc<dyn DemuxFactory>,
+        ),
+    )?;
+    set.with_role::<MuxRole>(
+        [ContainerId::Ivf],
+        NamedFactory::new(
+            id,
+            env!("CARGO_PKG_VERSION"),
+            Arc::new(IvfMuxFactory::new()) as Arc<dyn MuxFactory>,
+        ),
+    )
 }

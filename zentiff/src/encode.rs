@@ -3,7 +3,7 @@
 use alloc::vec::Vec;
 use enough::Stop;
 use whereat::{ResultAtExt, at};
-use zenpixels::{ChannelLayout, ChannelType, PixelDescriptor, PixelSlice};
+use zenpixels::{ChannelOrder, PixelFormat, PixelView, SampleType};
 
 use crate::error::{Result, TiffError};
 
@@ -363,12 +363,12 @@ pub mod internal_params {
 /// integer horizontal differencing is invalid for IEEE floating-point samples.
 /// An explicit `None` remains unpredicted.
 fn effective_predictor(
-    desc: &PixelDescriptor,
+    desc: &PixelFormat,
     requested: tiff::encoder::Predictor,
 ) -> tiff::encoder::Predictor {
-    if desc.layout() == ChannelLayout::GrayAlpha {
+    if desc.layout.order == ChannelOrder::GrayAlpha {
         tiff::encoder::Predictor::None
-    } else if desc.channel_type() == ChannelType::F32
+    } else if desc.layout.sample == SampleType::F32
         && requested == tiff::encoder::Predictor::Horizontal
     {
         tiff::encoder::Predictor::FloatingPoint
@@ -377,7 +377,7 @@ fn effective_predictor(
     }
 }
 
-/// Encode a PixelBuffer to TIFF bytes.
+/// Encode a PixelBuf to TIFF bytes.
 ///
 /// Supports Gray, GrayAlpha, RGB, RGBA in u8, u16, and f32 channel types.
 ///
@@ -386,19 +386,26 @@ fn effective_predictor(
 /// `&Unstoppable` when cancellation is not needed.
 #[track_caller]
 pub fn encode(
-    pixels: &PixelSlice<'_>,
+    pixels: &PixelView<'_>,
     config: &TiffEncodeConfig,
     cancel: &dyn Stop,
 ) -> Result<Vec<u8>> {
     cancel.check().map_err(|e| at!(TiffError::from(e)))?;
 
-    let desc = pixels.descriptor();
+    let desc = pixels.format();
+    if !desc.layout.packing.is_full() {
+        return Err(at!(TiffError::InvalidInput(
+            "TIFF encoding requires full-width samples".into()
+        )));
+    }
     let width = pixels.width();
-    let height = pixels.rows();
-    let data = pixels.contiguous_bytes();
+    let height = pixels.height();
+    let data = pixels
+        .to_contiguous_bytes()
+        .map_err(|err| err.map_error(TiffError::from))?;
 
     let compression = config.compression.to_tiff()?;
-    let predictor = effective_predictor(&desc, config.predictor.to_tiff());
+    let predictor = effective_predictor(desc, config.predictor.to_tiff());
     // image-tiff compresses and writes the whole image in one call.
     cancel.check().map_err(|e| at!(TiffError::from(e)))?;
 
@@ -408,17 +415,17 @@ pub fn encode(
         let enc =
             tiff::encoder::TiffEncoder::new_big(&mut buf).map_err(|e| at!(TiffError::from(e)))?;
         let mut enc = enc.with_compression(compression).with_predictor(predictor);
-        write_image(&mut enc, width, height, &desc, &data).at()?;
+        write_image(&mut enc, width, height, desc, &data).at()?;
     } else {
         let enc = tiff::encoder::TiffEncoder::new(&mut buf).map_err(|e| at!(TiffError::from(e)))?;
         let mut enc = enc.with_compression(compression).with_predictor(predictor);
-        write_image(&mut enc, width, height, &desc, &data).at()?;
+        write_image(&mut enc, width, height, desc, &data).at()?;
     }
 
     Ok(buf.into_inner())
 }
 
-/// Encode a `PixelSlice` to TIFF, embedding the given metadata.
+/// Encode a `PixelView` to TIFF, embedding the given metadata.
 ///
 /// Like [`encode`], but writes ICC (tag 34675), XMP (tag 700), orientation
 /// (tag 274 in IFD0), and a native EXIF sub-IFD (tag 34665) when present. With
@@ -426,7 +433,7 @@ pub fn encode(
 #[track_caller]
 #[cfg(feature = "zencodec")]
 pub(crate) fn encode_with_meta(
-    pixels: &PixelSlice<'_>,
+    pixels: &PixelView<'_>,
     config: &TiffEncodeConfig,
     meta: &TiffEncodeMeta,
     cancel: &dyn Stop,
@@ -437,13 +444,20 @@ pub(crate) fn encode_with_meta(
 
     cancel.check().map_err(|e| at!(TiffError::from(e)))?;
 
-    let desc = pixels.descriptor();
+    let desc = pixels.format();
+    if !desc.layout.packing.is_full() {
+        return Err(at!(TiffError::InvalidInput(
+            "TIFF encoding requires full-width samples".into()
+        )));
+    }
     let width = pixels.width();
-    let height = pixels.rows();
-    let data = pixels.contiguous_bytes();
+    let height = pixels.height();
+    let data = pixels
+        .to_contiguous_bytes()
+        .map_err(|err| err.map_error(TiffError::from))?;
 
     let compression = config.compression.to_tiff()?;
-    let predictor = effective_predictor(&desc, config.predictor.to_tiff());
+    let predictor = effective_predictor(desc, config.predictor.to_tiff());
     // image-tiff compresses and writes the whole image in one call.
     cancel.check().map_err(|e| at!(TiffError::from(e)))?;
 
@@ -453,20 +467,20 @@ pub(crate) fn encode_with_meta(
         let enc =
             tiff::encoder::TiffEncoder::new_big(&mut buf).map_err(|e| at!(TiffError::from(e)))?;
         let mut enc = enc.with_compression(compression).with_predictor(predictor);
-        write_image_with_meta(&mut enc, width, height, &desc, &data, meta).at()?;
+        write_image_with_meta(&mut enc, width, height, desc, &data, meta).at()?;
     } else {
         let enc = tiff::encoder::TiffEncoder::new(&mut buf).map_err(|e| at!(TiffError::from(e)))?;
         let mut enc = enc.with_compression(compression).with_predictor(predictor);
-        write_image_with_meta(&mut enc, width, height, &desc, &data, meta).at()?;
+        write_image_with_meta(&mut enc, width, height, desc, &data, meta).at()?;
     }
 
     Ok(buf.into_inner())
 }
 
-/// Encode a PixelSlice to TIFF, appending to the provided output buffer.
+/// Encode a PixelView to TIFF, appending to the provided output buffer.
 #[track_caller]
 pub fn encode_into(
-    pixels: &PixelSlice<'_>,
+    pixels: &PixelView<'_>,
     config: &TiffEncodeConfig,
     cancel: &dyn Stop,
     output: &mut Vec<u8>,
@@ -520,26 +534,26 @@ fn write_image<W: std::io::Write + std::io::Seek, K: tiff::encoder::TiffKind>(
     enc: &mut tiff::encoder::TiffEncoder<W, K>,
     width: u32,
     height: u32,
-    desc: &PixelDescriptor,
+    desc: &PixelFormat,
     data: &[u8],
 ) -> Result<()> {
     use tiff::encoder::colortype;
 
-    let layout = desc.layout();
-    let ct = desc.channel_type();
+    let layout = desc.layout.order;
+    let ct = desc.layout.sample;
 
     match (layout, ct) {
         // Gray
-        (ChannelLayout::Gray, ChannelType::U8) => {
+        (ChannelOrder::Gray, SampleType::U8) => {
             enc.write_image::<colortype::Gray8>(width, height, data)
                 .map_err(|e| at!(TiffError::from(e)))?;
         }
-        (ChannelLayout::Gray, ChannelType::U16) => {
+        (ChannelOrder::Gray, SampleType::U16) => {
             let samples = as_u16_slice(data)?;
             enc.write_image::<colortype::Gray16>(width, height, &samples)
                 .map_err(|e| at!(TiffError::from(e)))?;
         }
-        (ChannelLayout::Gray, ChannelType::F32) => {
+        (ChannelOrder::Gray, SampleType::F32) => {
             let samples = as_f32_slice(data)?;
             enc.write_image::<colortype::Gray32Float>(width, height, &samples)
                 .map_err(|e| at!(TiffError::from(e)))?;
@@ -550,45 +564,45 @@ fn write_image<W: std::io::Write + std::io::Seek, K: tiff::encoder::TiffKind>(
         // and adding one `ExtraSamples = UnassociatedAlpha` channel. The
         // interleaved (gray, alpha) data is written verbatim — no widening to
         // RGBA, so the file carries 2 samples/pixel instead of 4.
-        (ChannelLayout::GrayAlpha, ChannelType::U8) => {
+        (ChannelOrder::GrayAlpha, SampleType::U8) => {
             write_graya_image::<_, _, colortype::Gray8>(enc, width, height, data)?;
         }
-        (ChannelLayout::GrayAlpha, ChannelType::U16) => {
+        (ChannelOrder::GrayAlpha, SampleType::U16) => {
             let samples = as_u16_slice(data)?;
             write_graya_image::<_, _, colortype::Gray16>(enc, width, height, &samples)?;
         }
-        (ChannelLayout::GrayAlpha, ChannelType::F32) => {
+        (ChannelOrder::GrayAlpha, SampleType::F32) => {
             let samples = as_f32_slice(data)?;
             write_graya_image::<_, _, colortype::Gray32Float>(enc, width, height, &samples)?;
         }
 
         // RGB
-        (ChannelLayout::Rgb, ChannelType::U8) => {
+        (ChannelOrder::Rgb, SampleType::U8) => {
             enc.write_image::<colortype::RGB8>(width, height, data)
                 .map_err(|e| at!(TiffError::from(e)))?;
         }
-        (ChannelLayout::Rgb, ChannelType::U16) => {
+        (ChannelOrder::Rgb, SampleType::U16) => {
             let samples = as_u16_slice(data)?;
             enc.write_image::<colortype::RGB16>(width, height, &samples)
                 .map_err(|e| at!(TiffError::from(e)))?;
         }
-        (ChannelLayout::Rgb, ChannelType::F32) => {
+        (ChannelOrder::Rgb, SampleType::F32) => {
             let samples = as_f32_slice(data)?;
             enc.write_image::<colortype::RGB32Float>(width, height, &samples)
                 .map_err(|e| at!(TiffError::from(e)))?;
         }
 
         // RGBA
-        (ChannelLayout::Rgba, ChannelType::U8) => {
+        (ChannelOrder::Rgba, SampleType::U8) => {
             enc.write_image::<colortype::RGBA8>(width, height, data)
                 .map_err(|e| at!(TiffError::from(e)))?;
         }
-        (ChannelLayout::Rgba, ChannelType::U16) => {
+        (ChannelOrder::Rgba, SampleType::U16) => {
             let samples = as_u16_slice(data)?;
             enc.write_image::<colortype::RGBA16>(width, height, &samples)
                 .map_err(|e| at!(TiffError::from(e)))?;
         }
-        (ChannelLayout::Rgba, ChannelType::F32) => {
+        (ChannelOrder::Rgba, SampleType::F32) => {
             let samples = as_f32_slice(data)?;
             enc.write_image::<colortype::RGBA32Float>(width, height, &samples)
                 .map_err(|e| at!(TiffError::from(e)))?;
@@ -666,7 +680,7 @@ fn write_image_with_meta<W: std::io::Write + std::io::Seek, K: tiff::encoder::Ti
     enc: &mut tiff::encoder::TiffEncoder<W, K>,
     width: u32,
     height: u32,
-    desc: &PixelDescriptor,
+    desc: &PixelFormat,
     data: &[u8],
     meta: &TiffEncodeMeta,
 ) -> Result<()> {
@@ -688,21 +702,21 @@ fn write_image_with_meta<W: std::io::Write + std::io::Seek, K: tiff::encoder::Ti
         ifd0_entries: &decomposed.ifd0,
     };
 
-    let layout = desc.layout();
-    let ct = desc.channel_type();
+    let layout = desc.layout.order;
+    let ct = desc.layout.sample;
 
     // 2. Match the pixel format to a tiff colortype, expanding GrayAlpha to RGBA
     //    (the tiff encoder has no GrayAlpha colortype) exactly like `write_image`.
     match (layout, ct) {
         // Gray
-        (ChannelLayout::Gray, ChannelType::U8) => {
+        (ChannelOrder::Gray, SampleType::U8) => {
             write_one_image::<_, _, colortype::Gray8>(enc, width, height, data, meta, &subs)?;
         }
-        (ChannelLayout::Gray, ChannelType::U16) => {
+        (ChannelOrder::Gray, SampleType::U16) => {
             let samples = as_u16_slice(data)?;
             write_one_image::<_, _, colortype::Gray16>(enc, width, height, &samples, meta, &subs)?;
         }
-        (ChannelLayout::Gray, ChannelType::F32) => {
+        (ChannelOrder::Gray, SampleType::F32) => {
             let samples = as_f32_slice(data)?;
             write_one_image::<_, _, colortype::Gray32Float>(
                 enc, width, height, &samples, meta, &subs,
@@ -711,16 +725,16 @@ fn write_image_with_meta<W: std::io::Write + std::io::Seek, K: tiff::encoder::Ti
 
         // GrayAlpha — Gray colortype + one `ExtraSamples = UnassociatedAlpha`
         // channel (2 samples/pixel), written verbatim. No RGBA widening.
-        (ChannelLayout::GrayAlpha, ChannelType::U8) => {
+        (ChannelOrder::GrayAlpha, SampleType::U8) => {
             write_one_graya_image::<_, _, colortype::Gray8>(enc, width, height, data, meta, &subs)?;
         }
-        (ChannelLayout::GrayAlpha, ChannelType::U16) => {
+        (ChannelOrder::GrayAlpha, SampleType::U16) => {
             let samples = as_u16_slice(data)?;
             write_one_graya_image::<_, _, colortype::Gray16>(
                 enc, width, height, &samples, meta, &subs,
             )?;
         }
-        (ChannelLayout::GrayAlpha, ChannelType::F32) => {
+        (ChannelOrder::GrayAlpha, SampleType::F32) => {
             let samples = as_f32_slice(data)?;
             write_one_graya_image::<_, _, colortype::Gray32Float>(
                 enc, width, height, &samples, meta, &subs,
@@ -728,14 +742,14 @@ fn write_image_with_meta<W: std::io::Write + std::io::Seek, K: tiff::encoder::Ti
         }
 
         // RGB
-        (ChannelLayout::Rgb, ChannelType::U8) => {
+        (ChannelOrder::Rgb, SampleType::U8) => {
             write_one_image::<_, _, colortype::RGB8>(enc, width, height, data, meta, &subs)?;
         }
-        (ChannelLayout::Rgb, ChannelType::U16) => {
+        (ChannelOrder::Rgb, SampleType::U16) => {
             let samples = as_u16_slice(data)?;
             write_one_image::<_, _, colortype::RGB16>(enc, width, height, &samples, meta, &subs)?;
         }
-        (ChannelLayout::Rgb, ChannelType::F32) => {
+        (ChannelOrder::Rgb, SampleType::F32) => {
             let samples = as_f32_slice(data)?;
             write_one_image::<_, _, colortype::RGB32Float>(
                 enc, width, height, &samples, meta, &subs,
@@ -743,14 +757,14 @@ fn write_image_with_meta<W: std::io::Write + std::io::Seek, K: tiff::encoder::Ti
         }
 
         // RGBA
-        (ChannelLayout::Rgba, ChannelType::U8) => {
+        (ChannelOrder::Rgba, SampleType::U8) => {
             write_one_image::<_, _, colortype::RGBA8>(enc, width, height, data, meta, &subs)?;
         }
-        (ChannelLayout::Rgba, ChannelType::U16) => {
+        (ChannelOrder::Rgba, SampleType::U16) => {
             let samples = as_u16_slice(data)?;
             write_one_image::<_, _, colortype::RGBA16>(enc, width, height, &samples, meta, &subs)?;
         }
-        (ChannelLayout::Rgba, ChannelType::F32) => {
+        (ChannelOrder::Rgba, SampleType::F32) => {
             let samples = as_f32_slice(data)?;
             write_one_image::<_, _, colortype::RGBA32Float>(
                 enc, width, height, &samples, meta, &subs,
@@ -1401,12 +1415,12 @@ mod tests {
             icc: Some(icc.clone()),
             ..Default::default()
         };
-        let buf = zenpixels::PixelBuffer::from_vec(vec![7u8; 3 * 4], 2, 2, PixelDescriptor::RGB8)
+        let buf = zenpixels::PixelBuf::from_typed(vec![7u8; 3 * 4], 2, 2, PixelFormat::RGB8_SRGB)
             .unwrap();
         for big_tiff in [false, true] {
             let config = TiffEncodeConfig::default().with_big_tiff(big_tiff);
             let data =
-                encode_with_meta(&buf.as_slice(), &config, &meta, &enough::Unstoppable).unwrap();
+                encode_with_meta(&buf.as_view(), &config, &meta, &enough::Unstoppable).unwrap();
             let mut decoder = tiff::decoder::Decoder::open(std::io::Cursor::new(data)).unwrap();
             decoder.next_image().unwrap();
             let mut ifd = decoder.current_ifd();

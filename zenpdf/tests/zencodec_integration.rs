@@ -136,60 +136,106 @@ fn limits_accept_within_bounds() {
 
 #[test]
 fn push_decoder() {
+    use std::fmt::Write as _;
     use zencodec::decode::{DecodeRowSink, SinkError};
-    use zenpixels::{PixelDescriptor, PixelSliceMut};
+    use zenpixels::{AlphaMode, PixelFormat, PixelViewMut};
 
     struct CollectSink {
         data: Vec<u8>,
-        width: u32,
-        height: u32,
+        stride: usize,
+        format: Option<PixelFormat>,
     }
 
     impl DecodeRowSink for CollectSink {
-        fn begin(
-            &mut self,
-            width: u32,
-            height: u32,
-            _descriptor: PixelDescriptor,
-        ) -> Result<(), SinkError> {
-            self.width = width;
-            self.height = height;
-            let bpp = 4usize;
-            self.data.resize(width as usize * height as usize * bpp, 0);
+        fn begin(&mut self, width: u32, height: u32, format: PixelFormat) -> Result<(), SinkError> {
+            assert_eq!((width, height), (6, 4));
+            assert_eq!(format.color.alpha(), AlphaMode::Straight);
+            self.format = Some(format);
+            self.stride = width as usize * 4 + 7;
+            self.data.resize(self.stride * height as usize, 0xA5);
             Ok(())
         }
 
         fn provide_next_buffer(
             &mut self,
-            y: u32,
-            height: u32,
-            width: u32,
-            descriptor: PixelDescriptor,
-        ) -> Result<PixelSliceMut<'_>, SinkError> {
-            let bpp = 4usize;
-            let stride = width as usize * bpp;
-            let start = y as usize * stride;
-            let end = start + height as usize * stride;
-            let slice = &mut self.data[start..end];
-            PixelSliceMut::new(slice, width, height, stride, descriptor)
-                .map_err(|e| -> SinkError { e.to_string().into() })
+            strip: zencodec::decode::RowStrip,
+            pixel_format: PixelFormat,
+        ) -> Result<PixelViewMut<'_>, SinkError> {
+            assert_eq!(self.format.as_ref(), Some(&pixel_format));
+            let start = strip.y as usize * self.stride;
+            let end = start + strip.height as usize * self.stride;
+            PixelViewMut::new_with_format_cow(
+                &mut self.data[start..end],
+                strip.width,
+                strip.height,
+                self.stride,
+                zenpixels::FormatCow::from_owned(pixel_format),
+            )
+            .map_err(|e| -> SinkError { e.to_string().into() })
         }
     }
 
-    let dec = PdfDecoderConfig::new().with_bounds(RenderBounds::Scale(0.1));
-    let data = test_pdf();
+    let mark = "1 0 0 rg\n1 1 2 1 re f";
+    let mut pdf = String::from("%PDF-1.4\n");
+    let mut offsets = Vec::new();
+    for (index, object) in [
+        "<< /Type /Catalog /Pages 2 0 R >>".into(),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".into(),
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 6 4] /Resources << >> /Contents 4 0 R >>"
+            .into(),
+        format!("<< /Length {} >>\nstream\n{mark}\nendstream", mark.len()),
+    ]
+    .iter()
+    .enumerate()
+    {
+        offsets.push(pdf.len());
+        writeln!(&mut pdf, "{} 0 obj\n{object}\nendobj", index + 1).unwrap();
+    }
+    let xref = pdf.len();
+    pdf.push_str("xref\n0 5\n0000000000 65535 f \n");
+    for offset in offsets {
+        writeln!(&mut pdf, "{offset:010} 00000 n ").unwrap();
+    }
+    writeln!(
+        &mut pdf,
+        "trailer\n<< /Root 1 0 R /Size 5 >>\nstartxref\n{xref}\n%%EOF"
+    )
+    .unwrap();
+
+    let dec = PdfDecoderConfig::new().with_background([0, 0, 255, 255]);
+    let one = dec
+        .clone()
+        .job()
+        .decoder(Cow::Borrowed(pdf.as_bytes()), &[])
+        .unwrap()
+        .decode()
+        .unwrap();
     let mut sink = CollectSink {
         data: Vec::new(),
-        width: 0,
-        height: 0,
+        stride: 0,
+        format: None,
     };
     let info = dec
         .job()
-        .push_decoder(Cow::Borrowed(&data), &mut sink, &[])
+        .push_decoder(Cow::Borrowed(pdf.as_bytes()), &mut sink, &[])
         .unwrap();
-    assert!(info.width > 0);
-    assert!(info.height > 0);
-    assert!(!sink.data.is_empty());
+    assert_eq!((info.width, info.height), (6, 4));
+    assert_eq!((one.width(), one.height()), (6, 4));
+    assert_eq!(one.pixels().format(), sink.format.as_ref().unwrap());
+    assert_eq!(sink.data.len(), 4 * sink.stride);
+    for (y, row) in sink.data.chunks_exact(sink.stride).enumerate() {
+        assert_eq!(&row[..24], one.pixels().row(y as u32));
+        assert_eq!(&row[24..], &[0xA5; 7]);
+        for (x, pixel) in row[..24].as_chunks::<4>().0.iter().enumerate() {
+            // PDF uses bottom-left coordinates. x=1..3, y=1..2 maps to row 2.
+            let expected = if y == 2 && (1..3).contains(&x) {
+                [255, 0, 0, 255]
+            } else {
+                [0, 0, 255, 255]
+            };
+            assert_eq!(*pixel, expected, "at ({x}, {y})");
+        }
+    }
 }
 
 #[test]
@@ -219,7 +265,7 @@ fn render_bytes_under(pref: zencodec::AllocPreference) -> Vec<u8> {
         .expect("decoder construction succeeds")
         .decode()
         .expect("render succeeds");
-    out.pixels().contiguous_bytes().into_owned()
+    out.pixels().to_contiguous_bytes().unwrap().into_owned()
 }
 
 /// Rendering the same PDF page under all three allocation modes must produce
@@ -239,8 +285,8 @@ fn alloc_pref_modes_render_byte_identical() {
 #[test]
 fn estimate_decode_resources_scales_with_output() {
     use zencodec::estimate::{ComputeEnvironment, ImageCharacteristics, ThreadingInformation};
-    use zenpixels::PixelDescriptor;
-    let img = ImageCharacteristics::new(595, 841, PixelDescriptor::RGBA8_SRGB);
+    use zenpixels::PixelFormat;
+    let img = ImageCharacteristics::new(595, 841, PixelFormat::RGBA8_SRGB);
     let env = ComputeEnvironment::conservative().with_cores(8);
     let est = PdfDecoderConfig::new().estimate_decode_resources(&img, &env);
     let output = 595u64 * 841 * 4;

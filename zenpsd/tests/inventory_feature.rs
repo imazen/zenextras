@@ -145,7 +145,6 @@ fn every_stop_poll_retains_a_one_shot_timeout() {
 
 #[cfg(feature = "inventory")]
 #[test]
-#[allow(deprecated)] // Exercises the legacy best-effort policy setter on purpose.
 fn configured_icc_suppression_changes_inventory_disposition() {
     use zencodec::decode::DecodePolicy;
     use zencodec::inventory::{Disposition, MetadataKind};
@@ -155,7 +154,8 @@ fn configured_icc_suppression_changes_inventory_disposition() {
     let policy = DecodePolicy::default().with_allow_icc(false);
     let filtered = PsdDecoderConfig::new()
         .job()
-        .with_policy(policy)
+        .try_with_policy(policy)
+        .unwrap()
         .inventory(&input)
         .unwrap();
     let selected: Vec<_> = normal
@@ -173,4 +173,96 @@ fn configured_icc_suppression_changes_inventory_disposition() {
                     && other.disposition() == Disposition::Dropped)
         );
     }
+}
+
+#[path = "fixtures/cmyk_device_link.rs"]
+mod cmyk_device_link;
+#[path = "fixtures/display_p3.rs"]
+mod display_p3;
+
+fn psd_with_planes(mode: u16, planes: &[&[u8; 2]], profile: Option<&[u8]>) -> Vec<u8> {
+    let mut out = b"8BPS\0\x01\0\0\0\0\0\0".to_vec();
+    out.extend_from_slice(&(planes.len() as u16).to_be_bytes());
+    out.extend_from_slice(&1u32.to_be_bytes());
+    out.extend_from_slice(&2u32.to_be_bytes());
+    out.extend_from_slice(&8u16.to_be_bytes());
+    out.extend_from_slice(&mode.to_be_bytes());
+    out.extend_from_slice(&0u32.to_be_bytes()); // color-mode data
+    let mut resources = Vec::new();
+    if let Some(profile) = profile {
+        resources.extend_from_slice(b"8BIM\x04\x0f\0\0");
+        resources.extend_from_slice(&(profile.len() as u32).to_be_bytes());
+        resources.extend_from_slice(profile);
+        if profile.len() % 2 != 0 {
+            resources.push(0);
+        }
+    }
+    out.extend_from_slice(&(resources.len() as u32).to_be_bytes());
+    out.extend(resources);
+    out.extend_from_slice(&0u32.to_be_bytes()); // no layers or masks
+    out.extend_from_slice(&0u16.to_be_bytes()); // uncompressed planar image
+    for plane in planes {
+        out.extend_from_slice(*plane);
+    }
+    out
+}
+
+fn decode_planes(file: &[u8]) -> zencodec::decode::DecodeOutput {
+    use zencodec::decode::Decode;
+    PsdDecoderConfig::new()
+        .job()
+        .decoder(file.into(), &[])
+        .unwrap()
+        .decode()
+        .unwrap()
+}
+
+#[test]
+fn rgb_profile_describes_the_unmodified_samples() {
+    use zenpixels::{ColorSpace, OriginKind};
+
+    let profile = display_p3::DISPLAY_P3;
+    let planes = [&[231, 17], &[66, 154], &[12, 199]];
+    for tag in [Some(profile), None] {
+        let file = psd_with_planes(3, &planes, tag);
+        let out = decode_planes(&file);
+        let px = out.pixels();
+        let info = PsdDecoderConfig::new().job().output_info(&file).unwrap();
+        assert_eq!(px.format(), &info.native_format);
+        assert_eq!(
+            px.as_contiguous_bytes().unwrap(),
+            [231, 66, 12, 17, 154, 199]
+        );
+        assert_eq!(px.origin().unwrap().icc.as_deref(), tag);
+        assert_eq!(out.info().source_color.icc_profile.as_deref(), tag);
+        if tag.is_some() {
+            assert!(matches!(&px.format().color,
+                ColorSpace::Icc { profile: active, color_channels: 3, .. } if active.as_ref() == profile));
+        } else {
+            assert_eq!(px.format().color, ColorSpace::SRGB);
+            assert_eq!(px.origin().unwrap().kind, OriginKind::Assumed);
+        }
+    }
+}
+
+#[test]
+fn cmyk_profile_is_source_provenance_for_the_rgb_approximation() {
+    use zenpixels::{ColorSpace, OriginKind};
+
+    let profile = cmyk_device_link::CMYK_DEVICE_LINK;
+    let file = psd_with_planes(
+        4,
+        &[&[255, 0], &[64, 128], &[0, 255], &[128, 255]],
+        Some(profile),
+    );
+    let out = decode_planes(&file);
+    let px = out.pixels();
+    assert_eq!(px.format().color, ColorSpace::SRGB);
+    assert_eq!(px.as_contiguous_bytes().unwrap(), [128, 32, 0, 0, 128, 255]);
+    assert_eq!(px.origin().unwrap().kind, OriginKind::Icc);
+    assert_eq!(px.origin().unwrap().icc.as_deref(), Some(profile));
+    assert_eq!(
+        out.info().source_color.icc_profile.as_deref(),
+        Some(profile)
+    );
 }

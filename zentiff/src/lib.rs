@@ -15,7 +15,7 @@
 //! println!("{}x{}", output.info.width, output.info.height);
 //!
 //! // Encode
-//! let encoded = encode(&output.pixels.as_slice(), &TiffEncodeConfig::default(), &Unstoppable)?;
+//! let encoded = encode(&output.pixels.as_view(), &TiffEncodeConfig::default(), &Unstoppable)?;
 //! # Ok::<(), whereat::At<zentiff::TiffError>>(())
 //! ```
 //!

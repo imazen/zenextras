@@ -16,14 +16,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let data = fs::read(&input)?;
     let image = ExrDecoderConfig::new().decode(&data, &Unstoppable)?;
     let pixels = image.pixels();
-    let channels = if pixels.descriptor().alpha.is_some() {
-        4
-    } else {
-        3
-    };
+    let channels = pixels.format().layout.channels();
     fs::create_dir(&output)?;
     let mut samples = BufWriter::new(File::create(output.join("pixels.f32le"))?);
-    let view = pixels.as_slice();
+    let view = pixels.as_view();
     for y in 0..pixels.height() {
         // Rows exclude allocation padding. Explicit LE makes the artifact portable.
         for value in view.row(y).as_chunks::<4>().0 {
@@ -41,9 +37,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             pixels.width(),
             pixels.height(),
             channels,
-            u64::from(pixels.width()) * channels * 4,
+            pixels.row_bytes(),
             if channels == 4 { "RGBA" } else { "RGB" },
-            pixels.descriptor(),
+            pixels.format(),
             image.header(),
         ),
     )?;

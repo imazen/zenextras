@@ -8,22 +8,22 @@ use std::borrow::Cow;
 use zencodec::decode::{Decode, DecodeJob, DecoderConfig};
 use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
 use zencodec::{Metadata, MetadataPolicy, Orientation, ResourceLimits};
-use zenpixels::{PixelBuffer, PixelDescriptor};
+use zenpixels::{PixelBuf, PixelFormat};
 
 use zentiff::codec::{TiffDecoderCodecConfig, TiffEncoderCodecConfig};
 
-fn make_rgb8(w: u32, h: u32) -> PixelBuffer {
+fn make_rgb8(w: u32, h: u32) -> PixelBuf {
     let data: Vec<u8> = (0..w * h * 3).map(|i| (i % 256) as u8).collect();
-    PixelBuffer::from_vec(data, w, h, PixelDescriptor::RGB8_SRGB).unwrap()
+    PixelBuf::from_typed(data, w, h, PixelFormat::RGB8_SRGB).unwrap()
 }
 
-fn encode_via_trait(buf: &PixelBuffer) -> Vec<u8> {
+fn encode_via_trait(buf: &PixelBuf) -> Vec<u8> {
     let config = TiffEncoderCodecConfig::new();
     let output = config
         .job()
         .encoder()
         .unwrap()
-        .encode(buf.as_slice())
+        .encode(buf.as_view())
         .unwrap();
     output.into_vec()
 }
@@ -98,7 +98,7 @@ fn encode_rejects_exceeding_max_memory() {
         .with_limits(limits)
         .encoder()
         .unwrap()
-        .encode(buf.as_slice());
+        .encode(buf.as_view());
     assert!(result.is_err(), "should reject 30KB > 1KB memory limit");
 }
 
@@ -112,7 +112,7 @@ fn encode_rejects_exceeding_max_width() {
         .with_limits(limits)
         .encoder()
         .unwrap()
-        .encode(buf.as_slice());
+        .encode(buf.as_view());
     assert!(result.is_err(), "should reject width 200 > limit 100");
 }
 
@@ -126,7 +126,7 @@ fn encode_accepts_within_memory_limits() {
         .with_limits(limits)
         .encoder()
         .unwrap()
-        .encode(buf.as_slice())
+        .encode(buf.as_view())
         .unwrap();
     assert!(!output.is_empty());
 }
@@ -169,15 +169,15 @@ fn roundtrip_rgb8_via_traits() {
     assert_eq!(decoded.width(), 8);
     assert_eq!(decoded.height(), 4);
     assert_eq!(
-        decoded.pixels().contiguous_bytes().as_ref(),
-        original.as_contiguous_bytes().unwrap()
+        decoded.pixels().to_contiguous_bytes().unwrap().as_ref(),
+        original.as_view().as_contiguous_bytes().unwrap()
     );
 }
 
 #[test]
 fn roundtrip_rgba8_via_traits() {
     let data: Vec<u8> = (0..4u32 * 4 * 4).map(|i| (i % 256) as u8).collect();
-    let original = PixelBuffer::from_vec(data, 4, 4, PixelDescriptor::RGBA8_SRGB).unwrap();
+    let original = PixelBuf::from_typed(data, 4, 4, PixelFormat::RGBA8_SRGB).unwrap();
     let tiff_data = encode_via_trait(&original);
 
     let config = TiffDecoderCodecConfig::new();
@@ -196,7 +196,7 @@ fn roundtrip_rgba8_via_traits() {
 #[test]
 fn roundtrip_gray8_via_traits() {
     let data: Vec<u8> = (0..16u32).map(|i| (i * 17 % 256) as u8).collect();
-    let original = PixelBuffer::from_vec(data, 4, 4, PixelDescriptor::GRAY8_SRGB).unwrap();
+    let original = PixelBuf::from_typed(data, 4, 4, PixelFormat::GRAY8_SRGB).unwrap();
     let tiff_data = encode_via_trait(&original);
 
     let config = TiffDecoderCodecConfig::new();
@@ -210,8 +210,8 @@ fn roundtrip_gray8_via_traits() {
     assert_eq!(decoded.width(), 4);
     assert_eq!(decoded.height(), 4);
     assert_eq!(
-        decoded.pixels().contiguous_bytes().as_ref(),
-        original.as_contiguous_bytes().unwrap()
+        decoded.pixels().to_contiguous_bytes().unwrap().as_ref(),
+        original.as_view().as_contiguous_bytes().unwrap()
     );
 }
 
@@ -222,7 +222,7 @@ fn roundtrip_graya8_via_traits_stays_two_channel() {
     let data: Vec<u8> = (0..w * h)
         .flat_map(|i| [(i * 7 % 256) as u8, (i * 3 % 256) as u8])
         .collect();
-    let original = PixelBuffer::from_vec(data, w, h, PixelDescriptor::GRAYA8_SRGB).unwrap();
+    let original = PixelBuf::from_typed(data, w, h, PixelFormat::GRAYA8_SRGB).unwrap();
     let tiff_data = encode_via_trait(&original);
 
     let config = TiffDecoderCodecConfig::new();
@@ -234,16 +234,16 @@ fn roundtrip_graya8_via_traits_stays_two_channel() {
         .unwrap();
 
     assert!(decoded.has_alpha());
-    let desc = decoded.pixels().descriptor();
+    let desc = decoded.pixels().format().clone();
     assert_eq!(
-        desc.layout(),
-        zenpixels::ChannelLayout::GrayAlpha,
+        desc.layout.order,
+        zenpixels::ChannelOrder::GrayAlpha,
         "GrayAlpha must round-trip as 2-channel, not RGBA"
     );
-    assert_eq!(desc.channel_type(), zenpixels::ChannelType::U8);
+    assert_eq!(desc.layout.sample, zenpixels::SampleType::U8);
     assert_eq!(
-        decoded.pixels().contiguous_bytes().as_ref(),
-        original.as_contiguous_bytes().unwrap(),
+        decoded.pixels().to_contiguous_bytes().unwrap().as_ref(),
+        original.as_view().as_contiguous_bytes().unwrap(),
         "GrayAlpha8 pixels must round-trip byte-identically"
     );
 }
@@ -257,7 +257,7 @@ fn roundtrip_graya8_with_metadata_stays_two_channel() {
     let data: Vec<u8> = (0..w * h)
         .flat_map(|i| [(200 - i % 200) as u8, (i * 11 % 256) as u8])
         .collect();
-    let original = PixelBuffer::from_vec(data, w, h, PixelDescriptor::GRAYA8_SRGB).unwrap();
+    let original = PixelBuf::from_typed(data, w, h, PixelFormat::GRAYA8_SRGB).unwrap();
 
     let icc = sample_icc();
     let meta = Metadata::none().with_icc(icc.clone());
@@ -265,10 +265,11 @@ fn roundtrip_graya8_with_metadata_stays_two_channel() {
     let config = TiffEncoderCodecConfig::new();
     let tiff_data = config
         .job()
-        .with_metadata_policy(meta, MetadataPolicy::Web)
+        .try_with_metadata_policy(meta, MetadataPolicy::Web)
+        .unwrap()
         .encoder()
         .unwrap()
-        .encode(original.as_slice())
+        .encode(original.as_view())
         .unwrap()
         .into_vec();
 
@@ -294,12 +295,12 @@ fn roundtrip_graya8_with_metadata_stays_two_channel() {
         .decode()
         .unwrap();
 
-    let desc = decoded.pixels().descriptor();
-    assert_eq!(desc.layout(), zenpixels::ChannelLayout::GrayAlpha);
-    assert_eq!(desc.channel_type(), zenpixels::ChannelType::U8);
+    let desc = decoded.pixels().format().clone();
+    assert_eq!(desc.layout.order, zenpixels::ChannelOrder::GrayAlpha);
+    assert_eq!(desc.layout.sample, zenpixels::SampleType::U8);
     assert_eq!(
-        decoded.pixels().contiguous_bytes().as_ref(),
-        original.as_contiguous_bytes().unwrap()
+        decoded.pixels().to_contiguous_bytes().unwrap().as_ref(),
+        original.as_view().as_contiguous_bytes().unwrap()
     );
 }
 
@@ -465,10 +466,8 @@ fn metadata_web_policy_roundtrip_keeps_icc_orientation_strips_gps() {
         "with_exif should parse EXIF orientation 6 → Rotate90"
     );
 
-    // The filtering happens in `Metadata::filtered` (invoked by
-    // with_metadata_policy) — verify GPS is removed there, the rights tag and
-    // orientation survive, before anything is encoded.
-    #[allow(deprecated)] // Exercise the published compatibility helper intentionally.
+    // The filtering happens in `Metadata::filtered` — verify GPS is removed
+    // there, the rights tag and orientation survive, before anything is encoded.
     let filtered = meta.filtered(&MetadataPolicy::Web);
     assert_eq!(filtered.orientation, Orientation::Rotate90);
     {
@@ -487,10 +486,10 @@ fn metadata_web_policy_roundtrip_keeps_icc_orientation_strips_gps() {
     let config = TiffEncoderCodecConfig::new();
     let encoded = config
         .job()
-        .with_metadata_policy(meta, MetadataPolicy::Web)
+        .with_unfiltered_metadata(filtered)
         .encoder()
         .unwrap()
-        .encode(buf.as_slice())
+        .encode(buf.as_view())
         .unwrap();
     let tiff_bytes = encoded.into_vec();
 
@@ -526,8 +525,8 @@ fn metadata_web_policy_roundtrip_keeps_icc_orientation_strips_gps() {
     // Embedding metadata must not corrupt the pixels: the decoded image is
     // byte-identical to the source (orientation is metadata, not baked here).
     assert_eq!(
-        decoded.pixels().contiguous_bytes().as_ref(),
-        buf.as_contiguous_bytes().unwrap(),
+        decoded.pixels().to_contiguous_bytes().unwrap().as_ref(),
+        buf.as_view().as_contiguous_bytes().unwrap(),
         "pixels must survive the metadata-embedding encode path unchanged"
     );
 
@@ -664,10 +663,10 @@ fn foreign_exif_blob_decomposes_into_correct_native_ifds() {
     let buf = make_rgb8(4, 4);
     let encoded = TiffEncoderCodecConfig::new()
         .job()
-        .with_metadata_policy(meta, MetadataPolicy::PreserveExact)
+        .with_unfiltered_metadata(meta.filtered(&MetadataPolicy::PreserveExact))
         .encoder()
         .unwrap()
-        .encode(buf.as_slice())
+        .encode(buf.as_view())
         .unwrap();
     let tiff = encoded.into_vec();
 
@@ -752,94 +751,273 @@ fn foreign_exif_blob_decomposes_into_correct_native_ifds() {
     );
 }
 
+#[path = "fixtures/display_p3.rs"]
+mod display_p3;
+
 #[test]
-fn cicp_only_source_synthesizes_icc_on_encode() {
-    use zencodec::Cicp;
-
-    // TIFF has no CICP carrier, so a CICP-only (Display P3) source must be
-    // lowered to a synthesized ICC profile (resolve_color_emit →
-    // IccDisposition::SynthesizeFrom → synthesize_icc_for_cicp).
-    let meta = Metadata::none().with_cicp(Cicp::DISPLAY_P3);
-    let buf = make_rgb8(4, 4);
-
+fn checked_preserve_exact_retains_supported_fields() {
+    use zenpixels::{AlphaMode, ColorSpace, SampleLayout};
+    let profile = display_p3::DISPLAY_P3;
+    let xmp = b"<x:xmpmeta xmlns:x='adobe:ns:meta/'/>";
+    let pixels = [231, 66, 12, 17, 154, 199];
+    let color = ColorSpace::Icc {
+        profile: profile.into(),
+        color_channels: 3,
+        alpha: AlphaMode::None,
+        intent: Default::default(),
+    };
+    let buf = PixelBuf::from_typed(
+        pixels.to_vec(),
+        2,
+        1,
+        PixelFormat::new(SampleLayout::RGB8, color),
+    )
+    .unwrap();
+    let meta = Metadata::none()
+        .with_icc(profile)
+        .with_xmp(xmp.as_slice())
+        .with_orientation(Orientation::FlipH);
     let encoded = TiffEncoderCodecConfig::new()
         .job()
-        .with_metadata_policy(meta, MetadataPolicy::PreserveExact)
+        .try_with_metadata_policy(meta, MetadataPolicy::PreserveExact)
+        .unwrap()
         .encoder()
         .unwrap()
-        .encode(buf.as_slice())
-        .unwrap();
-    let tiff_bytes = encoded.into_vec();
-
-    let decoded = TiffDecoderCodecConfig::new()
-        .job()
-        .decoder(Cow::Owned(tiff_bytes), &[])
-        .unwrap()
-        .decode()
+        .encode(buf.as_view())
         .unwrap();
 
-    // icc-db uses the canonical CICP-tagged profile, not DISPLAY_P3_V4's
-    // compact compatibility matrix. Keep exact carrier bytes and independently
-    // require the requested signal plus unchanged active samples.
-    let icc = decoded
-        .info()
-        .source_color
-        .icc_profile
-        .as_deref()
-        .expect("CICP-only P3 source should synthesize an ICC for TIFF");
-    use zenpixels_convert::icc_profiles::{SynthesizedIcc, synthesize_icc_for_cicp};
-    let SynthesizedIcc::Profile(expected) = synthesize_icc_for_cicp(Cicp::DISPLAY_P3) else {
-        panic!("Display P3 must have a synthesized profile");
-    };
+    // Read the wire tags directly; do not depend on the adapter's metadata output.
+    let mut reader = tiff::decoder::Decoder::open(std::io::Cursor::new(encoded.data())).unwrap();
+    reader.next_image().unwrap();
+    let mut ifd = reader.current_ifd();
+    use tiff::tags::Tag;
+    assert_eq!(ifd.get_tag_u8_vec(Tag::IccProfile).unwrap(), profile);
+    assert_eq!(ifd.get_tag_u8_vec(Tag::Unknown(700)).unwrap(), xmp);
+    assert_eq!(ifd.get_tag_unsigned::<u16>(Tag::Orientation).unwrap(), 2);
     assert_eq!(
-        icc,
-        expected.as_ref(),
-        "embedded ICC must equal the synthesized P3 profile"
-    );
-    assert_eq!(zenpixels::icc::extract_cicp(icc), Some(Cicp::DISPLAY_P3));
-    assert_eq!(
-        decoded.pixels().contiguous_bytes().as_ref(),
-        buf.as_contiguous_bytes().unwrap()
+        zentiff::decode(encoded.data(), &Default::default(), &enough::Unstoppable)
+            .unwrap()
+            .pixels
+            .as_view()
+            .as_contiguous_bytes()
+            .unwrap(),
+        pixels
     );
 }
 
-/// A PQ source keeps its transfer: TIFF's only colour carrier is ICC, and
-/// without the bundled profile database PQ got no profile at all (read as sRGB).
 #[test]
-fn pq_cicp_only_source_synthesizes_a_pq_icc() {
-    use zencodec::Cicp;
+fn checked_preserve_exact_refuses_without_writing() {
+    use zencodec::encode::{DynEncoderConfig, EncodePolicy};
+    use zencodec::{CodecErrorExt, UnsupportedOperation};
 
-    let pq = Cicp::new(9, 16, 0, true);
-    let buf = make_rgb8(4, 4);
-    let encoded = TiffEncoderCodecConfig::new()
-        .job()
-        .with_metadata_policy(
-            Metadata::none().with_cicp(pq),
+    let mut job = TiffEncoderCodecConfig::new().job();
+    let err = job
+        .try_set_metadata_policy(
+            Metadata::none().with_cicp(zencodec::Cicp::DISPLAY_P3),
             MetadataPolicy::PreserveExact,
         )
-        .encoder()
-        .unwrap()
-        .encode(buf.as_slice())
-        .unwrap();
-    let decoded = TiffDecoderCodecConfig::new()
-        .job()
-        .decoder(Cow::Owned(encoded.into_vec()), &[])
-        .unwrap()
-        .decode()
-        .unwrap();
-    let icc = decoded
-        .info()
-        .source_color
-        .icc_profile
-        .clone()
-        .expect("a PQ source needs an ICC in TIFF");
-    let id = zenpixels::icc::identify_common(&icc).expect("a known profile");
-    let cicp = id.to_cicp().expect("CICP for the profile");
+        .unwrap_err();
     assert_eq!(
-        (cicp.color_primaries, cicp.transfer_characteristics),
-        (9, 16),
-        "the profile describes BT.2020 PQ"
+        err.downcast_ref::<UnsupportedOperation>(),
+        Some(&UnsupportedOperation::MetadataRetention)
     );
+
+    // A later policy can also conflict with a successfully checked offer.
+    job.try_set_metadata_policy(
+        Metadata::none().with_xmp(b"<meta/>".as_slice()),
+        MetadataPolicy::PreserveExact,
+    )
+    .unwrap();
+    let encoder = job
+        .try_with_policy(EncodePolicy::none().with_embed_xmp(false))
+        .unwrap()
+        .encoder()
+        .unwrap();
+    let err = encoder.encode(make_rgb8(4, 3).as_view()).unwrap_err();
+    assert_eq!(
+        err.unsupported_operation(),
+        Some(&UnsupportedOperation::MetadataRetention)
+    );
+
+    // The type-erased path must refuse with the same typed error.
+    let mut dyn_job = TiffEncoderCodecConfig::new().dyn_job();
+    dyn_job
+        .try_set_metadata_policy(
+            Metadata::none().with_xmp(b"<meta/>".as_slice()),
+            MetadataPolicy::PreserveExact,
+        )
+        .unwrap();
+    dyn_job
+        .try_set_policy(EncodePolicy::none().with_embed_xmp(false))
+        .unwrap();
+    let err = dyn_job
+        .into_encoder()
+        .unwrap()
+        .encode(make_rgb8(4, 3).as_view())
+        .unwrap_err();
+    assert_eq!(
+        err.unsupported_operation(),
+        Some(&UnsupportedOperation::MetadataRetention)
+    );
+}
+
+fn profile_tag<'a>(icc: &'a [u8], signature: &[u8; 4]) -> Option<&'a [u8]> {
+    let read_u32 = |bytes: &[u8]| u32::from_be_bytes(bytes.try_into().unwrap()) as usize;
+    let count = read_u32(&icc[128..132]);
+    icc[132..132 + count * 12]
+        .as_chunks::<12>()
+        .0
+        .iter()
+        .find(|entry| &entry[..4] == signature)
+        .map(|entry| {
+            let start = read_u32(&entry[4..8]);
+            &icc[start..start + read_u32(&entry[8..])]
+        })
+}
+
+fn sfixed(bytes: &[u8]) -> f64 {
+    f64::from(i32::from_be_bytes(bytes.try_into().unwrap())) / 65536.0
+}
+
+fn assert_icc_header(icc: &[u8], space: &[u8; 4]) {
+    assert_eq!(
+        u32::from_be_bytes(icc[..4].try_into().unwrap()) as usize,
+        icc.len()
+    );
+    assert_eq!(&icc[12..16], b"mntr");
+    assert_eq!(&icc[16..20], space);
+    assert_eq!(&icc[20..24], b"XYZ ");
+    assert_eq!(&icc[36..40], b"acsp");
+}
+
+#[test]
+fn display_p3_synthesis_matches_d50_matrix_and_srgb_curve() {
+    use zenpixels::Primaries;
+
+    let buf = PixelBuf::from_typed(
+        vec![231u8, 66, 12, 17, 154, 199],
+        2,
+        1,
+        PixelFormat::RGB8_SRGB.with_primaries(Primaries::DisplayP3),
+    )
+    .unwrap();
+    let file = encode_via_trait(&buf);
+    let info = zentiff::probe(&file).unwrap();
+    let icc = info.icc_profile.as_deref().unwrap();
+    assert_icc_header(icc, b"RGB ");
+    // Display P3 D65 primaries Bradford-adapted to ICC PCS D50.
+    for (tag, expected) in [
+        (b"rXYZ", [0.5151, 0.2412, -0.00105]),
+        (b"gXYZ", [0.2920, 0.6922, 0.0419]),
+        (b"bXYZ", [0.1571, 0.0666, 0.7841]),
+    ] {
+        let xyz = profile_tag(icc, tag).unwrap();
+        assert_eq!(&xyz[..4], b"XYZ ");
+        for (raw, expected) in xyz[8..20].as_chunks::<4>().0.iter().zip(expected) {
+            assert!(
+                (sfixed(raw) - expected).abs() < 0.001,
+                "{tag:?} got {}",
+                sfixed(raw)
+            );
+        }
+    }
+    // The parametric ICC type-3/4 curve stores gamma, a, b, linear slope and
+    // the breakpoint as s15Fixed16 numbers. Check independently of the builder.
+    for sig in [b"rTRC", b"gTRC", b"bTRC"] {
+        let trc = profile_tag(icc, sig).unwrap();
+        assert_eq!(&trc[..4], b"para");
+        assert!(matches!(
+            u16::from_be_bytes(trc[8..10].try_into().unwrap()),
+            3 | 4
+        ));
+        for (raw, expected) in trc[12..32].as_chunks::<4>().0.iter().zip([
+            2.4,
+            1.0 / 1.055,
+            0.055 / 1.055,
+            1.0 / 12.92,
+            0.04045,
+        ]) {
+            assert!((sfixed(raw) - expected).abs() <= 1.0 / 65536.0);
+        }
+    }
+    assert_eq!(
+        zentiff::decode(&file, &Default::default(), &enough::Unstoppable)
+            .unwrap()
+            .pixels
+            .as_view()
+            .as_contiguous_bytes()
+            .unwrap(),
+        [231, 66, 12, 17, 154, 199]
+    );
+}
+
+#[test]
+fn rgb_pq_keeps_its_transfer_and_native_samples() {
+    use zenpixels::{Primaries, Transfer};
+
+    let spec = PixelFormat::RGB8_SRGB
+        .with_primaries(Primaries::Bt2020)
+        .with_transfer(Transfer::Pq);
+    let samples = [231u8, 66, 12, 17, 154, 199];
+    let buf = PixelBuf::from_typed(samples.to_vec(), 2, 1, spec).unwrap();
+    let file = encode_via_trait(&buf);
+    let decoded = zentiff::decode(&file, &Default::default(), &enough::Unstoppable).unwrap();
+    let icc = decoded.info.icc_profile.as_deref().unwrap();
+    assert_icc_header(icc, b"RGB ");
+    // ICC's video-signal tag is the four raw H.273 code points.
+    let tag = profile_tag(icc, b"cicp").unwrap();
+    assert_eq!(&tag[..4], b"cicp");
+    assert_eq!(&tag[8..12], &[9, 16, 0, 1]);
+    assert_eq!(
+        decoded.pixels.as_view().as_contiguous_bytes().unwrap(),
+        samples
+    );
+}
+
+/// TIFF emits a gray profile for gray samples, including a requested P3
+/// white and an HDR transfer. The profile's color-space signature must not be RGB.
+#[test]
+fn gray_pq_and_p3_emit_gray_icc_without_changing_u16_samples() {
+    use zenpixels::{Cicp, Transfer};
+
+    let samples = [0u16, 0x1234, 0x8001, 0xffff];
+    for (cicp, transfer) in [
+        (Cicp::new(9, 16, 0, true), Transfer::Pq),
+        (Cicp::DISPLAY_P3, Transfer::Srgb),
+    ] {
+        let buf = PixelBuf::from_typed(
+            samples.to_vec(),
+            2,
+            2,
+            PixelFormat::GRAY16_SRGB.with_transfer(transfer),
+        )
+        .unwrap();
+        let encoded = TiffEncoderCodecConfig::new()
+            .job()
+            .with_unfiltered_metadata(
+                Metadata::none()
+                    .with_cicp(cicp)
+                    .filtered(&MetadataPolicy::PreserveExact),
+            )
+            .encoder()
+            .unwrap()
+            .encode(buf.as_view())
+            .unwrap();
+        let decoded =
+            zentiff::decode(encoded.data(), &Default::default(), &enough::Unstoppable).unwrap();
+        let icc = decoded.info.icc_profile.as_deref().unwrap();
+        assert_icc_header(icc, b"GRAY");
+        let trc = profile_tag(icc, b"kTRC").unwrap();
+        assert!(matches!(&trc[..4], b"para" | b"curv"));
+        assert!(profile_tag(icc, b"rXYZ").is_none());
+        assert_eq!(
+            decoded.pixels.as_view().as_contiguous_bytes().unwrap(),
+            samples
+                .into_iter()
+                .flat_map(u16::to_ne_bytes)
+                .collect::<Vec<_>>()
+        );
+    }
 }
 
 #[test]
@@ -853,10 +1031,10 @@ fn srgb_cicp_only_source_embeds_no_icc() {
 
     let encoded = TiffEncoderCodecConfig::new()
         .job()
-        .with_metadata_policy(meta, MetadataPolicy::PreserveExact)
+        .with_unfiltered_metadata(meta.filtered(&MetadataPolicy::PreserveExact))
         .encoder()
         .unwrap()
-        .encode(buf.as_slice())
+        .encode(buf.as_view())
         .unwrap();
 
     let decoded = TiffDecoderCodecConfig::new()
@@ -879,7 +1057,7 @@ fn metadata_default_no_metadata_is_byte_identical() {
     let with_traits = encode_via_trait(&buf);
 
     let plain = zentiff::encode(
-        &buf.as_slice(),
+        &buf.as_view(),
         &zentiff::TiffEncodeConfig::default(),
         &enough::Unstoppable,
     )
@@ -909,7 +1087,10 @@ fn decode_bytes_under_pref(encoded: &[u8], pref: Option<zencodec::AllocPreferenc
         .decode()
         .unwrap()
         .into_buffer()
-        .copy_to_contiguous_bytes()
+        .as_view()
+        .to_contiguous_bytes()
+        .unwrap()
+        .into_owned()
 }
 
 /// All three allocation modes must yield byte-identical decoded output.
@@ -936,13 +1117,13 @@ fn fallible_alloc_decode_matches_default() {
 
     // (2) RGBA8 — passthrough with alpha.
     let rgba_data: Vec<u8> = (0..64u32 * 48 * 4).map(|i| (i % 256) as u8).collect();
-    let rgba8 = PixelBuffer::from_vec(rgba_data, 64, 48, PixelDescriptor::RGBA8_SRGB).unwrap();
+    let rgba8 = PixelBuf::from_typed(rgba_data, 64, 48, PixelFormat::RGBA8_SRGB).unwrap();
     assert_all_alloc_modes_agree(&encode_via_trait(&rgba8));
 
     // (3) GrayAlpha8 — exercises the channel-adjust conversion buffer
     //     (gray+alpha → expanded), a different untrusted-sized alloc site.
     let ga_data: Vec<u8> = (0..32u32 * 24 * 2).map(|i| (i % 256) as u8).collect();
-    let graya = PixelBuffer::from_vec(ga_data, 32, 24, PixelDescriptor::GRAYA8_SRGB).unwrap();
+    let graya = PixelBuf::from_typed(ga_data, 32, 24, PixelFormat::GRAYA8_SRGB).unwrap();
     assert_all_alloc_modes_agree(&encode_via_trait(&graya));
 }
 

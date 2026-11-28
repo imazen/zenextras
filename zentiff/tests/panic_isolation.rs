@@ -120,7 +120,7 @@ fn truncated_tiff_returns_err() {
 fn truncated_valid_tiff_returns_err() {
     let buf = make_gradient_rgb8(32, 24);
     let encoded = encode(
-        &buf.as_slice(),
+        &buf.as_view(),
         &TiffEncodeConfig::new().with_compression(Compression::Uncompressed),
         &Unstoppable,
     )
@@ -140,7 +140,7 @@ fn truncated_valid_tiff_returns_err() {
 fn valid_tiff_still_decodes_through_widened_guard() {
     let buf = make_gradient_rgb8(40, 30);
     let encoded = encode(
-        &buf.as_slice(),
+        &buf.as_view(),
         &TiffEncodeConfig::new().with_compression(Compression::Uncompressed),
         &Unstoppable,
     )
@@ -163,7 +163,7 @@ fn valid_tiff_still_decodes_through_widened_guard() {
 fn memory_cap_does_not_break_small_image_through_limits() {
     let buf = make_gradient_rgb8(64, 64);
     let encoded = encode(
-        &buf.as_slice(),
+        &buf.as_view(),
         &TiffEncodeConfig::new().with_compression(Compression::Uncompressed),
         &Unstoppable,
     )
@@ -179,8 +179,8 @@ fn memory_cap_does_not_break_small_image_through_limits() {
 
 // --- helpers (mirrors tests/roundtrip.rs) ---
 
-fn make_gradient_rgb8(width: u32, height: u32) -> zenpixels::PixelBuffer {
-    use zenpixels::{PixelBuffer, PixelDescriptor};
+fn make_gradient_rgb8(width: u32, height: u32) -> zenpixels::PixelBuf {
+    use zenpixels::{PixelBuf, PixelFormat};
     let pixel_count = (width * height) as usize;
     let mut data = Vec::with_capacity(pixel_count * 3);
     for y in 0..height {
@@ -190,5 +190,5 @@ fn make_gradient_rgb8(width: u32, height: u32) -> zenpixels::PixelBuffer {
             data.push(128u8);
         }
     }
-    PixelBuffer::from_vec(data, width, height, PixelDescriptor::RGB8).unwrap()
+    PixelBuf::from_typed(data, width, height, PixelFormat::RGB8_SRGB).unwrap()
 }

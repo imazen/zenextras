@@ -166,7 +166,7 @@ fn decode(
 
 fn rows(out: &zencodec::decode::DecodeOutput) -> Vec<u8> {
     let px = out.pixels();
-    (0..px.rows()).flat_map(|y| px.row(y).to_vec()).collect()
+    (0..px.height()).flat_map(|y| px.row(y).to_vec()).collect()
 }
 
 fn assert_part(

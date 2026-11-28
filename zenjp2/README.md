@@ -19,7 +19,7 @@ zenjp2 = "0.1.0"
 ```
 
 ```rust,no_run
-use zenjp2::{is_jpeg2000, Image, DecodeSettings};
+use zenjp2::{is_jpeg2000, DecodeSettings, DecoderContext, Image};
 
 let data = std::fs::read("photo.jp2").unwrap();
 assert!(is_jpeg2000(&data)); // JP2 container or raw J2K codestream
@@ -27,7 +27,8 @@ assert!(is_jpeg2000(&data)); // JP2 container or raw J2K codestream
 // Parse the codestream, then decode to interleaved 8-bit pixels.
 let image = Image::new(&data, &DecodeSettings::default()).unwrap();
 let (w, h, alpha) = (image.width(), image.height(), image.has_alpha());
-let pixels: Vec<u8> = image.decode().unwrap();
+let mut context = DecoderContext::default();
+let pixels = image.decode(&mut context).unwrap().data_u8();
 println!("{w}x{h}, alpha={alpha}, {} bytes", pixels.len());
 ```
 
@@ -65,19 +66,17 @@ alpha.
 
 ## Output formats
 
-hayro-jpeg2000 outputs interleaved 8-bit samples, mapped to these zenpixels
-descriptors:
+The zencodec adapter delivers interleaved U8 by default for component depths
+up to 8 bits. A wider direct component or mapped palette column selects
+native-endian U16. It scales each component to the full unsigned range. For a
+12-bit source, an integer code is stored as `round(code × 65535 / 4095)`.
+To request reduced precision, pass a matching channel layout with U8 samples
+in the decoder preferences.
 
-| Source color space | Output descriptor |
-|--------------------|-------------------|
-| Gray | `GRAY8_SRGB` |
-| RGB (no alpha) | `RGB8_SRGB` |
-| RGB + alpha | `RGBA8_SRGB` |
-| CMYK | `RGBA8_SRGB` (4-channel container; caller applies CMS) |
-| ICC / Unknown | by channel count (1 → Gray, 3 → RGB, 4 → RGBA) |
-
-An embedded ICC profile is carried through on `ImageInfo` for the ICC color
-space.
+An embedded RGB or gray ICC profile describes the active samples when its data
+color space matches the raster. The original bytes are also available through
+the pixel origin and `ImageInfo`. CMYK is delivered with a CMYK layout and its
+matching ink profile when one is present.
 
 ## Features
 

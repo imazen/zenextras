@@ -26,7 +26,7 @@ use tiff::tags::Tag;
 
 use zencodec::decode::{Decode, DecodeJob, DecoderConfig};
 use zencodec::{Orientation, OrientationHint};
-use zenpixels::PixelDescriptor;
+use zenpixels::PixelFormat;
 use zentiff::codec::TiffDecoderCodecConfig;
 
 /// Stored (coded) dimensions of the synthesized fixture.
@@ -69,13 +69,13 @@ fn fixture_with_orientation(orientation: u16) -> Vec<u8> {
 }
 
 /// Read an RGB pixel from a decoded RGB8 output. zentiff decodes 8-bit RGB to
-/// `PixelDescriptor::RGB8` (bare, transfer `Unknown`) — the byte layout is
+/// `PixelFormat::RGB8_SRGB` (bare, transfer `Unknown`) — the byte layout is
 /// R/G/B at 3 bytes/pixel regardless of the color-metadata fields, which is all
 /// the orientation oracle needs.
 fn px(out: &zencodec::decode::DecodeOutput, x: u32, y: u32) -> [u8; 3] {
     let ps = out.pixels();
     assert_eq!(
-        ps.descriptor().bytes_per_pixel(),
+        ps.format().layout.bytes_per_pixel(),
         3,
         "fixture is 8-bit RGB (3 bytes/pixel)"
     );
@@ -88,7 +88,7 @@ fn decode_with_hint(data: &[u8], hint: OrientationHint) -> zencodec::decode::Dec
     TiffDecoderCodecConfig::new()
         .job()
         .with_orientation(hint)
-        .decoder(Cow::Borrowed(data), &[PixelDescriptor::RGB8_SRGB])
+        .decoder(Cow::Borrowed(data), &[PixelFormat::RGB8_SRGB])
         .expect("decoder")
         .decode()
         .expect("decode")
@@ -194,7 +194,7 @@ fn orientation_correct_decode_bakes_upright_pixels() {
     let (sw, sh) = STORED;
     for sy in 0..sh {
         for sx in 0..sw {
-            let (dx, dy) = Orientation::Rotate90.forward_map(sx, sy, sw, sh);
+            let (dx, dy) = Orientation::Rotate90.map_pixel_coordinates((sx, sy), (sw, sh));
             assert_eq!(
                 px(&out, dx, dy),
                 color_at(sx, sy),
@@ -238,7 +238,7 @@ fn orientation_exact_transform_ignores_exif() {
     let (sw, sh) = STORED;
     for sy in 0..sh {
         for sx in 0..sw {
-            let (dx, dy) = Orientation::FlipH.forward_map(sx, sy, sw, sh);
+            let (dx, dy) = Orientation::FlipH.map_pixel_coordinates((sx, sy), (sw, sh));
             assert_eq!(px(&out, dx, dy), color_at(sx, sy), "flipped ({sx},{sy})");
         }
     }
@@ -266,7 +266,7 @@ fn orientation_exact_transpose_swaps_axes_and_bakes() {
     let (sw, sh) = STORED;
     for sy in 0..sh {
         for sx in 0..sw {
-            let (dx, dy) = Orientation::Transpose.forward_map(sx, sy, sw, sh);
+            let (dx, dy) = Orientation::Transpose.map_pixel_coordinates((sx, sy), (sw, sh));
             assert_eq!(
                 px(&out, dx, dy),
                 color_at(sx, sy),
@@ -299,7 +299,7 @@ fn orientation_correct_and_transform_composes() {
     let (sw, sh) = STORED;
     for sy in 0..sh {
         for sx in 0..sw {
-            let (dx, dy) = net.forward_map(sx, sy, sw, sh);
+            let (dx, dy) = net.map_pixel_coordinates((sx, sy), (sw, sh));
             assert_eq!(
                 px(&out, dx, dy),
                 color_at(sx, sy),

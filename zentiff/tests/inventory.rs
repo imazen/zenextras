@@ -10,7 +10,7 @@ use zencodec::decode::{DecodeJob, DecodePolicy, DecoderConfig};
 use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
 use zencodec::inventory::{Disposition, Inventory, MetadataKind, Part, PartKind, PartTag};
 use zencodec::{Metadata, MetadataPolicy};
-use zenpixels::{PixelBuffer, PixelDescriptor};
+use zenpixels::{PixelBuf, PixelFormat};
 use zentiff::codec::{TiffDecoderCodecConfig, TiffEncoderCodecConfig};
 
 fn inventory(data: &[u8]) -> Inventory {
@@ -570,12 +570,16 @@ fn overlapping_values_and_ifd_cycles_stay_valid() {
 
 /// A `DecodePolicy` that withholds metadata turns those parts into `Dropped`.
 #[test]
-#[allow(deprecated)] // Exercises the legacy best-effort policy setter on purpose.
 fn decode_policy_suppression_is_reflected() {
     let data = every_unit_fixture();
+    let policy = DecodePolicy::none()
+        .with_allow_icc(false)
+        .with_allow_exif(false)
+        .with_allow_xmp(false);
     let inv = TiffDecoderCodecConfig::new()
         .job()
-        .with_policy(DecodePolicy::strict())
+        .try_with_policy(policy)
+        .unwrap()
         .inventory(&data)
         .unwrap();
     inv.validate().unwrap();
@@ -652,11 +656,11 @@ fn exif_blob() -> Vec<u8> {
 #[test]
 fn encoder_output_passes_check_inventory() {
     let rgb: Vec<u8> = (0..24 * 16 * 3).map(|i| (i * 7 % 251) as u8).collect();
-    let rgb = PixelBuffer::from_vec(rgb, 24, 16, PixelDescriptor::RGB8_SRGB).unwrap();
+    let rgb = PixelBuf::from_typed(rgb, 24, 16, PixelFormat::RGB8_SRGB).unwrap();
     let rgba16: Vec<u8> = (0..9 * 5 * 8).map(|i| (i * 13 % 256) as u8).collect();
-    let rgba16 = PixelBuffer::from_vec(rgba16, 9, 5, PixelDescriptor::RGBA16_SRGB).unwrap();
+    let rgba16 = PixelBuf::from_bytes(rgba16, 9, 5, PixelFormat::RGBA16_SRGB).unwrap();
     let gray: Vec<u8> = (0..31 * 3).map(|i| (i * 3 % 256) as u8).collect();
-    let gray = PixelBuffer::from_vec(gray, 31, 3, PixelDescriptor::GRAY8_SRGB).unwrap();
+    let gray = PixelBuf::from_typed(gray, 31, 3, PixelFormat::GRAY8_SRGB).unwrap();
     let mut icc = vec![0u8; 132];
     icc[36..40].copy_from_slice(b"acsp");
     let meta = Metadata::none()
@@ -679,14 +683,14 @@ fn encoder_output_passes_check_inventory() {
                 );
                 let job = config.job();
                 let job = if with_meta {
-                    job.with_metadata_policy(meta.clone(), MetadataPolicy::PreserveExact)
+                    job.with_unfiltered_metadata(meta.filtered(&MetadataPolicy::PreserveExact))
                 } else {
                     job
                 };
                 let bytes = job
                     .encoder()
                     .unwrap()
-                    .encode(buf.as_slice())
+                    .encode(buf.as_view())
                     .unwrap()
                     .into_vec();
                 zencodec_testkit::check_inventory(TiffDecoderCodecConfig::new(), &bytes)
@@ -1168,7 +1172,7 @@ fn decode_with(job: zentiff::codec::TiffDecodeJob, data: &[u8]) -> Result<Summar
         info.embedded_metadata.xmp.as_ref().map(|v| v.to_vec()),
         info.source_color.icc_profile.as_ref().map(|v| v.to_vec()),
     ];
-    let pixels = out.pixels().contiguous_bytes().into_owned();
+    let pixels = out.pixels().as_contiguous_bytes().unwrap().to_vec();
     // `ImageInfo`'s Debug leaves out the resolution.
     Ok((
         pixels,
@@ -1831,7 +1835,6 @@ fn values_over_the_value_limit_are_dropped() {
 /// Under a policy that suppresses EXIF, the EXIF IFD and its pointer are
 /// parsed for nothing.
 #[test]
-#[allow(deprecated)] // Exercises the legacy best-effort policy setter on purpose.
 fn suppressed_exif_ifd_and_pointer_are_dropped() {
     let mut w = W::new();
     let strip = w.put(&[1, 2, 3, 4]);
@@ -1842,9 +1845,14 @@ fn suppressed_exif_ifd_and_pointer_are_dropped() {
     let ifd0 = w.ifd(&e, 0);
     w.set_ifd0(ifd0);
     let data = w.b;
+    let policy = DecodePolicy::none()
+        .with_allow_icc(false)
+        .with_allow_exif(false)
+        .with_allow_xmp(false);
     let inv = TiffDecoderCodecConfig::new()
         .job()
-        .with_policy(DecodePolicy::strict())
+        .try_with_policy(policy)
+        .unwrap()
         .inventory(&data)
         .unwrap();
     inv.validate().unwrap();

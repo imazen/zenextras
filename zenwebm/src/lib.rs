@@ -40,8 +40,36 @@ use core::fmt;
 
 use zencodec_media::track::{CodecId, CodecTag};
 
-pub use demux::WebmDemuxer;
-pub use mux::{MuxReport, WebmMuxer};
+pub use demux::{WebmDemuxFactory, WebmDemuxer};
+pub use mux::{BoundedWebmMuxer, MuxReport, WebmMuxFactory, WebmMuxer};
+
+/// Register [`WebmDemuxFactory`] and [`WebmMuxFactory`] in a [`zencodec::CodecSet`]
+/// under `org.imazen.webm.zenwebm`.
+pub fn register_webm_codec_set(
+    set: zencodec::CodecSet,
+) -> Result<zencodec::CodecSet, zencodec::RegistrationError> {
+    use alloc::sync::Arc;
+    use zencodec::{NamedFactory, RegistrationId};
+    use zencodec_media::registry::{ContainerId, DemuxFactory, DemuxRole, MuxFactory, MuxRole};
+
+    let id = RegistrationId::new("org.imazen.webm.zenwebm").expect("valid registration id");
+    let set = set.with_role::<DemuxRole>(
+        [ContainerId::Webm],
+        NamedFactory::new(
+            id.clone(),
+            env!("CARGO_PKG_VERSION"),
+            Arc::new(WebmDemuxFactory::new()) as Arc<dyn DemuxFactory>,
+        ),
+    )?;
+    set.with_role::<MuxRole>(
+        [ContainerId::Webm],
+        NamedFactory::new(
+            id,
+            env!("CARGO_PKG_VERSION"),
+            Arc::new(WebmMuxFactory::new()) as Arc<dyn MuxFactory>,
+        ),
+    )
+}
 
 /// Malformed or unrepresentable WebM.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

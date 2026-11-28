@@ -1,9 +1,11 @@
 //! Default prediction must admit float input and preserve every sample bit.
 use enough::Unstoppable;
-use zenpixels::{PixelDescriptor, PixelSlice};
+use zenpixels::{
+    AlphaMode, ChannelOrder, ColorSpace, PixelFormat, PixelView, SampleLayout, SampleType,
+};
 use zentiff::{Compression, TiffDecodeConfig, TiffEncodeConfig, decode, encode};
 
-fn fixture(desc: PixelDescriptor, channels: usize, padded: bool) -> (Vec<u8>, Vec<u8>, usize) {
+fn fixture(channels: usize, padded: bool) -> (Vec<u8>, Vec<u8>, usize) {
     let values = [
         -3.25_f32,
         -0.0,
@@ -24,7 +26,6 @@ fn fixture(desc: PixelDescriptor, channels: usize, padded: bool) -> (Vec<u8>, Ve
             expected.extend_from_slice(&value);
         }
     }
-    PixelSlice::new(&input, 3, 2, stride, desc).unwrap();
     (input, expected, stride)
 }
 
@@ -35,14 +36,21 @@ fn default_float_prediction_preserves_samples_and_stride() {
         std::fs::create_dir(dir).expect("oracle output must be a fresh directory");
     }
     for (name, desc, channels) in [
-        ("gray", PixelDescriptor::GRAYF32_LINEAR, 1),
-        ("graya", PixelDescriptor::GRAYAF32_LINEAR, 2),
-        ("rgb", PixelDescriptor::RGBF32_LINEAR, 3),
-        ("rgba", PixelDescriptor::RGBAF32_LINEAR, 4),
+        ("gray", PixelFormat::GRAYF32_LINEAR, 1),
+        (
+            "graya",
+            PixelFormat::new(
+                SampleLayout::new(SampleType::F32, ChannelOrder::GrayAlpha),
+                ColorSpace::GRAY_LINEAR.with_alpha(AlphaMode::Straight),
+            ),
+            2,
+        ),
+        ("rgb", PixelFormat::RGBF32_LINEAR, 3),
+        ("rgba", PixelFormat::RGBAF32_LINEAR, 4),
     ] {
         for padded in [false, true] {
-            let (input, expected, stride) = fixture(desc, channels, padded);
-            let pixels = PixelSlice::new(&input, 3, 2, stride, desc).unwrap();
+            let (input, expected, stride) = fixture(channels, padded);
+            let pixels = PixelView::new(&input, 3, 2, stride, &desc).unwrap();
             for big in [false, true] {
                 for (compression_name, compression) in [
                     ("none", Compression::Uncompressed),
@@ -57,7 +65,7 @@ fn default_float_prediction_preserves_samples_and_stride() {
                     let decoded =
                         decode(&bytes, &TiffDecodeConfig::default(), &Unstoppable).unwrap();
                     assert_eq!(
-                        decoded.pixels.as_slice().contiguous_bytes().as_ref(),
+                        decoded.pixels.as_view().as_contiguous_bytes().unwrap(),
                         expected
                     );
                     if let Some(dir) = &output_dir {
@@ -76,29 +84,31 @@ fn default_float_prediction_preserves_samples_and_stride() {
 fn float_shared_job_with_metadata_preserves_samples() {
     use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
     use zencodec::{Metadata, MetadataPolicy};
+    use zenpixels::{PixelFormat, PixelView};
     use zentiff::codec::TiffEncoderCodecConfig;
-    let desc = PixelDescriptor::RGBF32_LINEAR;
-    let (input, expected, stride) = fixture(desc, 3, true);
+    let desc = PixelFormat::RGBF32_LINEAR;
+    let (input, expected, stride) = fixture(3, true);
     let config = TiffEncoderCodecConfig::new();
     let one = config
         .clone()
         .job()
         .encoder()
         .unwrap()
-        .encode(PixelSlice::new(&input, 3, 2, stride, desc).unwrap())
+        .encode(PixelView::new(&input, 3, 2, stride, &desc).unwrap())
         .unwrap();
     let metadata = Metadata::none().with_xmp(b"<xmp>float predictor</xmp>".as_slice());
     let tagged = config
         .job()
-        .with_metadata_policy(metadata, MetadataPolicy::PreserveExact)
+        .try_with_metadata_policy(metadata, MetadataPolicy::PreserveExact)
+        .unwrap()
         .encoder()
         .unwrap()
-        .encode(PixelSlice::new(&input, 3, 2, stride, desc).unwrap())
+        .encode(PixelView::new(&input, 3, 2, stride, &desc).unwrap())
         .unwrap();
     for bytes in [one.data(), tagged.data()] {
         let decoded = decode(bytes, &TiffDecodeConfig::default(), &Unstoppable).unwrap();
         assert_eq!(
-            decoded.pixels.as_slice().contiguous_bytes().as_ref(),
+            decoded.pixels.as_view().as_contiguous_bytes().unwrap(),
             expected
         );
     }

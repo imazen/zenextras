@@ -3,7 +3,7 @@
 # zenpdf
 
 Pure-Rust PDF page renderer built on the [hayro](https://github.com/LaurenzV/hayro)
-rendering engine by LaurenzV. zenpdf rasterizes PDF pages to `PixelBuffer<Rgba<u8>>`
+rendering engine by LaurenzV. zenpdf rasterizes PDF pages to `PixelBuf`
 (straight-alpha sRGB RGBA8) with page selection, flexible output sizing, resource
 limits, and zencodec integration.
 

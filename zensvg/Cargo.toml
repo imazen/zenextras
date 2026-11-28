@@ -24,8 +24,8 @@ usvg = "0.49.0"
 tiny-skia = "0.12.0"
 
 # zencodec integration
-zencodec = ">=0.2.0, <0.4.0"
-zenpixels = ">=0.2.10, <0.4.0"
+zencodec = ">=0.3.0, <0.5.0"
+zenpixels = "0.5"
 enough = "0.4.5"
 whereat = "0.1.5"
 
@@ -52,7 +52,7 @@ inventory = ["dep:data-url", "dep:imagesize"]
 zenbench = "0.1.11"
 # zencodec conformance harness. Provides check_decode_truncation_series
 # (EOF/truncation).
-zencodec-testkit = ">=0.2.0, <0.4.0"
+zencodec-testkit = ">=0.3.0, <0.5.0"
 
 [[bench]]
 name = "arm_decode"

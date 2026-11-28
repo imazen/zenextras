@@ -9,30 +9,31 @@ members = [
     "zenpsd",
     "zenivf",
     "zenwebm",
+    "zenvp8",
+    "zenvp9",
 ]
 
 [patch.crates-io]
-# One unpublished core family at the verified main merge. Members use registry
+garb = { git = "https://github.com/imazen/garb", rev = "457ff8b9153e9d675a39dc098052b2ffeb6206fa" }
+linear-srgb = { git = "https://github.com/imazen/linear-srgb", rev = "ae83f19426737635fee3dd16f228681019f52585" }
+# One unpublished core family from the Zenpixels 0.5 integration. Members use registry
 # requirements so downstream consumers can choose one family with their root patch.
-zencodec = { git = "https://github.com/imazen/zencodec", rev = "f02a17ec6001a9efcad1267f92a3ea928ed06e57" }
-zencodec-testkit = { git = "https://github.com/imazen/zencodec", rev = "f02a17ec6001a9efcad1267f92a3ea928ed06e57" }
-zencodec-io = { git = "https://github.com/imazen/zencodec", rev = "f02a17ec6001a9efcad1267f92a3ea928ed06e57" }
-zencodec-media = { git = "https://github.com/imazen/zencodec", rev = "f02a17ec6001a9efcad1267f92a3ea928ed06e57" }
-zencodec-media-testkit = { git = "https://github.com/imazen/zencodec", rev = "f02a17ec6001a9efcad1267f92a3ea928ed06e57" }
-zenmeta = { git = "https://github.com/imazen/zencodec", rev = "f02a17ec6001a9efcad1267f92a3ea928ed06e57" }
-# Paired precision/conversion APIs consumed by this shared core.
-zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "283655c5424e0ad7ebc6d2acd94670fac1e29158" }
-zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "283655c5424e0ad7ebc6d2acd94670fac1e29158" }
-# zenjpeg depends on ultrahdr-core; crates.io 0.6.0 is on zencodec 0.1. zenpipe's revision
-# is on the 0.2 core above.
-ultrahdr-core = { git = "https://github.com/imazen/ultrahdr", rev = "610975047bcb0bb266e952f15bcd978ba3f34950" }
+zencodec = { git = "https://github.com/imazen/zencodec", rev = "9500a8154bbb21a2d71e87019b002bc43a6094f2" }
+zencodec-testkit = { git = "https://github.com/imazen/zencodec", rev = "9500a8154bbb21a2d71e87019b002bc43a6094f2" }
+zencodec-io = { git = "https://github.com/imazen/zencodec", rev = "9500a8154bbb21a2d71e87019b002bc43a6094f2" }
+zencodec-media = { git = "https://github.com/imazen/zencodec", rev = "9500a8154bbb21a2d71e87019b002bc43a6094f2" }
+zencodec-media-testkit = { git = "https://github.com/imazen/zencodec", rev = "9500a8154bbb21a2d71e87019b002bc43a6094f2" }
+zenmeta = { git = "https://github.com/imazen/zencodec", rev = "9500a8154bbb21a2d71e87019b002bc43a6094f2" }
+# Zenpixels and its converter are pinned to the same source revision.
+zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "83217972759fab02ff530fe50203a0c7fc3282f8" }
+zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "83217972759fab02ff530fe50203a0c7fc3282f8" }
+# Zenjpeg and Ultrahdr Core share the pinned Zenpixels and zencodec contracts.
+ultrahdr-core = { git = "https://github.com/imazen/ultrahdr", rev = "76e9aad431e1faf7782b0654857325246b15c28b" }
 # Pinned PDF stream resource-limit fork used by zenpdf.
 hayro-syntax = { git = "https://github.com/lilith/hayro", rev = "2ce50d0164878b8505e118f81dcb1d0367b26957" }
 
-# zenjpeg 0.9.0 (unreleased; byte-exact with libjpeg-turbo, 12-bit and lossless decode) for
-# zentiff's JPEG pages, at zenpipe's revision (zenjpeg PR 246, d099267c): it builds on the
-# core family above, and its decoder is unchanged since cf7b051b. Drop once it is on crates.io.
-zenjpeg = { git = "https://github.com/imazen/zenjpeg", rev = "d099267c37b4f91b35fe5f15ddb680455e1d4bd8" }
+# Zenjpeg PR 3A supplies sans-I/O JpegIncrementalDecoder + zenpixels 0.5 / zencodec 0.3 alignment.
+zenjpeg = { git = "https://github.com/imazen/zenjpeg", rev = "213c04a440a89aaed0a71c5355d591acebbd2be3" }
 
 # Pinned TIFF scratch-buffer resource-limit fork used by zentiff.
 tiff = { git = "https://github.com/lilith/image-tiff", rev = "10a3b6b2fa88eb5943525066a989ea9e64e644d5" }

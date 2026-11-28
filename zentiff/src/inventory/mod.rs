@@ -121,26 +121,26 @@ const PHOTOMETRIC_KNOWN: &[u64] = &[0, 1, 2, 3, 4, 5, 6, 8, 9, 10, 32844, 32845]
 /// Whether `jpeg::decode_page` takes this page: JPEG compression, chunky, three 8-bit samples
 /// and no extra samples (the YCbCr case; the stream's own color space is checked at decode).
 fn zenjpeg_page(w: &Walk<'_>, ifd: &Ifd) -> bool {
-    let int = |t: u16| w.find(ifd, t).and_then(|e| w.single_uint(e));
+    let int = |t: u16| w.find_entry(ifd, t).and_then(|e| w.single_uint(e));
     let bits_8 = w
-        .find(ifd, 258)
-        .is_some_and(|e| w.uints(e, 64).iter().all(|&b| b == 8));
+        .find_entry(ifd, 258)
+        .is_some_and(|e| w.entry_uints(e, 64).iter().all(|&b| b == 8));
     int(259) == Some(7)
         && matches!(int(284), None | Some(1))
         && int(277) == Some(3)
         && bits_8
-        && w.find(ifd, 338).is_none()
+        && w.find_entry(ifd, 338).is_none()
 }
 
 /// image-tiff's PhotometricInterpretation for a page without the tag, as in
 /// libtiff's RGBA reader: one color sample (SamplesPerPixel minus
 /// ExtraSamples) is BlackIsZero, three are RGB; other counts have none.
 fn default_photometric(w: &Walk<'_>, ifd: &Ifd) -> Option<u64> {
-    let spp = match w.find(ifd, 277) {
+    let spp = match w.find_entry(ifd, 277) {
         None => 1,
         Some(e) => w.single_uint(e)?,
     };
-    let extra = w.find(ifd, 338).map_or(0, |e| e.count);
+    let extra = w.find_entry(ifd, 338).map_or(0, |e| e.count);
     match spp.checked_sub(extra)? {
         1 => Some(1),
         3 => Some(2),
@@ -196,8 +196,9 @@ impl Rules for TiffPolicy<'_> {
         kind == Kind::Page(0)
             && e.tag == EXIF_IFD
             && e.count == 1
-            && matches!(e.typ, 4 | 13 | 18)
-            && w.find(parent, EXIF_IFD).is_some_and(|last| last.at == e.at)
+            && matches!(e.field_type, 4 | 13 | 18)
+            && w.find_entry(parent, EXIF_IFD)
+                .is_some_and(|last| last.offset == e.offset)
     }
 
     fn follows_next(&self, w: &Walk<'_>, ifd: &Ifd, kind: Kind) -> bool {
@@ -231,9 +232,9 @@ impl Rules for TiffPolicy<'_> {
         // past the profile's declared size or the packet's end are split
         // off but stay metadata.
         if let Disposition::Metadata(kind @ (MetadataKind::Icc | MetadataKind::Xmp)) =
-            self.entry_fate(w, ifd, index).d
+            self.entry_fate(w, ifd, index).disposition
         {
-            let b = w.bytes(e)?;
+            let b = w.entry_bytes(e)?;
             let end = if kind == MetadataKind::Icc {
                 let size = u64::from(u32::from_be_bytes(b.get(..4)?.try_into().ok()?));
                 (size >= 128).then_some(size)?
@@ -260,13 +261,16 @@ impl Rules for TiffPolicy<'_> {
         // image-tiff truncates an out-of-line ASCII value at its first NUL,
         // so the rest never reaches the re-serialized EXIF blob. An inline
         // ASCII value keeps its inner NULs (only outer ones are trimmed).
-        if e.typ != 2
-            || e.count <= w.lay.inline_cap()
-            || !matches!(self.entry_fate(w, ifd, index).d, Disposition::Metadata(_))
+        if e.field_type != 2
+            || e.count <= w.layout.inline_cap()
+            || !matches!(
+                self.entry_fate(w, ifd, index).disposition,
+                Disposition::Metadata(_)
+            )
         {
             return None;
         }
-        let nul = w.bytes(e)?.iter().position(|&b| b == 0)?;
+        let nul = w.entry_bytes(e)?.iter().position(|&b| b == 0)?;
         Some((
             nul as u64 + 1,
             Fate::because(
@@ -343,16 +347,16 @@ impl TiffPolicy<'_> {
     /// `read_bytes_tag`: `get_tag_u8_vec` accepts BYTE or UNDEFINED, except
     /// an inline BYTE list (image-tiff widens those to LONG values).
     fn byte_blob(&self, w: &Walk<'_>, e: &Entry) -> Result<(), String> {
-        if !matches!(e.typ, 1 | 7) || e.count == 0 {
+        if !matches!(e.field_type, 1 | 7) || e.count == 0 {
             return Err("not a non-empty BYTE/UNDEFINED value; get_tag_u8_vec rejects it".into());
         }
-        if e.typ == 1 && e.count > 1 && e.count <= w.lay.inline_cap() {
+        if e.field_type == 1 && e.count > 1 && e.count <= w.layout.inline_cap() {
             return Err(
                 "inline BYTE list; image-tiff reads it as LONG values and get_tag_u8_vec rejects it"
                     .into(),
             );
         }
-        if w.bytes(e).is_none() {
+        if w.entry_bytes(e).is_none() {
             return Err("value lies past the end of the file".into());
         }
         match self.over_limit(w, e) {
@@ -365,14 +369,17 @@ impl TiffPolicy<'_> {
     /// exactly two integers.
     fn rational(&self, w: &Walk<'_>, e: Option<&Entry>) -> Option<(u64, u64)> {
         let e = e?;
-        let b = w.bytes(e)?;
-        if e.typ == 5 && e.count == 1 {
-            return Some((u64::from(w.lay.u32(b, 0)?), u64::from(w.lay.u32(b, 4)?)));
+        let b = w.entry_bytes(e)?;
+        if e.field_type == 5 && e.count == 1 {
+            return Some((
+                u64::from(w.layout.u32(b, 0)?),
+                u64::from(w.layout.u32(b, 4)?),
+            ));
         }
-        if e.typ == 2 {
+        if e.field_type == 2 {
             // An ASCII value of exactly two characters, as image-tiff decodes
             // it (inline: outer NULs trimmed; out of line: cut at the NUL).
-            let text = if b.len() as u64 <= w.lay.inline_cap() {
+            let text = if b.len() as u64 <= w.layout.inline_cap() {
                 if !b.is_ascii() || b.last() != Some(&0) {
                     return None;
                 }
@@ -394,8 +401,8 @@ impl TiffPolicy<'_> {
                 _ => None,
             };
         }
-        if e.count == 2 && matches!(e.typ, 1 | 3 | 4 | 7 | 13 | 16 | 18) {
-            let v = w.uints(e, 2);
+        if e.count == 2 && matches!(e.field_type, 1 | 3 | 4 | 7 | 13 | 16 | 18) {
+            let v = w.entry_uints(e, 2);
             let (n, d) = (*v.first()?, *v.get(1)?);
             // `into_u32` rejects 64-bit values that do not fit.
             return (n <= u64::from(u32::MAX) && d <= u64::from(u32::MAX)).then_some((n, d));
@@ -405,16 +412,18 @@ impl TiffPolicy<'_> {
 
     /// Whether `compute_dpi` yields a resolution for IFD0.
     fn resolution_reported(&self, w: &Walk<'_>, ifd: &Ifd) -> bool {
-        let unit = w.find(ifd, RESOLUTION_UNIT).and_then(|e| w.single_uint(e));
-        let x = self.rational(w, w.find(ifd, X_RESOLUTION));
-        let y = self.rational(w, w.find(ifd, Y_RESOLUTION));
+        let unit = w
+            .find_entry(ifd, RESOLUTION_UNIT)
+            .and_then(|e| w.single_uint(e));
+        let x = self.rational(w, w.find_entry(ifd, X_RESOLUTION));
+        let y = self.rational(w, w.find_entry(ifd, Y_RESOLUTION));
         matches!(unit, Some(2 | 3))
             && x.is_some_and(|(_, d)| d != 0)
             && y.is_some_and(|(_, d)| d != 0)
     }
 
     fn layout(&self, w: &Walk<'_>, ifd: &Ifd) -> Layout {
-        let has = |t: u16| w.find(ifd, t).is_some();
+        let has = |t: u16| w.find_entry(ifd, t).is_some();
         let tiled = has(322) || has(323);
         let strips = has(273) && has(279);
         let tiles = has(324) && has(325);
@@ -434,7 +443,7 @@ impl TiffPolicy<'_> {
     /// its required tags, known enumerations, consistent sample counts and a
     /// strip or tile layout whose counts match the image.
     fn rejection(&self, w: &Walk<'_>, ifd: &Ifd) -> Option<&'static str> {
-        let one = |tag: u16| w.find(ifd, tag);
+        let one = |tag: u16| w.find_entry(ifd, tag);
         // A present tag must hold one integer (`into_u16`/`into_u32`).
         let int = |tag: u16| -> Result<Option<u64>, ()> {
             match one(tag) {
@@ -481,13 +490,13 @@ impl TiffPolicy<'_> {
             );
         }
         if let Some(e) = one(339) {
-            let v = w.uints(e, 64);
+            let v = w.entry_uints(e, 64);
             if v.is_empty() || v.iter().any(|&x| x != v[0]) {
                 return Some("SampleFormat empty or mixed");
             }
         }
         if let Some(e) = one(258) {
-            let v = w.uints(e, 64);
+            let v = w.entry_uints(e, 64);
             if (e.count != spp && e.count != 1)
                 || v.is_empty()
                 || v[0] == 0
@@ -511,7 +520,7 @@ impl TiffPolicy<'_> {
         }
         // `into_u16`: a present FillOrder must be one BYTE/SHORT/LONG/LONG8
         // integer that fits in 16 bits.
-        if one(FILL_ORDER).is_some_and(|e| !matches!(e.typ, 1 | 3 | 4 | 7 | 16))
+        if one(FILL_ORDER).is_some_and(|e| !matches!(e.field_type, 1 | 3 | 4 | 7 | 16))
             || !matches!(int(FILL_ORDER), Ok(None | Some(0..=0xFFFF)))
         {
             return Some("FillOrder not one 16-bit integer");
@@ -519,7 +528,8 @@ impl TiffPolicy<'_> {
         // `into_u32`: a present T4Options must be one BYTE/UNDEFINED/SHORT/
         // LONG/LONG8/IFD integer that fits in 32 bits.
         if compression == Some(3)
-            && (one(T4_OPTIONS).is_some_and(|e| !matches!(e.typ, 1 | 3 | 4 | 7 | 13 | 16 | 18))
+            && (one(T4_OPTIONS)
+                .is_some_and(|e| !matches!(e.field_type, 1 | 3 | 4 | 7 | 13 | 16 | 18))
                 || !matches!(int(T4_OPTIONS), Ok(None | Some(0..=0xFFFF_FFFF))))
         {
             return Some("T4Options not one 32-bit integer");
@@ -531,13 +541,15 @@ impl TiffPolicy<'_> {
                 return Some("palette image without a ColorMap");
             };
             let bps = one(258)
-                .and_then(|e| w.uints(e, 1).first().copied())
+                .and_then(|e| w.entry_uints(e, 1).first().copied())
                 .unwrap_or(1);
             let expected = 1u64.checked_shl(bps as u32).and_then(|n| n.checked_mul(3));
             if over_limit_in(w, e, limits).is_some()
-                || !matches!(e.typ, 1 | 3 | 4 | 7 | 16)
+                || !matches!(e.field_type, 1 | 3 | 4 | 7 | 16)
                 || expected != Some(e.count)
-                || w.uints(e, e.count as usize).iter().any(|&v| v > 0xFFFF)
+                || w.entry_uints(e, e.count as usize)
+                    .iter()
+                    .any(|&v| v > 0xFFFF)
             {
                 return Some("ColorMap is not 3 * 2^BitsPerSample 16-bit entries");
             }
@@ -593,7 +605,10 @@ impl TiffPolicy<'_> {
             return Ok(true);
         }
         if tag == PREDICTOR {
-            let compression = w.find(ifd, 259).and_then(|e| w.single_uint(e)).unwrap_or(1);
+            let compression = w
+                .find_entry(ifd, 259)
+                .and_then(|e| w.single_uint(e))
+                .unwrap_or(1);
             return if PREDICTOR_CODECS.contains(&compression) {
                 Ok(true)
             } else {
@@ -638,7 +653,7 @@ impl TiffPolicy<'_> {
             };
         }
         if tag == COLOR_MAP {
-            let palette = w.find(ifd, 262).and_then(|e| w.single_uint(e)) == Some(3);
+            let palette = w.find_entry(ifd, 262).and_then(|e| w.single_uint(e)) == Some(3);
             return if palette {
                 Ok(true)
             } else {
@@ -647,7 +662,7 @@ impl TiffPolicy<'_> {
         }
         if tag == YCBCR_COEFFICIENTS || tag == REFERENCE_BLACK_WHITE {
             // Read by zentiff itself, to convert YCbCr samples to RGB.
-            let ycbcr = w.find(ifd, 262).and_then(|e| w.single_uint(e)) == Some(6);
+            let ycbcr = w.find_entry(ifd, 262).and_then(|e| w.single_uint(e)) == Some(6);
             if !ycbcr {
                 return Err(
                     "read only for YCbCr (PhotometricInterpretation 6), to convert it to RGB",
@@ -661,7 +676,7 @@ impl TiffPolicy<'_> {
             return Ok(true);
         }
         if tag == T4_OPTIONS {
-            let group3 = w.find(ifd, 259).and_then(|e| w.single_uint(e)) == Some(3);
+            let group3 = w.find_entry(ifd, 259).and_then(|e| w.single_uint(e)) == Some(3);
             return if group3 {
                 Ok(true)
             } else {
@@ -669,7 +684,7 @@ impl TiffPolicy<'_> {
             };
         }
         if tag == JPEG_TABLES {
-            let jpeg = w.find(ifd, 259).and_then(|e| w.single_uint(e)) == Some(7);
+            let jpeg = w.find_entry(ifd, 259).and_then(|e| w.single_uint(e)) == Some(7);
             return if jpeg {
                 Ok(true)
             } else {
@@ -682,7 +697,7 @@ impl TiffPolicy<'_> {
     /// Why an image tag image-tiff reads leaves this image's decode the same
     /// whatever its value, where that is so.
     fn insensitive(&self, w: &Walk<'_>, ifd: &Ifd, tag: u16) -> Option<&'static str> {
-        let int = |t: u16| w.find(ifd, t).and_then(|e| w.single_uint(e));
+        let int = |t: u16| w.find_entry(ifd, t).and_then(|e| w.single_uint(e));
         let height = int(257)?;
         let compression = int(259).unwrap_or(1);
         let photometric = int(262).or_else(|| default_photometric(w, ifd))?;
@@ -701,7 +716,7 @@ impl TiffPolicy<'_> {
             ),
             338 => {
                 let spp = int(277).unwrap_or(1);
-                let extra = w.find(ifd, 338).map_or(0, |e| e.count);
+                let extra = w.find_entry(ifd, 338).map_or(0, |e| e.count);
                 let colour = spp.saturating_sub(extra);
                 (!matches!((photometric, colour), (2, 3) | (5, 4))).then_some(
                     "read; only its count matters for this image (the first value marks alpha only in 3-colour RGB or 4-colour CMYK)",
@@ -819,7 +834,7 @@ impl TiffPolicy<'_> {
         if e.count == 0 {
             return Err("empty value; written back as an empty UNDEFINED entry".into());
         }
-        let Some(bytes) = w.bytes(e) else {
+        let Some(bytes) = w.entry_bytes(e) else {
             return Err(
                 "value lies past the end of the file; image-tiff errors and the entry is dropped"
                     .into(),
@@ -828,8 +843,8 @@ impl TiffPolicy<'_> {
         if let Some(why) = self.over_limit(w, e) {
             return Err(format!("{why}; the entry is dropped").into());
         }
-        let inline = (bytes.len() as u64) <= w.lay.inline_cap();
-        match e.typ {
+        let inline = (bytes.len() as u64) <= w.layout.inline_cap();
+        match e.field_type {
             1 if e.count > 1 && inline => Ok(Some("inline BYTE list, written back as LONG values")),
             1 | 3 | 4 | 5 | 7 => Ok(None),
             9 | 10 if e.count == 1 => Ok(None),
@@ -915,19 +930,23 @@ impl TiffPolicy<'_> {
         // image-tiff skips an unknown-type entry by reading 8 more bytes
         // (decoder/mod.rs `read_entry`); a BigTIFF entry has 16, so every
         // later entry of that directory is read out of step.
-        if w.lay.big && ifd.first_unknown.is_some_and(|u| u < index) {
+        if w.layout.is_big_tiff && ifd.first_unknown_type_entry.is_some_and(|u| u < index) {
             return Fate::because(
                 Disposition::Malformed,
                 "follows an unknown-type BigTIFF entry, after which image-tiff reads this directory out of step",
             );
         }
-        if type_size(e.typ).is_none() {
+        if type_size(e.field_type).is_none() {
             return Fate::because(
                 Disposition::Unknown,
                 "unknown field type; image-tiff skips the entry",
             );
         }
-        if ifd.last.get(&e.tag).is_some_and(|&l| l != index) {
+        if ifd
+            .last_entry_by_tag
+            .get(&e.tag)
+            .is_some_and(|&l| l != index)
+        {
             return Fate::because(
                 Disposition::Dropped,
                 "duplicate tag; image-tiff keeps the last one",
@@ -966,13 +985,13 @@ impl TiffPolicy<'_> {
             },
             Kind::Exif => {
                 let fate = self.exif_value(w, e);
-                match (e.tag, fate.d) {
+                match (e.tag, fate.disposition) {
                     (MAKER_NOTE, Disposition::Metadata(_)) => Fate::because(
-                        fate.d,
+                        fate.disposition,
                         "copied opaque into the EXIF blob; offsets inside it no longer resolve",
                     ),
                     (INTEROP_IFD, Disposition::Metadata(_)) => Fate::because(
-                        fate.d,
+                        fate.disposition,
                         "pointer copied into the EXIF blob, where it is stale; the Interop IFD is not read",
                     ),
                     _ => fate,
@@ -991,11 +1010,11 @@ impl TiffPolicy<'_> {
 /// every other type by its raw bytes against `ifd_value_size` and its element
 /// count against `decoding_buffer_size / size_of::<Value>()`.
 fn over_limit_in(w: &Walk<'_>, e: &Entry, limits: ValueLimits) -> Option<String> {
-    let size = type_size(e.typ)?.checked_mul(e.count)?;
-    if e.count <= 1 || size <= w.lay.inline_cap() {
+    let size = type_size(e.field_type)?.checked_mul(e.count)?;
+    if e.count <= 1 || size <= w.layout.inline_cap() {
         return None;
     }
-    if e.typ == 2 {
+    if e.field_type == 2 {
         return (e.count > limits.ivs).then(|| {
             format!(
                 "{} characters exceed image-tiff's per-value limit of {} bytes; reading it fails (zenextras#36)",

@@ -15,7 +15,7 @@ use zencodec::{
     ImageSequence, Metadata, Orientation, OrientationHint, Resolution, ResolutionUnit,
     ResourceLimits, SourceColor, resolve_color_emit,
 };
-use zenpixels::{PixelDescriptor, PixelSlice};
+use zenpixels::{ChannelOrder, PixelFormat, PixelView, SampleType};
 
 use whereat::At;
 #[allow(unused_imports)]
@@ -97,37 +97,59 @@ static TIFF_DECODE_CAPS: DecodeCapabilities = DecodeCapabilities::new()
 /// Gray, GrayAlpha, RGB, RGBA in u8/u16/f32.
 /// (GrayAlpha is written as Gray + an `ExtraSamples` alpha channel — 2
 /// samples/pixel — not widened to RGBA.)
-static TIFF_ENCODE_DESCRIPTORS: &[PixelDescriptor] = &[
-    PixelDescriptor::RGB8_SRGB,
-    PixelDescriptor::RGBA8_SRGB,
-    PixelDescriptor::GRAY8_SRGB,
-    PixelDescriptor::RGB16_SRGB,
-    PixelDescriptor::RGBA16_SRGB,
-    PixelDescriptor::GRAY16_SRGB,
-    PixelDescriptor::RGBF32_LINEAR,
-    PixelDescriptor::RGBAF32_LINEAR,
-    PixelDescriptor::GRAYF32_LINEAR,
-    PixelDescriptor::GRAYA8_SRGB,
-    PixelDescriptor::GRAYA16_SRGB,
-    PixelDescriptor::GRAYAF32_LINEAR,
+static TIFF_ENCODE_DESCRIPTORS: &[PixelFormat] = &[
+    PixelFormat::RGB8_SRGB,
+    PixelFormat::RGBA8_SRGB,
+    PixelFormat::GRAY8_SRGB,
+    PixelFormat::RGB16_SRGB,
+    PixelFormat::RGBA16_SRGB,
+    PixelFormat::GRAY16_SRGB,
+    PixelFormat::RGBF32_LINEAR,
+    PixelFormat::RGBAF32_LINEAR,
+    PixelFormat::GRAYF32_LINEAR,
+    PixelFormat::GRAYA8_SRGB,
+    zenpixels::PixelFormat::new(
+        zenpixels::SampleLayout::new(
+            zenpixels::SampleType::U16,
+            zenpixels::ChannelOrder::GrayAlpha,
+        ),
+        zenpixels::ColorSpace::Gray {
+            transfer: zenpixels::Transfer::Srgb,
+            range: zenpixels::SignalRange::Full,
+            alpha: zenpixels::AlphaMode::Straight,
+            white: None,
+        },
+    ),
+    zenpixels::PixelFormat::new(
+        zenpixels::SampleLayout::new(
+            zenpixels::SampleType::F32,
+            zenpixels::ChannelOrder::GrayAlpha,
+        ),
+        zenpixels::ColorSpace::Gray {
+            transfer: zenpixels::Transfer::Linear,
+            range: zenpixels::SignalRange::Full,
+            alpha: zenpixels::AlphaMode::Straight,
+            white: None,
+        },
+    ),
 ];
 
 /// Pixel formats the TIFF decoder can output.
 ///
 /// Covers all standard decode outputs (see `descriptor_for()` in decode.rs).
-static TIFF_DECODE_DESCRIPTORS: &[PixelDescriptor] = &[
-    PixelDescriptor::RGB8_SRGB,
-    PixelDescriptor::RGBA8_SRGB,
-    PixelDescriptor::GRAY8_SRGB,
-    PixelDescriptor::RGB16_SRGB,
-    PixelDescriptor::RGBA16_SRGB,
-    PixelDescriptor::GRAY16_SRGB,
-    PixelDescriptor::RGBF32_LINEAR,
-    PixelDescriptor::RGBAF32_LINEAR,
-    PixelDescriptor::GRAYF32_LINEAR,
-    PixelDescriptor::GRAYA8_SRGB,
-    PixelDescriptor::GRAYA16_SRGB,
-    PixelDescriptor::GRAYAF32_LINEAR,
+static TIFF_DECODE_DESCRIPTORS: &[PixelFormat] = &[
+    crate::decode::pixel_spec(ChannelOrder::Rgb, SampleType::U8),
+    crate::decode::pixel_spec(ChannelOrder::Rgba, SampleType::U8),
+    crate::decode::pixel_spec(ChannelOrder::Gray, SampleType::U8),
+    crate::decode::pixel_spec(ChannelOrder::Rgb, SampleType::U16),
+    crate::decode::pixel_spec(ChannelOrder::Rgba, SampleType::U16),
+    crate::decode::pixel_spec(ChannelOrder::Gray, SampleType::U16),
+    crate::decode::pixel_spec(ChannelOrder::Rgb, SampleType::F32),
+    crate::decode::pixel_spec(ChannelOrder::Rgba, SampleType::F32),
+    crate::decode::pixel_spec(ChannelOrder::Gray, SampleType::F32),
+    crate::decode::pixel_spec(ChannelOrder::GrayAlpha, SampleType::U8),
+    crate::decode::pixel_spec(ChannelOrder::GrayAlpha, SampleType::U16),
+    crate::decode::pixel_spec(ChannelOrder::GrayAlpha, SampleType::F32),
 ];
 
 // ══════════════════════════════════════════════════════════════════════
@@ -183,7 +205,7 @@ impl zencodec::encode::EncoderConfig for TiffEncoderCodecConfig {
         ImageFormat::Tiff
     }
 
-    fn supported_descriptors() -> &'static [PixelDescriptor] {
+    fn supported_pixel_formats() -> &'static [PixelFormat] {
         TIFF_ENCODE_DESCRIPTORS
     }
 
@@ -208,14 +230,14 @@ impl zencodec::encode::EncoderConfig for TiffEncoderCodecConfig {
         compute: &zencodec::estimate::ComputeEnvironment,
     ) -> zencodec::estimate::ResourceEstimate {
         use zencodec::estimate::{ResourceEstimate, ThreadingInformation};
-        let input = image.input_bytes();
+        let input = image.uncompressed_frame_bytes();
         let scratch = 1u64 << 20;
         // input + ~output + scratch
         let typ = input.saturating_add(input).saturating_add(scratch);
         // ~200 Mpix/s rough (uncalibrated, structural)
         let time_ms = (image.pixels() as f64 / 200_000.0) as f32;
         ResourceEstimate::new(typ, time_ms as u64)
-            .with_peak_max(typ.saturating_mul(2))
+            .with_peak_memory_bytes_max(typ.saturating_mul(2))
             .with_threading(ThreadingInformation::SERIAL)
             .at_cores(compute.cores())
     }
@@ -226,6 +248,7 @@ impl zencodec::encode::EncoderConfig for TiffEncoderCodecConfig {
             pulse: zencodec::SharedPulse::default(),
             limits: None,
             metadata: None,
+            require_metadata: false,
             policy: EncodePolicy::none(),
         }
     }
@@ -239,6 +262,7 @@ pub struct TiffEncodeJob {
     pulse: zencodec::SharedPulse,
     limits: Option<ResourceLimits>,
     metadata: Option<Metadata>,
+    require_metadata: bool,
     policy: EncodePolicy,
 }
 
@@ -252,18 +276,48 @@ impl zencodec::encode::EncodeJob for TiffEncodeJob {
         self
     }
 
-    fn with_policy(mut self, policy: EncodePolicy) -> Self {
+    fn try_set_policy(
+        &mut self,
+        policy: EncodePolicy,
+    ) -> Result<(), zencodec::UnsupportedOperation> {
+        let mut admitted = EncodePolicy::none();
+        admitted.color = policy.color;
+        admitted.embed_icc = policy.embed_icc;
+        admitted.embed_exif = policy.embed_exif;
+        admitted.embed_xmp = policy.embed_xmp;
+        if admitted != policy {
+            return Err(zencodec::UnsupportedOperation::EncodePolicy);
+        }
         self.policy = policy;
+        Ok(())
+    }
+
+    fn with_unfiltered_metadata(mut self, meta: Metadata) -> Self {
+        if !self.require_metadata {
+            self.metadata = Some(meta);
+        }
         self
     }
 
-    // `with_metadata` is deprecated in favor of `with_metadata_policy`, but the
-    // codec must still implement it (the provided `with_metadata_policy` filters
-    // then delegates here). Store the (already-filtered) metadata to embed.
-    #[allow(deprecated)]
-    fn with_metadata(mut self, meta: Metadata) -> Self {
-        self.metadata = Some(meta);
-        self
+    fn try_set_metadata_policy(
+        &mut self,
+        meta: Metadata,
+        policy: zencodec::MetadataPolicy,
+    ) -> Result<(), zencodec::encode::BoxedError> {
+        let retained = zenmeta::metadata::filter(&meta, &policy);
+        // TIFF stores ICC, XMP and orientation directly. Its EXIF translation
+        // may rewrite entries and it has no native carrier for the other fields.
+        if retained.exif.is_some()
+            || retained.cicp.is_some()
+            || retained.content_light_level.is_some()
+            || retained.mastering_display.is_some()
+            || retained.diffuse_white.is_some()
+        {
+            return Err(Box::new(zencodec::UnsupportedOperation::MetadataRetention));
+        }
+        self.metadata = Some(retained);
+        self.require_metadata = true;
+        Ok(())
     }
 
     fn with_limits(mut self, limits: ResourceLimits) -> Self {
@@ -277,6 +331,7 @@ impl zencodec::encode::EncodeJob for TiffEncodeJob {
             pulse: self.pulse,
             limits: self.limits,
             metadata: self.metadata,
+            require_metadata: self.require_metadata,
             policy: self.policy,
         })
     }
@@ -296,6 +351,7 @@ pub struct TiffCodecEncoder {
     pulse: zencodec::SharedPulse,
     limits: Option<ResourceLimits>,
     metadata: Option<Metadata>,
+    require_metadata: bool,
     policy: EncodePolicy,
 }
 
@@ -308,10 +364,10 @@ impl TiffCodecEncoder {
     /// in the `zencodec`-gated `codec` module, so the typed cause is always
     /// available here (contrast the native, zencodec-independent decode core's
     /// coarser `TiffError::LimitExceeded(String)`).
-    fn check_limits(&self, pixels: &PixelSlice<'_>) -> Result<(), At<TiffError>> {
+    fn check_limits(&self, pixels: &PixelView<'_>) -> Result<(), At<TiffError>> {
         if let Some(ref limits) = self.limits {
             let width = pixels.width();
-            let height = pixels.rows();
+            let height = pixels.height();
             let pixel_count = width as u64 * height as u64;
             if let Some(max_px) = limits.max_pixels
                 && pixel_count > max_px
@@ -338,7 +394,7 @@ impl TiffCodecEncoder {
                 })));
             }
             if let Some(max_mem) = limits.max_memory_bytes {
-                let bpp = pixels.descriptor().bytes_per_pixel() as u64;
+                let bpp = pixels.format().layout.bytes_per_pixel() as u64;
                 let estimated = pixel_count * bpp;
                 if estimated > max_mem {
                     return Err(at!(TiffError::from(zencodec::LimitExceeded::Memory {
@@ -354,13 +410,22 @@ impl TiffCodecEncoder {
     /// Native-error body for [`Encoder::encode`](zencodec::encode::Encoder::encode)
     /// — returns the crate's own `At<TiffError>` so the trait method stays a thin
     /// `.map_err(CodecError::of)` wrapper (Pattern B envelope boundary).
-    fn encode_inner(self, pixels: PixelSlice<'_>) -> crate::Result<EncodeOutput> {
+    fn encode_inner(self, pixels: PixelView<'_>) -> crate::Result<EncodeOutput> {
         let stop: &dyn Stop = &self.pulse;
 
         self.check_limits(&pixels)?;
 
-        let channel_count = pixels.descriptor().channels() as u8;
-        let encode_meta = lower_metadata(self.metadata.as_ref(), &self.policy, channel_count)?;
+        let encode_meta = lower_metadata(self.metadata.as_ref(), &self.policy, pixels.format())?;
+        if self.require_metadata
+            && let Some(required) = self.metadata.as_ref()
+            && (required.icc_profile.is_some()
+                && required.icc_profile.as_deref() != encode_meta.icc.as_deref()
+                || required.xmp.is_some() && required.xmp.as_deref() != encode_meta.xmp.as_deref())
+        {
+            return Err(at!(TiffError::from(
+                zencodec::UnsupportedOperation::MetadataRetention
+            )));
+        }
 
         let encoded =
             crate::encode::encode_with_meta(&pixels, &self.config.inner, &encode_meta, stop)?;
@@ -375,55 +440,91 @@ impl zencodec::encode::Encoder for TiffCodecEncoder {
         CodecError::of(at!(TiffError::from(op)))
     }
 
-    fn encode(self, pixels: PixelSlice<'_>) -> Result<EncodeOutput, At<CodecError>> {
+    fn encode(self, pixels: PixelView<'_>) -> Result<EncodeOutput, At<CodecError>> {
         self.encode_inner(pixels).map_err(CodecError::of)
     }
 }
 
 /// Lower the requested [`Metadata`] (already filtered by any
-/// [`with_metadata_policy`](zencodec::encode::EncodeJob::with_metadata_policy))
+/// [`try_with_metadata_policy`](zencodec::encode::EncodeJob::try_with_metadata_policy))
 /// plus the color-emit policy into the format-agnostic
 /// [`crate::encode::TiffEncodeMeta`] the encoder writes.
 ///
-/// Color: TIFF has no CICP carrier ([`EncodeCapabilities`]`cicp == false`), so
-/// [`resolve_color_emit`] is asked what to do with the ICC channel — a
-/// CICP-only source resolves to [`IccDisposition::SynthesizeFrom`], which we
-/// lower to a profile via the transfer-aware
-/// [`zenpixels_convert::icc_profiles::synthesize_icc_for_cicp`] (so an HDR transfer
-/// is never mis-tagged with an SDR-TRC profile); `plan.cicp` itself is discarded
-/// because there is nowhere to write it.
+/// TIFF carries color through ICC. The plan is based on the active samples
+/// and can keep an existing profile or synthesize an RGB or gray profile.
 fn lower_metadata(
     meta: Option<&Metadata>,
     policy: &EncodePolicy,
-    channel_count: u8,
+    spec: &PixelFormat,
 ) -> crate::Result<crate::encode::TiffEncodeMeta> {
-    let Some(meta) = meta else {
-        return Ok(crate::encode::TiffEncodeMeta::default());
-    };
-
-    // --- Color (ICC) via resolve_color_emit ------------------------------
-    let mut src = SourceColor::default().with_channel_count(channel_count);
+    let empty = Metadata::none();
+    let meta = meta.unwrap_or(&empty);
+    let mut src = SourceColor::default().with_channel_count(spec.layout.channels() as u8);
     if let Some(c) = meta.cicp {
         src = src.with_cicp(c).with_color_authority(ColorAuthority::Cicp);
     }
-    if let Some(icc) = &meta.icc_profile {
-        src = src
-            .with_icc_profile(icc.clone())
-            .with_color_authority(ColorAuthority::Icc);
-    }
 
     let color_policy = policy.resolve_color(ColorEmitPolicy::Balanced);
-    let plan = resolve_color_emit(&src, &TIFF_ENCODE_CAPS, color_policy);
+    let allow_profile = color_policy.fields().icc != zencodec::IccRetention::Drop;
+    // A gray spec carries a transfer but no RGB primaries. A compatible
+    // explicit CICP can select its native white for profile synthesis.
+    let gray_cicp = meta.cicp.filter(|c| {
+        allow_profile
+            && color_policy != ColorEmitPolicy::Verbatim
+            && !matches!(c.color_primaries, 1 | 2)
+            && c.matrix_coefficients == 0
+            && c.full_range
+            && matches!(
+                &spec.color,
+                zenpixels::ColorSpace::Gray { transfer, range: zenpixels::SignalRange::Full, .. }
+                    if transfer.to_cicp() == Some(c.transfer_characteristics)
+            )
+    });
 
-    // Coarse `embed_icc` gate (best-effort) overrides the plan toward dropping.
-    let icc: Option<Vec<u8>> = if policy.resolve_icc(true) {
-        match plan.icc {
-            IccDisposition::KeepSource => meta.icc_profile.as_deref().map(|b| b.to_vec()),
-            IccDisposition::SynthesizeFrom(cicp) => synth_icc_from_cicp(cicp)?,
-            IccDisposition::Drop => None,
-            // `IccDisposition` is `#[non_exhaustive]`; a future disposition we
-            // don't understand must not emit unknown ICC bytes — drop instead.
-            _ => None,
+    let source_icc = match &spec.color {
+        zenpixels::ColorSpace::Icc { profile, .. } => Some(profile),
+        _ => meta.icc_profile.as_ref(),
+    };
+    let icc = if policy.resolve_icc(true) {
+        if let Some(profile) = source_icc
+            && crate::decode::icc_color_space(profile).is_none()
+        {
+            // Keep legacy opaque ICC tag bytes without assigning them active color meaning.
+            allow_profile.then(|| profile.to_vec())
+        } else if source_icc.is_none()
+            && meta.cicp.is_none()
+            && matches!(
+                &spec.color,
+                zenpixels::ColorSpace::Rgb {
+                    transfer: zenpixels::Transfer::Unknown,
+                    ..
+                } | zenpixels::ColorSpace::Gray {
+                    transfer: zenpixels::Transfer::Unknown,
+                    ..
+                }
+            )
+        {
+            None
+        } else {
+            if let Some(profile) = source_icc {
+                src = src
+                    .with_icc_profile(profile.clone())
+                    .with_color_authority(ColorAuthority::Icc);
+            }
+            let plan = resolve_color_emit(&src, &spec.color, &TIFF_ENCODE_CAPS, color_policy)
+                .map_err(|error| at!(TiffError::Encode(alloc::format!("{error}"))))?;
+            match plan.icc {
+                IccDisposition::KeepSource => source_icc.map(|profile| profile.to_vec()),
+                IccDisposition::SynthesizeFrom(cicp) => synth_icc_from_cicp(cicp, false)?,
+                IccDisposition::SynthesizeGrayFrom(cicp) => {
+                    synth_icc_from_cicp(gray_cicp.unwrap_or(cicp), true)?
+                }
+                IccDisposition::Drop => gray_cicp
+                    .map(|cicp| synth_icc_from_cicp(cicp, true))
+                    .transpose()?
+                    .flatten(),
+                _ => None,
+            }
         }
     } else {
         None
@@ -457,16 +558,18 @@ fn lower_metadata(
 
 /// Materialize an ICC profile for a full CICP (primaries **and** transfer) via
 /// the transfer-aware [`synthesize_icc_for_cicp`]. Returns `None` for the
-/// sRGB/BT.709 default and whenever no faithful profile is available
-/// (`NeedsCms`/`CmsUnsupported`) — TIFF has no CICP carrier, so the caller simply
-/// embeds no ICC rather than a mis-tagged one (a BT.2020-PQ source must not get
-/// the SDR-TRC Rec.2020 profile that the primaries-only lookup would have
-/// returned).
+/// sRGB/BT.709 default. A requested CICP whose ICC representation cannot
+/// be synthesized causes an encode error.
 ///
-/// [`synthesize_icc_for_cicp`]: zenpixels_convert::icc_profiles::synthesize_icc_for_cicp
-fn synth_icc_from_cicp(cicp: Cicp) -> crate::Result<Option<Vec<u8>>> {
+/// [`synthesize_icc_for_cicp`]: zenpixels_convert::icc_profiles::SynthesizedIcc::for_cicp
+fn synth_icc_from_cicp(cicp: Cicp, gray: bool) -> crate::Result<Option<Vec<u8>>> {
     use zenpixels_convert::icc_profiles::SynthesizedIcc;
-    match zenpixels_convert::icc_profiles::synthesize_icc_for_cicp(cicp) {
+    let synthesis = if gray {
+        SynthesizedIcc::for_gray_cicp(cicp)
+    } else {
+        SynthesizedIcc::for_cicp(cicp)
+    };
+    match synthesis {
         SynthesizedIcc::Profile(bytes) => Ok(Some(bytes.into_owned())),
         SynthesizedIcc::NotNeeded => Ok(None),
         // TIFF carries colour only as ICC: writing the pixels without one
@@ -532,7 +635,7 @@ impl zencodec::decode::DecoderConfig for TiffDecoderCodecConfig {
         &[ImageFormat::Tiff]
     }
 
-    fn supported_descriptors() -> &'static [PixelDescriptor] {
+    fn supported_pixel_formats() -> &'static [PixelFormat] {
         TIFF_DECODE_DESCRIPTORS
     }
 
@@ -558,7 +661,7 @@ impl zencodec::decode::DecoderConfig for TiffDecoderCodecConfig {
         compute: &zencodec::estimate::ComputeEnvironment,
     ) -> zencodec::estimate::ResourceEstimate {
         use zencodec::estimate::{ResourceEstimate, ThreadingInformation};
-        let bpp = image.descriptor().bytes_per_pixel() as u64;
+        let bpp = image.pixel_format().layout.bytes_per_pixel() as u64;
         // Final output buffer: W * H * bytes-per-output-pixel.
         let output = image.pixels().saturating_mul(bpp);
         // Measured (heaptrack, benchmarks/tiff_decode_mem_2026-06-23): ~350 KiB
@@ -570,7 +673,7 @@ impl zencodec::decode::DecoderConfig for TiffDecoderCodecConfig {
         // ~120 Mpix/s rough (uncalibrated, structural).
         let time_ms = (image.pixels() as f64 / 120_000.0) as u64;
         ResourceEstimate::new(typ, time_ms)
-            .with_peak_max(peak_max)
+            .with_peak_memory_bytes_max(peak_max)
             .with_threading(ThreadingInformation::SERIAL)
             .at_cores(compute.cores())
     }
@@ -657,9 +760,23 @@ impl<'a> zencodec::decode::DecodeJob<'a> for TiffDecodeJob {
         self
     }
 
-    fn with_policy(mut self, policy: DecodePolicy) -> Self {
+    fn try_set_policy(
+        &mut self,
+        policy: DecodePolicy,
+    ) -> Result<(), zencodec::UnsupportedOperation> {
+        if policy == DecodePolicy::none() {
+            self.policy = None;
+            return Ok(());
+        }
+        let mut admitted = DecodePolicy::none();
+        admitted.allow_icc = policy.allow_icc;
+        admitted.allow_exif = policy.allow_exif;
+        admitted.allow_xmp = policy.allow_xmp;
+        if admitted != policy {
+            return Err(zencodec::UnsupportedOperation::DecodePolicy);
+        }
         self.policy = Some(policy);
-        self
+        Ok(())
     }
 
     fn with_orientation(mut self, hint: OrientationHint) -> Self {
@@ -668,7 +785,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for TiffDecodeJob {
     }
 
     /// Map every byte of `data` without decoding pixels; see
-    /// [`crate::inventory`] for the walk and the dispositions.
+    /// `crate::inventory` for the walk and the dispositions.
     #[cfg(feature = "inventory")]
     fn inventory(&self, data: &[u8]) -> Result<zencodec::inventory::Inventory, At<CodecError>> {
         let stop: &dyn Stop = &self.pulse;
@@ -722,8 +839,9 @@ impl<'a> zencodec::decode::DecodeJob<'a> for TiffDecodeJob {
 
     fn output_info(&self, data: &[u8]) -> Result<OutputInfo, At<CodecError>> {
         let tiff_info = crate::probe(data).map_err(CodecError::of)?;
-        let has_alpha = has_alpha_from_color_type(tiff_info.color_type);
-        let native_format = descriptor_for_probe(&tiff_info);
+        let native_format =
+            crate::decode::descriptor_for_info(&tiff_info).map_err(CodecError::of)?;
+        let has_alpha = native_format.layout.order.has_alpha_slot();
         // Report the post-orientation output geometry + the transform the
         // decoder will apply. `Preserve` applies nothing (output = stored dims,
         // `Identity` recorded); a bake hint outputs the resolved orientation's
@@ -746,7 +864,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for TiffDecodeJob {
     fn decoder(
         self,
         data: Cow<'a, [u8]>,
-        _preferred: &[PixelDescriptor],
+        _preferred: &[PixelFormat],
     ) -> Result<TiffCodecDecoder<'a>, At<CodecError>> {
         if let Some(max) = self.max_input_bytes
             && data.len() as u64 > max
@@ -773,7 +891,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for TiffDecodeJob {
         self,
         data: Cow<'a, [u8]>,
         sink: &mut dyn zencodec::decode::DecodeRowSink,
-        preferred: &[PixelDescriptor],
+        preferred: &[PixelFormat],
     ) -> Result<OutputInfo, Self::Error> {
         zencodec::helpers::copy_decode_to_sink(self, data, sink, preferred, |e| {
             CodecError::of(at!(TiffError::InvalidInput(e.to_string())))
@@ -783,7 +901,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for TiffDecodeJob {
     fn streaming_decoder(
         self,
         _data: Cow<'a, [u8]>,
-        _preferred: &[PixelDescriptor],
+        _preferred: &[PixelFormat],
     ) -> Result<zencodec::Unsupported<At<CodecError>>, At<CodecError>> {
         Err(CodecError::of(at!(TiffError::from(
             zencodec::UnsupportedOperation::RowLevelDecode,
@@ -793,7 +911,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for TiffDecodeJob {
     fn animation_frame_decoder(
         self,
         _data: Cow<'a, [u8]>,
-        _preferred: &[PixelDescriptor],
+        _preferred: &[PixelFormat],
     ) -> Result<zencodec::Unsupported<At<CodecError>>, At<CodecError>> {
         Err(CodecError::of(at!(TiffError::from(
             zencodec::UnsupportedOperation::AnimationDecode,
@@ -807,7 +925,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for TiffDecodeJob {
     /// follow-up.
     fn dyn_incremental_decoder(
         self,
-        preferred: &[PixelDescriptor],
+        preferred: &[PixelFormat],
     ) -> Result<
         alloc::boxed::Box<zencodec::decode::DynIncrementalDecoder>,
         zencodec::decode::BoxedError,
@@ -868,7 +986,7 @@ impl TiffCodecDecoder<'_> {
         // `Preserve` (default) returns the decoded output unchanged: stored
         // pixels + stored dims + intrinsic EXIF tag. A bake hint physically
         // rotates the buffer and rewrites the reported dims/tag to match.
-        Ok(apply_orientation_to_output(decoded, self.orientation))
+        apply_orientation_to_output(decoded, self.orientation)
     }
 }
 
@@ -886,7 +1004,8 @@ impl zencodec::decode::Decode for TiffCodecDecoder<'_> {
 
 /// Convert a [`TiffInfo`] into a [`zencodec::ImageInfo`].
 fn tiff_info_to_image_info(tiff: &TiffInfo) -> ImageInfo {
-    let has_alpha = has_alpha_from_color_type(tiff.color_type);
+    let has_alpha = crate::decode::descriptor_for_info(tiff)
+        .is_ok_and(|spec| spec.layout.order.has_alpha_slot());
 
     let orientation = tiff
         .orientation
@@ -1007,33 +1126,36 @@ fn resolve_orientation(hint: OrientationHint, intrinsic: Orientation) -> Orienta
 /// with [`Orientation::Identity`] (the pixels are final — no orientation remains
 /// to apply). The intrinsic EXIF orientation is read from the `ImageInfo` the
 /// decode path already computed, so it matches what `probe()` reports.
-fn apply_orientation_to_output(output: DecodeOutput, hint: OrientationHint) -> DecodeOutput {
+fn apply_orientation_to_output(
+    output: DecodeOutput,
+    hint: OrientationHint,
+) -> crate::Result<DecodeOutput> {
     if !hint.bakes() {
-        return output;
+        return Ok(output);
     }
-    let mut info = output.info().clone();
-    let intrinsic = info.orientation;
-    let resolved = resolve_orientation(hint, intrinsic);
-
-    let buf = output.into_buffer();
-
-    // Even when the resolved transform is Identity (e.g. `Correct` on an
-    // upright image) we still rewrite the reported orientation to Identity so a
-    // consumer never double-applies the (now-stale) intrinsic tag. The pixel
-    // copy is skipped in that case.
+    let (buf, mut details) = output.into_parts();
+    let resolved = resolve_orientation(hint, details.info.orientation);
     let baked = if resolved.is_identity() {
         buf
     } else {
-        zenpixels_convert::orient::apply_orientation(buf.as_slice(), resolved)
+        zenpixels_convert::orient::apply_orientation(&buf.as_view(), resolved)
+            .map_err(|err| {
+                err.map_error(|error| match error {
+                    zenpixels_convert::ConvertError::AllocationFailed => {
+                        TiffError::LimitExceeded("TIFF orientation allocation failed".into())
+                    }
+                    error => {
+                        TiffError::Decode(alloc::format!("could not orient decoded TIFF: {error}"))
+                    }
+                })
+            })?
+            .with_origin(buf.origin().clone())
     };
 
-    // `ImageInfo` has no dimension setter; the fields are public. Report the
-    // baked buffer's geometry + Identity (pixels are now final).
-    info.width = baked.width();
-    info.height = baked.height();
-    info = info.with_orientation(Orientation::Identity);
-
-    DecodeOutput::new(baked, info).with_source_encoding_details(TiffSourceEncoding)
+    details.info.width = baked.width();
+    details.info.height = baked.height();
+    details.info = details.info.with_orientation(Orientation::Identity);
+    Ok(DecodeOutput::from_parts(baked, details))
 }
 
 /// Rewrite a probe [`ImageInfo`] (stored dims + intrinsic EXIF tag, as produced
@@ -1054,100 +1176,6 @@ fn report_probe_for_hint(mut info: ImageInfo, hint: OrientationHint) -> ImageInf
     info.with_orientation(Orientation::Identity)
 }
 
-/// Determine whether a tiff `ColorType` has an alpha channel.
-fn has_alpha_from_color_type(ct: tiff::ColorType) -> bool {
-    matches!(
-        ct,
-        tiff::ColorType::GrayA(_)
-            | tiff::ColorType::RGBA(_)
-            | tiff::ColorType::CMYKA(_)
-            | tiff::ColorType::Multiband {
-                num_samples: 2 | 4,
-                ..
-            }
-    )
-}
-
-/// Best-fit pixel descriptor for a TIFF probe result.
-///
-/// Uses the same logic as `descriptor_for()` in decode.rs but works
-/// from probe info (where `is_float` may not be known).
-fn descriptor_for_probe(tiff: &TiffInfo) -> PixelDescriptor {
-    let descriptor = descriptor_for_color_type(tiff);
-    // Associated alpha decodes as premultiplied (see `decode::decode`).
-    if tiff.associated_alpha && descriptor.alpha().is_some() {
-        descriptor.with_alpha(Some(zenpixels::AlphaMode::Premultiplied))
-    } else {
-        descriptor
-    }
-}
-
-fn descriptor_for_color_type(tiff: &TiffInfo) -> PixelDescriptor {
-    let is_float = tiff.is_float;
-    match tiff.color_type {
-        tiff::ColorType::Gray(d) => match d {
-            1..=8 => PixelDescriptor::GRAY8_SRGB,
-            9..=16 if is_float => PixelDescriptor::GRAYF32_LINEAR,
-            9..=16 => PixelDescriptor::GRAY16_SRGB,
-            _ if is_float => PixelDescriptor::GRAYF32_LINEAR,
-            _ => PixelDescriptor::GRAY16_SRGB,
-        },
-        tiff::ColorType::GrayA(d) => match d {
-            1..=8 => PixelDescriptor::GRAYA8_SRGB,
-            9..=16 if is_float => PixelDescriptor::GRAYAF32_LINEAR,
-            9..=16 => PixelDescriptor::GRAYA16_SRGB,
-            _ if is_float => PixelDescriptor::GRAYAF32_LINEAR,
-            _ => PixelDescriptor::GRAYA16_SRGB,
-        },
-        tiff::ColorType::RGB(d) | tiff::ColorType::YCbCr(d) | tiff::ColorType::Lab(d) => match d {
-            1..=8 => PixelDescriptor::RGB8_SRGB,
-            9..=16 if is_float => PixelDescriptor::RGBF32_LINEAR,
-            9..=16 => PixelDescriptor::RGB16_SRGB,
-            _ if is_float => PixelDescriptor::RGBF32_LINEAR,
-            _ => PixelDescriptor::RGB16_SRGB,
-        },
-        tiff::ColorType::RGBA(d) => match d {
-            1..=8 => PixelDescriptor::RGBA8_SRGB,
-            9..=16 if is_float => PixelDescriptor::RGBAF32_LINEAR,
-            9..=16 => PixelDescriptor::RGBA16_SRGB,
-            _ if is_float => PixelDescriptor::RGBAF32_LINEAR,
-            _ => PixelDescriptor::RGBA16_SRGB,
-        },
-        tiff::ColorType::Palette(_) => PixelDescriptor::RGB8_SRGB,
-        tiff::ColorType::CMYK(d) | tiff::ColorType::CMYKA(d) => match d {
-            1..=8 => PixelDescriptor::RGBA8_SRGB,
-            9..=16 if is_float => PixelDescriptor::RGBAF32_LINEAR,
-            9..=16 => PixelDescriptor::RGBA16_SRGB,
-            _ if is_float => PixelDescriptor::RGBAF32_LINEAR,
-            _ => PixelDescriptor::RGBA16_SRGB,
-        },
-        tiff::ColorType::Multiband {
-            bit_depth,
-            num_samples,
-        } => match (num_samples, bit_depth) {
-            (1, 1..=8) => PixelDescriptor::GRAY8_SRGB,
-            (1, _) if is_float => PixelDescriptor::GRAYF32_LINEAR,
-            (1, _) => PixelDescriptor::GRAY16_SRGB,
-            // 2 channels → GrayAlpha; mirror `descriptor_for` in decode.rs so a
-            // Gray + `ExtraSamples` (float) image probes as GRAYAF32, matching
-            // what `decode()` actually produces.
-            (2, 1..=8) => PixelDescriptor::GRAYA8_SRGB,
-            (2, _) if is_float => PixelDescriptor::GRAYAF32_LINEAR,
-            (2, _) => PixelDescriptor::GRAYA16_SRGB,
-            (3, 1..=8) => PixelDescriptor::RGB8_SRGB,
-            (3, _) if is_float => PixelDescriptor::RGBF32_LINEAR,
-            (3, _) => PixelDescriptor::RGB16_SRGB,
-            (4, 1..=8) => PixelDescriptor::RGBA8_SRGB,
-            (4, _) if is_float => PixelDescriptor::RGBAF32_LINEAR,
-            (4, _) => PixelDescriptor::RGBA16_SRGB,
-            (_, 1..=8) => PixelDescriptor::RGBA8_SRGB,
-            _ if is_float => PixelDescriptor::RGBAF32_LINEAR,
-            _ => PixelDescriptor::RGBA16_SRGB,
-        },
-        _ => PixelDescriptor::RGBA8_SRGB,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use alloc::vec;
@@ -1155,10 +1183,10 @@ mod tests {
     use super::*;
     use zencodec::decode::{Decode, DecodeJob, DecoderConfig};
     use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
-    use zenpixels::PixelBuffer;
+    use zenpixels::PixelBuf;
 
     /// Helper: encode via the zencodec trait flow.
-    fn encode_pixels(slice: PixelSlice<'_>) -> EncodeOutput {
+    fn encode_pixels(slice: PixelView<'_>) -> EncodeOutput {
         let config = TiffEncoderCodecConfig::new();
         config.job().encoder().unwrap().encode(slice).unwrap()
     }
@@ -1201,8 +1229,8 @@ mod tests {
         let w = 4u32;
         let h = 2u32;
         let pixels: Vec<u8> = (0..w * h * 3).map(|i| (i % 256) as u8).collect();
-        let buf = PixelBuffer::from_vec(pixels.clone(), w, h, PixelDescriptor::RGB8_SRGB).unwrap();
-        let slice = buf.as_slice();
+        let buf = PixelBuf::from_typed(pixels.clone(), w, h, PixelFormat::RGB8_SRGB).unwrap();
+        let slice = buf.as_view();
 
         let encoded = encode_pixels(slice);
         assert_eq!(encoded.format(), ImageFormat::Tiff);
@@ -1215,7 +1243,10 @@ mod tests {
 
         // Verify pixel data roundtrips
         let out_pixels = decoded.pixels();
-        assert_eq!(out_pixels.contiguous_bytes().as_ref(), &pixels[..]);
+        assert_eq!(
+            out_pixels.to_contiguous_bytes().unwrap().as_ref(),
+            &pixels[..]
+        );
     }
 
     #[test]
@@ -1223,14 +1254,17 @@ mod tests {
         let w = 3u32;
         let h = 3u32;
         let pixels: Vec<u8> = (0..w * h).map(|i| (i * 28 % 256) as u8).collect();
-        let buf = PixelBuffer::from_vec(pixels.clone(), w, h, PixelDescriptor::GRAY8_SRGB).unwrap();
-        let slice = buf.as_slice();
+        let buf = PixelBuf::from_typed(pixels.clone(), w, h, PixelFormat::GRAY8_SRGB).unwrap();
+        let slice = buf.as_view();
 
         let encoded = encode_pixels(slice);
         let decoded = decode_bytes(encoded.data());
         assert_eq!(decoded.width(), w);
         assert_eq!(decoded.height(), h);
-        assert_eq!(decoded.pixels().contiguous_bytes().as_ref(), &pixels[..]);
+        assert_eq!(
+            decoded.pixels().to_contiguous_bytes().unwrap().as_ref(),
+            &pixels[..]
+        );
     }
 
     #[test]
@@ -1239,8 +1273,8 @@ mod tests {
         let w = 2u32;
         let h = 2u32;
         let pixels = vec![255u8; (w * h * 4) as usize];
-        let buf = PixelBuffer::from_vec(pixels.clone(), w, h, PixelDescriptor::RGBA8_SRGB).unwrap();
-        let encoded = encode_pixels(buf.as_slice());
+        let buf = PixelBuf::from_typed(pixels.clone(), w, h, PixelFormat::RGBA8_SRGB).unwrap();
+        let encoded = encode_pixels(buf.as_view());
 
         let config = TiffDecoderCodecConfig::new();
         let job = config.job();
@@ -1256,8 +1290,8 @@ mod tests {
         let w = 2u32;
         let h = 2u32;
         let pixels = vec![128u8; (w * h * 3) as usize];
-        let buf = PixelBuffer::from_vec(pixels, w, h, PixelDescriptor::RGB8_SRGB).unwrap();
-        let encoded = encode_pixels(buf.as_slice());
+        let buf = PixelBuf::from_typed(pixels, w, h, PixelFormat::RGB8_SRGB).unwrap();
+        let encoded = encode_pixels(buf.as_view());
 
         let config = TiffDecoderCodecConfig::new();
         let job = config.job();
@@ -1294,14 +1328,14 @@ mod tests {
     fn encoder_config_traits() {
         assert_eq!(TiffEncoderCodecConfig::format(), ImageFormat::Tiff);
         assert!(TiffEncoderCodecConfig::capabilities().lossless());
-        assert!(!TiffEncoderCodecConfig::supported_descriptors().is_empty());
+        assert!(!TiffEncoderCodecConfig::supported_pixel_formats().is_empty());
     }
 
     #[test]
     fn decoder_config_traits() {
         assert_eq!(TiffDecoderCodecConfig::formats(), &[ImageFormat::Tiff]);
         assert!(TiffDecoderCodecConfig::capabilities().cheap_probe());
-        assert!(!TiffDecoderCodecConfig::supported_descriptors().is_empty());
+        assert!(!TiffDecoderCodecConfig::supported_pixel_formats().is_empty());
     }
 
     #[test]
@@ -1315,8 +1349,8 @@ mod tests {
         let w = 2u32;
         let h = 2u32;
         let pixels = vec![0u8; (w * h * 3) as usize];
-        let buf = PixelBuffer::from_vec(pixels, w, h, PixelDescriptor::RGB8_SRGB).unwrap();
-        let encoded = encode_pixels(buf.as_slice());
+        let buf = PixelBuf::from_typed(pixels, w, h, PixelFormat::RGB8_SRGB).unwrap();
+        let encoded = encode_pixels(buf.as_view());
         let decoded = decode_bytes(encoded.data());
         let details = decoded.source_encoding_details().unwrap();
         assert!(details.is_lossless());
@@ -1324,20 +1358,23 @@ mod tests {
     }
 
     #[test]
-    #[allow(deprecated)] // Exercises the legacy best-effort policy setter on purpose.
     fn decode_policy_suppresses_metadata() {
         // Encode a simple image
         let w = 2u32;
         let h = 2u32;
         let pixels = vec![0u8; (w * h * 3) as usize];
-        let buf = PixelBuffer::from_vec(pixels, w, h, PixelDescriptor::RGB8_SRGB).unwrap();
-        let encoded = encode_pixels(buf.as_slice());
+        let buf = PixelBuf::from_typed(pixels, w, h, PixelFormat::RGB8_SRGB).unwrap();
+        let encoded = encode_pixels(buf.as_view());
 
-        // Decode with strict policy — metadata should be suppressed
+        // Decode with metadata suppression policy
         let config = TiffDecoderCodecConfig::new();
-        let job = config.job().with_policy(DecodePolicy::strict());
+        let policy = DecodePolicy::none()
+            .with_allow_icc(false)
+            .with_allow_exif(false)
+            .with_allow_xmp(false);
+        let job = config.job().try_with_policy(policy).unwrap();
         let info = job.probe(encoded.data()).unwrap();
-        // ICC, EXIF, XMP should all be None with strict policy
+        // ICC, EXIF, XMP should all be None
         assert!(info.source_color.icc_profile.is_none());
         assert!(info.embedded_metadata.exif.is_none());
         assert!(info.embedded_metadata.xmp.is_none());

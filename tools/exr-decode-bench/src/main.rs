@@ -365,11 +365,11 @@ fn exr_f32_rgb(bytes: &[u8], parallel: bool) -> BoxResult<Vec<f32>> {
         .1)
 }
 
-/// zenexr as shipped: single-threaded, RGB(A) f32 `PixelBuffer`.
+/// zenexr as shipped: single-threaded, RGB(A) f32 `PixelBuf`.
 fn zenexr_f32_rgb(bytes: &[u8]) -> BoxResult<Vec<f32>> {
     let image = zenexr::ExrDecoderConfig::new().decode(bytes, &Unstoppable)?;
     let pixels = image.pixels();
-    let view = pixels.as_slice();
+    let view = pixels.as_view();
     let mut out = Vec::with_capacity(pixels.width() as usize * pixels.height() as usize * 3);
     for y in 0..pixels.height() {
         out.extend(

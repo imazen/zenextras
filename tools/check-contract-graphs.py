@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check independently resolved root/fuzz graphs for one shared contract family.
+"""Check independently resolved workspace, fuzz and benchmark graphs for the pinned contract families.
 
 Run in an isolated export (outside workspace path overrides) through run-heavy.
 Resolution preserves existing lock selections where constraints permit. Keep the
@@ -10,14 +10,19 @@ import json
 from pathlib import Path
 import shutil
 import subprocess
-import tomllib
 
-CORE = "f02a17ec6001a9efcad1267f92a3ea928ed06e57"
-PIXELS = "283655c5424e0ad7ebc6d2acd94670fac1e29158"
+CORE = "093211c276fbb1781bec1601d7cb6b0fb92f245a"
+PIXELS = "e0dba0052a839ecfe17e4c911a3761e793605adf"
 FAMILY = {"zencodec", "zencodec-testkit", "zencodec-io", "zencodec-media",
           "zencodec-media-testkit", "zencodec-coroutine", "zenmeta"}
 PIXEL_FAMILY = {"zenpixels", "zenpixels-convert"}
-GRAPHS = [".", "zentiff/fuzz", "zenpdf/fuzz", "zensvg/fuzz", "zenjp2/fuzz", "zenexr/fuzz"]
+COHORT = {
+    "zenjpeg": "0714703dfe94cb20f2bbd84b10a9aab5949782a6",
+    "ultrahdr-core": "a9e3eabc0884b03d2d0ef22627b1b41c03b09589",
+    "zenpng": "1dd8248fa6683d5c3e22eb946a97b1f93996371a",
+    "zenwebp": "3e55db7e5d303fad40ecb14ca396e021397d0230",
+}
+GRAPHS = [".", "zentiff/fuzz", "zenpdf/fuzz", "zensvg/fuzz", "zenjp2/fuzz", "zenexr/fuzz", "tools/exr-decode-bench"]
 
 
 def main():
@@ -35,18 +40,6 @@ def main():
         lock = root / directory / "Cargo.lock"
         if lock.exists():
             shutil.copyfile(lock, out / "before.lock")
-        # Explicitly unlock the paired pixels family; Cargo otherwise retains
-        # the registry 0.2.16 selection even though the new core needs 0.2.17.
-        if lock.exists():
-            names = {p["name"] for p in tomllib.loads(lock.read_text())["package"]}
-            selected = sorted(names & PIXEL_FAMILY)
-            if selected:
-                update = ["cargo", "update", "--manifest-path", str(root / directory / "Cargo.toml")]
-                for crate in selected:
-                    update += ["-p", crate]
-                with (out / "paired-update.log").open("w") as log:
-                    subprocess.run(update, cwd=root / directory, stdout=log, stderr=log,
-                                   check=True, timeout=600)
         command = ["cargo", "metadata", "--all-features", "--format-version", "1",
                    "--manifest-path", str(root / directory / "Cargo.toml")]
         with (out / "metadata.json").open("w") as stdout, (out / "resolution.log").open("w") as stderr:
@@ -56,18 +49,18 @@ def main():
         packages = json.loads((out / "metadata.json").read_text())["packages"]
         shared = {}
         for package in packages:
-            if package["name"] in FAMILY | PIXEL_FAMILY | {"how-far"}:
+            if package["name"] in FAMILY | PIXEL_FAMILY | COHORT.keys() | {"how-far"}:
                 shared.setdefault(package["name"], []).append({
                     "version": package["version"], "source": package["source"]})
         for crate, entries in shared.items():
-            if len(entries) != 1:
-                raise RuntimeError(f"{directory}: duplicate {crate}: {entries}")
-            expected = CORE if crate in FAMILY else PIXELS if crate in PIXEL_FAMILY else None
-            if expected and not (entries[0]["source"] or "").endswith("#" + expected):
+            expected = CORE if crate in FAMILY else PIXELS if crate in PIXEL_FAMILY else COHORT.get(crate)
+            if len(entries) != 1 or (
+                expected and not (entries[0]["source"] or "").endswith("#" + expected)
+            ):
                 raise RuntimeError(f"{directory}: unexpected source for {crate}: {entries}")
         results.append({"graph": directory, "shared": shared})
         (receipts / "graphs.json").write_text(json.dumps(results, indent=2) + "\n")
-        print(f"{directory}: one source for each of {len(shared)} present shared crates", flush=True)
+        print(f"{directory}: verified sources for {len(shared)} shared crate names", flush=True)
 
 
 if __name__ == "__main__":

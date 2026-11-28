@@ -4,7 +4,7 @@
 
 - Pure Rust PDF renderer built on [hayro](https://crates.io/crates/hayro) 0.7
 - `#![forbid(unsafe_code)]`, edition 2024, MSRV 1.93
-- Renders PDF pages to `PixelBuffer<Rgba<u8>>` (straight-alpha sRGB RGBA8)
+- Renders PDF pages to `PixelBuf` (straight-alpha sRGB RGBA8)
 - Direct API: `render_page`, `render_pages` with `PdfConfig` and `RenderLimits`
 - zencodec integration: `PdfDecoderConfig` implements `DecoderConfig` trait
 

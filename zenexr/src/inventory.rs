@@ -996,16 +996,22 @@ fn role(a: &Attr, superseded_by: Option<u64>, tiled: bool, single_tiled: bool) -
             "a negative width rejects the file; the width reaches only the native \
              ExrImage::header()",
         ),
-        Slot::Std(n) if n == names::CHROMATICITIES => Role {
-            attr: Disposition::Metadata(MetadataKind::Colour),
-            name: Disposition::Metadata(MetadataKind::Colour),
-            ty: S,
-            value: DROPPED,
-            note: Cow::Borrowed(
-                "presence tags the pixels ColorPrimaries::Unknown; the primaries themselves \
-                 reach only the native ExrImage::header() (zenexr converts nothing)",
-            ),
-        },
+        Slot::Std(n) if n == names::CHROMATICITIES || n == names::WHITE_LUMINANCE => {
+            let colour = Disposition::Metadata(MetadataKind::Colour);
+            Role {
+                attr: colour,
+                name: colour,
+                ty: S,
+                value: colour,
+                note: Cow::Borrowed(if n == names::CHROMATICITIES {
+                    "populates the decoded RGB primaries; validity only when the coordinates \
+                     cannot be represented in the pixel spec"
+                } else {
+                    "sets the decoded diffuse white; validity only when luminance is \
+                     non-finite or non-positive"
+                }),
+            }
+        }
         Slot::Std(n) if n == names::PREVIEW => Role {
             attr: SKIPPED,
             name: SKIPPED,

@@ -15,10 +15,13 @@ zenbench::main!(|suite| {
         let data: &'static [u8] = Box::leak(data.into_boxed_slice());
         let check =
             zentiff::decode(data, &zentiff::TiffDecodeConfig::default(), &Unstoppable).unwrap();
-        assert_eq!(check.pixels.as_contiguous_bytes().unwrap(), pixels);
+        assert_eq!(
+            check.pixels.as_view().as_contiguous_bytes().unwrap(),
+            pixels
+        );
         let decoded = check.pixels;
         let encoded = zentiff::encode(
-            &decoded.as_slice(),
+            &decoded.as_view(),
             &zentiff::TiffEncodeConfig::default(),
             &Unstoppable,
         )
@@ -29,7 +32,10 @@ zenbench::main!(|suite| {
             &Unstoppable,
         )
         .unwrap();
-        assert_eq!(roundtrip.pixels.as_contiguous_bytes().unwrap(), pixels);
+        assert_eq!(
+            roundtrip.pixels.as_view().as_contiguous_bytes().unwrap(),
+            pixels
+        );
         suite.compare(format!("tiff/decode/{side}"), move |g| {
             g.throughput(Throughput::Elements(u64::from(side) * u64::from(side)));
             g.bench("uncompressed_rgb8", move |b| {
@@ -44,7 +50,7 @@ zenbench::main!(|suite| {
             g.bench("default_lzw_rgb8", move |b| {
                 b.iter(|| {
                     zentiff::encode(
-                        &decoded.as_slice(),
+                        &decoded.as_view(),
                         &zentiff::TiffEncodeConfig::default(),
                         &Unstoppable,
                     )

@@ -89,6 +89,13 @@ pub(crate) struct Children<'a> {
     rest: &'a [u8],
 }
 
+impl Children<'_> {
+    /// Whether no bytes remain in this master element's body.
+    pub(crate) fn is_empty(&self) -> bool {
+        self.rest.is_empty()
+    }
+}
+
 impl<'a> Iterator for Children<'a> {
     type Item = Result<(u32, &'a [u8]), WebmError>;
 
@@ -278,6 +285,41 @@ pub(crate) fn put_int(out: &mut Vec<u8>, id: u32, v: i64) {
         skip += 1;
     }
     put(out, id, &b[skip..]);
+}
+
+/// Exact byte length of an element ID written by [`put_id`].
+pub(crate) const fn id_len(id: u32) -> usize {
+    let n = 4 - (id.leading_zeros() as usize / 8);
+    if n == 0 { 1 } else { n }
+}
+
+/// Exact byte length of a VINT size written by [`put_size`].
+pub(crate) const fn size_len(size: u64) -> usize {
+    let mut len = 1;
+    while len < MAX_SIZE_LEN && size >= (1u64 << (7 * len)) - 1 {
+        len += 1;
+    }
+    len
+}
+
+/// Exact byte length of an element written by [`put`], or `None` on `usize` overflow.
+pub(crate) const fn elem_len(id: u32, payload_len: usize) -> Option<usize> {
+    let Some(hdr) = id_len(id).checked_add(size_len(payload_len as u64)) else {
+        return None;
+    };
+    hdr.checked_add(payload_len)
+}
+
+/// Exact byte length of an unsigned-integer element written by [`put_uint`].
+pub(crate) const fn uint_len(id: u32, v: u64) -> usize {
+    let skip = v.leading_zeros() as usize / 8;
+    let payload_len = 8 - if skip > 7 { 7 } else { skip };
+    id_len(id) + size_len(payload_len as u64) + payload_len
+}
+
+/// Exact byte length of an 8-byte float element written by [`put_float`].
+pub(crate) const fn float_len(id: u32) -> usize {
+    id_len(id) + size_len(8) + 8
 }
 
 /// Append an 8-byte float element.

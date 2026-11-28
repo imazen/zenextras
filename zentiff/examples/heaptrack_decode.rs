@@ -1,7 +1,7 @@
 //! Heaptrack harness for TIFF decode-from-bytes allocation profiling.
 //!
 //! Profiles the production-critical path: `zentiff::decode(&bytes, &config, cancel)`
-//! — decoding a TIFF file (untrusted input) all the way to a `PixelBuffer`, via the
+//! — decoding a TIFF file (untrusted input) all the way to a `PixelBuf`, via the
 //! underlying image-tiff strip decoder. The goal is to surface allocation
 //! *pathologies* that don't show up in a wall-clock benchmark: a high allocation
 //! *count* relative to image size, per-pixel or per-strip mallocs, large transient
@@ -12,7 +12,7 @@
 //!
 //! NOTE: the TIFF parse + strip decode is done by the third-party `image-tiff`
 //! crate; zentiff owns the config/limits, the panic-isolation wrapper, and the
-//! conversion into a zenpixels `PixelBuffer`. The report below notes which
+//! conversion into a zenpixels `PixelBuf`. The report below notes which
 //! allocations originate in image-tiff vs. zentiff.
 //!
 //! Usage:
@@ -107,7 +107,7 @@ fn main() {
         });
         total_pixels += u64::from(out.pixels.width()) * u64::from(out.pixels.height());
         // Consume the decoded buffer so the optimizer can't elide the decode or the
-        // allocation of the output PixelBuffer.
+        // allocation of the output PixelBuf.
         black_box(out.pixels.width());
         black_box(out.pixels.height());
         black_box(&out.pixels);

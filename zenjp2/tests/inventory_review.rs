@@ -28,7 +28,7 @@ fn decode(data: &[u8]) -> Result<zencodec::decode::DecodeOutput, String> {
 
 fn rows(out: &zencodec::decode::DecodeOutput) -> Vec<u8> {
     let px = out.pixels();
-    (0..px.rows()).flat_map(|y| px.row(y).to_vec()).collect()
+    (0..px.height()).flat_map(|y| px.row(y).to_vec()).collect()
 }
 
 fn bx(ty: &[u8; 4], payload: &[u8]) -> Vec<u8> {

@@ -4,7 +4,7 @@ use std::borrow::Cow;
 use std::io::Write;
 use zencodec::decode::{Decode, DecodeJob, DecodePolicy, DecoderConfig};
 use zencodec::inventory::{Disposition, Inventory, MetadataKind, PartTag};
-use zenpixels::PixelDescriptor;
+use zenpixels::PixelFormat;
 use zenpsd::{ColorMode, Compression, PsdDecoderConfig, ResolutionUnit, Version, decode, probe};
 
 fn inventory_of(data: &[u8]) -> Inventory {
@@ -93,8 +93,8 @@ fn decode_all_color_modes_and_depths() {
     let psd_bitmap = build_psd(1, 1, 10, 2, 1, 0, &[], &[], &[], 0, &bitmap_planes);
     let dec = decode(&psd_bitmap).unwrap();
     assert_eq!(dec.header().color_mode, ColorMode::Bitmap);
-    assert_eq!(dec.pixels().descriptor(), PixelDescriptor::GRAY8_SRGB);
-    let slice = dec.pixels().as_slice();
+    assert_eq!(dec.pixels().format().clone(), PixelFormat::GRAY8_SRGB);
+    let slice = dec.pixels().as_view();
     let row0 = slice.row(0);
     // In PSD Bitmap mode: 0 = white (255), 1 = black (0)
     assert_eq!(&row0[..4], &[0, 255, 0, 255]);
@@ -102,13 +102,13 @@ fn decode_all_color_modes_and_depths() {
     // 2. Grayscale 8-bit, 16-bit, 32-bit + Alpha
     let gray8 = build_psd(1, 1, 2, 2, 8, 1, &[], &[], &[], 0, &[10, 20, 30, 40]);
     let dec_g8 = decode(&gray8).unwrap();
-    assert_eq!(dec_g8.pixels().descriptor(), PixelDescriptor::GRAY8_SRGB);
-    assert_eq!(dec_g8.pixels().as_slice().row(0), &[10, 20]);
+    assert_eq!(dec_g8.pixels().format().clone(), PixelFormat::GRAY8_SRGB);
+    assert_eq!(dec_g8.pixels().as_view().row(0), &[10, 20]);
 
     let gray8a = build_psd(1, 2, 2, 1, 8, 1, &[], &[], &[], 0, &[10, 20, 200, 255]);
     let dec_g8a = decode(&gray8a).unwrap();
-    assert_eq!(dec_g8a.pixels().descriptor(), PixelDescriptor::GRAYA8_SRGB);
-    assert_eq!(dec_g8a.pixels().as_slice().row(0), &[10, 200, 20, 255]);
+    assert_eq!(dec_g8a.pixels().format().clone(), PixelFormat::GRAYA8_SRGB);
+    assert_eq!(dec_g8a.pixels().as_view().row(0), &[10, 200, 20, 255]);
 
     let mut gray16_planes = Vec::new();
     for v in [1000u16, 2000, 3000, 4000] {
@@ -116,9 +116,9 @@ fn decode_all_color_modes_and_depths() {
     }
     let gray16 = build_psd(1, 1, 2, 2, 16, 1, &[], &[], &[], 0, &gray16_planes);
     let dec_g16 = decode(&gray16).unwrap();
-    assert_eq!(dec_g16.pixels().descriptor(), PixelDescriptor::GRAY16_SRGB);
+    assert_eq!(dec_g16.pixels().format().clone(), PixelFormat::GRAY16_SRGB);
     assert_eq!(
-        dec_g16.pixels().as_slice().row(0),
+        dec_g16.pixels().as_view().row(0),
         &[1000u16.to_ne_bytes(), 2000u16.to_ne_bytes()].concat()
     );
 
@@ -129,16 +129,16 @@ fn decode_all_color_modes_and_depths() {
     let gray32 = build_psd(1, 1, 2, 2, 32, 1, &[], &[], &[], 0, &gray32_planes);
     let dec_g32 = decode(&gray32).unwrap();
     assert_eq!(
-        dec_g32.pixels().descriptor(),
-        PixelDescriptor::GRAYF32_LINEAR
+        dec_g32.pixels().format().clone(),
+        PixelFormat::GRAYF32_LINEAR
     );
 
     // 3. Duotone 8-bit (treated as Grayscale per spec)
     let duotone = build_psd(1, 1, 2, 1, 8, 8, &[0u8; 20], &[], &[], 0, &[55, 66]);
     let dec_duo = decode(&duotone).unwrap();
     assert_eq!(dec_duo.header().color_mode, ColorMode::Duotone);
-    assert_eq!(dec_duo.pixels().descriptor(), PixelDescriptor::GRAY8_SRGB);
-    assert_eq!(dec_duo.pixels().as_slice().row(0), &[55, 66]);
+    assert_eq!(dec_duo.pixels().format().clone(), PixelFormat::GRAY8_SRGB);
+    assert_eq!(dec_duo.pixels().as_view().row(0), &[55, 66]);
 
     // 4. Indexed 8-bit without and with TransparencyIndex (0x0417)
     let mut palette = vec![0u8; 768];
@@ -150,18 +150,15 @@ fn decode_all_color_modes_and_depths() {
     palette[513] = 66;
     let idx_rgb = build_psd(1, 1, 2, 1, 8, 2, &palette, &[], &[], 0, &[0, 1]);
     let dec_idx = decode(&idx_rgb).unwrap();
-    assert_eq!(dec_idx.pixels().descriptor(), PixelDescriptor::RGB8_SRGB);
-    assert_eq!(
-        dec_idx.pixels().as_slice().row(0),
-        &[11, 22, 33, 44, 55, 66]
-    );
+    assert_eq!(dec_idx.pixels().format().clone(), PixelFormat::RGB8_SRGB);
+    assert_eq!(dec_idx.pixels().as_view().row(0), &[11, 22, 33, 44, 55, 66]);
 
     let trans_res = build_resource_block(b"8BIM", 0x0417, b"", &1u16.to_be_bytes());
     let idx_rgba = build_psd(1, 1, 2, 1, 8, 2, &palette, &trans_res, &[], 0, &[0, 1]);
     let dec_idx_a = decode(&idx_rgba).unwrap();
-    assert_eq!(dec_idx_a.pixels().descriptor(), PixelDescriptor::RGBA8_SRGB);
+    assert_eq!(dec_idx_a.pixels().format().clone(), PixelFormat::RGBA8_SRGB);
     assert_eq!(
-        dec_idx_a.pixels().as_slice().row(0),
+        dec_idx_a.pixels().as_view().row(0),
         &[11, 22, 33, 255, 44, 55, 66, 0]
     );
 
@@ -180,17 +177,17 @@ fn decode_all_color_modes_and_depths() {
         &[10, 20, 30, 40, 50, 60, 128, 255],
     );
     let dec_rgba8 = decode(&rgba8).unwrap();
-    assert_eq!(dec_rgba8.pixels().descriptor(), PixelDescriptor::RGBA8_SRGB);
+    assert_eq!(dec_rgba8.pixels().format().clone(), PixelFormat::RGBA8_SRGB);
     assert_eq!(
-        dec_rgba8.pixels().as_slice().row(0),
+        dec_rgba8.pixels().as_view().row(0),
         &[10, 30, 50, 128, 20, 40, 60, 255]
     );
 
     // 6. CMYK 8-bit and 16-bit (Photoshop convention: 0 = full ink, 255 = no ink)
     let cmyk8 = build_psd(1, 4, 1, 1, 8, 4, &[], &[], &[], 0, &[255, 255, 255, 255]);
     let dec_cmyk8 = decode(&cmyk8).unwrap();
-    assert_eq!(dec_cmyk8.pixels().descriptor(), PixelDescriptor::RGB8_SRGB);
-    assert_eq!(dec_cmyk8.pixels().as_slice().row(0), &[255, 255, 255]);
+    assert_eq!(dec_cmyk8.pixels().format().clone(), PixelFormat::RGB8_SRGB);
+    assert_eq!(dec_cmyk8.pixels().as_view().row(0), &[255, 255, 255]);
 
     // CMYK + Alpha 16-bit
     let mut cmyka16_planes = Vec::new();
@@ -200,8 +197,8 @@ fn decode_all_color_modes_and_depths() {
     let cmyka16 = build_psd(1, 5, 1, 1, 16, 4, &[], &[], &[], 0, &cmyka16_planes);
     let dec_cmyka16 = decode(&cmyka16).unwrap();
     assert_eq!(
-        dec_cmyka16.pixels().descriptor(),
-        PixelDescriptor::RGBA16_SRGB
+        dec_cmyka16.pixels().format().clone(),
+        PixelFormat::RGBA16_SRGB
     );
 }
 
@@ -247,11 +244,11 @@ fn compressions_rle_zip_and_zip_prediction_for_psd_and_psb() {
     assert_eq!(dec_psb.header().version, Version::Psb);
     assert_eq!(dec_psb.info().compression, Compression::Rle);
     assert_eq!(
-        dec_psb.pixels().as_slice().row(0),
+        dec_psb.pixels().as_view().row(0),
         &[10, 11, 12, 20, 21, 22, 30, 31, 32]
     );
     assert_eq!(
-        dec_psb.pixels().as_slice().row(1),
+        dec_psb.pixels().as_view().row(1),
         &[40, 41, 42, 50, 51, 52, 60, 61, 62]
     );
 
@@ -261,7 +258,7 @@ fn compressions_rle_zip_and_zip_prediction_for_psd_and_psb() {
     let psd_zip = build_psd(1, 3, 2, 2, 8, 3, &[], &[], &[], 2, &zip_body);
     let dec_zip = decode(&psd_zip).unwrap();
     assert_eq!(dec_zip.info().compression, Compression::Zip);
-    assert_eq!(dec_zip.pixels().as_slice().row(0), &[1, 5, 9, 2, 6, 10]);
+    assert_eq!(dec_zip.pixels().as_view().row(0), &[1, 5, 9, 2, 6, 10]);
 
     // 3. ZIP with prediction (compression = 3) for 8-bit, 16-bit, and 32-bit
     // 8-bit delta: row [10, 15, 25] -> deltas [10, 5, 10]
@@ -280,7 +277,7 @@ fn compressions_rle_zip_and_zip_prediction_for_psd_and_psb() {
         &zlib_compress(&pred8_planes),
     );
     let dec_pred8 = decode(&psd_pred8).unwrap();
-    assert_eq!(dec_pred8.pixels().as_slice().row(0), &[10, 15, 25]);
+    assert_eq!(dec_pred8.pixels().as_view().row(0), &[10, 15, 25]);
 
     // 16-bit delta: values [0x0100, 0x0105, 0x0205] -> deltas [0x0100, 0x0005, 0x0100]
     let mut pred16_planes = Vec::new();
@@ -302,7 +299,7 @@ fn compressions_rle_zip_and_zip_prediction_for_psd_and_psb() {
     );
     let dec_pred16 = decode(&psd_pred16).unwrap();
     assert_eq!(
-        dec_pred16.pixels().as_slice().row(0),
+        dec_pred16.pixels().as_view().row(0),
         &[
             0x0100u16.to_ne_bytes(),
             0x0105u16.to_ne_bytes(),
@@ -336,7 +333,7 @@ fn compressions_rle_zip_and_zip_prediction_for_psd_and_psb() {
     );
     let dec_pred32 = decode(&psd_pred32).unwrap();
     assert_eq!(
-        dec_pred32.pixels().as_slice().row(0),
+        dec_pred32.pixels().as_view().row(0),
         &[0.25f32.to_ne_bytes(), 0.75f32.to_ne_bytes()].concat()
     );
 }
@@ -402,7 +399,8 @@ fn metadata_extraction_and_version_info_handling() {
     // Strict DecodePolicy rejects has_real_merged_data = false
     let res_strict = PsdDecoderConfig::new()
         .job()
-        .with_policy(DecodePolicy::default().with_strict(true))
+        .try_with_policy(DecodePolicy::default().with_strict(true))
+        .unwrap()
         .decoder(Cow::Borrowed(psd.as_slice()), &[])
         .and_then(|d| d.decode());
     assert!(res_strict.is_err());
@@ -456,12 +454,12 @@ fn mutating_dropped_layer_and_resource_parts_preserves_pixels() {
             }
             let got = decode(&m).unwrap();
             assert_eq!(
-                got.pixels().as_slice().row(0),
-                base.pixels().as_slice().row(0)
+                got.pixels().as_view().row(0),
+                base.pixels().as_view().row(0)
             );
             assert_eq!(
-                got.pixels().as_slice().row(1),
-                base.pixels().as_slice().row(1)
+                got.pixels().as_view().row(1),
+                base.pixels().as_view().row(1)
             );
             mutated_count += 1;
         }

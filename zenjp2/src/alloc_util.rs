@@ -1,28 +1,7 @@
 //! Allocation helpers honoring an [`AllocPref`] policy per call site.
 //!
-//! A JPEG 2000 decode in this crate has an unusual allocation profile: the
-//! single large, untrusted-sized buffer — the full output pixel plane sized
-//! from the codestream's `SIZ` dimensions — is allocated **inside**
-//! [`hayro_jpeg2000`] during [`Image::decode`](hayro_jpeg2000::Image::decode),
-//! which zenjp2 does not own and cannot route through a `try_reserve`. zenjp2
-//! itself performs no width × height-sized Rust allocation in the decode path;
-//! it merely wraps the `Vec<u8>` hayro returns in a [`PixelBuffer`]. There is
-//! therefore no zenjp2-owned untrusted decode allocation for [`AllocPref`] to
-//! convert (see the crate docs and the rollout brief's escape clause).
-//!
-//! This module still exists for two reasons:
-//!
-//! * **Boundary symmetry** — the [`codec`](crate::codec) module lowers
-//!   `zencodec::AllocPreference` into the crate-local [`AllocPref`] at the
-//!   decode boundary and threads it onto the internal decode config, so the
-//!   plumbing matches the sibling codecs (zentiff, zenpng) even though zenjp2
-//!   has no site to apply it to today. If a future zenjp2-owned post-process
-//!   buffer is added (e.g. a CMYK→RGB expansion the crate performs itself), it
-//!   has a ready, tested helper to honor the preference.
-//! * **A tested, verbatim copy of the 3-mode resolution logic** — the same
-//!   `resolve_fallible` / `alloc_zeroed` / `vec_with_capacity` contract the
-//!   other zen codecs ship, with the same unit tests, so the policy semantics
-//!   are identical across the ecosystem.
+//! Hayro allocates decoded component planes internally. The adapter owns
+//! the interleaved output and applies the selected policy to that allocation.
 //!
 //! [`AllocPref`] is the crate-local mirror of
 //! [`zencodec::AllocPreference`](https://docs.rs/zencodec): a **3-mode,
@@ -33,8 +12,6 @@
 //! `zencodec` dependency (the conversion lives behind the `zencodec` feature in
 //! [`codec`](crate::codec)).
 //!
-//! [`PixelBuffer`]: zenpixels::PixelBuffer
-//! [`Image::decode`]: hayro_jpeg2000::Image::decode
 
 use alloc::vec::Vec;
 
@@ -52,11 +29,7 @@ use crate::error::Jp2Error;
 ///
 /// The non-default variants are only *constructed* by the `zencodec`-gated
 /// boundary (or the unit tests); without that feature nothing produces them, so
-/// suppress the otherwise-expected dead-code warning in that build only. The
-/// `alloc_zeroed` / `vec_with_capacity` helpers are likewise unused on the
-/// current decode path (the output buffer is hayro-owned) — they are the
-/// tested template for any future zenjp2-owned post-process allocation, so they
-/// carry an `allow(dead_code)`.
+/// suppress the otherwise-expected dead-code warning in that build only.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[cfg_attr(not(feature = "zencodec"), allow(dead_code))]
 pub(crate) enum AllocPref {
@@ -97,7 +70,7 @@ pub(crate) fn resolve_fallible(pref: AllocPref, site_default_fallible: bool) -> 
 ///   [`Jp2Error::OutOfMemory`](crate::error::Jp2Error::OutOfMemory) on
 ///   allocation failure.
 /// * infallible → `vec![0u8; n]` (single `calloc`, aborts on OOM).
-#[allow(dead_code)] // tested template; no zenjp2-owned zeroed decode site yet
+#[cfg_attr(not(feature = "zencodec"), allow(dead_code))]
 pub(crate) fn alloc_zeroed(
     pref: AllocPref,
     site_default_fallible: bool,
@@ -127,7 +100,7 @@ pub(crate) fn alloc_zeroed(
 /// * infallible → `Vec::with_capacity(cap)` (aborts on OOM).
 ///
 /// The returned `Vec` is empty (length 0); the caller fills it.
-#[allow(dead_code)] // tested template; no zenjp2-owned capacity decode site yet
+#[cfg_attr(not(feature = "zencodec"), allow(dead_code))]
 pub(crate) fn vec_with_capacity<T>(
     pref: AllocPref,
     site_default_fallible: bool,

@@ -65,6 +65,14 @@ fn icc_profile_extraction() {
 
     let output = decode(&data, &TiffDecodeConfig::default(), &Unstoppable).unwrap();
     assert_eq!(output.info.icc_profile.as_deref(), Some(&fake_icc[..]));
+    assert_eq!(output.pixels.origin().icc.as_deref(), Some(&fake_icc[..]));
+    assert!(matches!(
+        output.pixels.format().color,
+        zenpixels::ColorSpace::Rgb {
+            transfer: zenpixels::Transfer::Unknown,
+            ..
+        }
+    ));
 }
 
 // ---- Resolution / DPI ----

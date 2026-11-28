@@ -120,7 +120,7 @@ fn render_bytes(data: &[u8]) -> Result<Vec<u8>, String> {
         .job()
         .decoder(std::borrow::Cow::Borrowed(data), &[])
         .and_then(|d| d.decode())
-        .map(|o| o.pixels().contiguous_bytes().into_owned())
+        .map(|o| o.pixels().to_contiguous_bytes().unwrap().into_owned())
         .map_err(|e| e.to_string())
 }
 
@@ -489,7 +489,7 @@ fn elements_usvg_never_draws_are_dropped() {
         .unwrap()
         .decode()
         .unwrap();
-    let px = out.pixels().contiguous_bytes().into_owned();
+    let px = out.pixels().to_contiguous_bytes().unwrap().into_owned();
     // Pixel (7, 7) is outside every shape that is drawn.
     let at = (7 * 8 + 7) * 4;
     assert_eq!(&px[at..at + 4], &[0, 0, 0, 0]);

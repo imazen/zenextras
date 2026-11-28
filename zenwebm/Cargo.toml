@@ -13,12 +13,12 @@ include = ["/src/**", "/README.md", "/CHANGELOG.md", "/LICENSE*"]
 publish = false
 
 [dependencies]
-zencodec = { version = ">=0.2.0, <0.4.0", default-features = false }
-zencodec-media = { version = "0.1.0" }
+zencodec = { version = ">=0.3.0, <0.5.0", default-features = false }
+zencodec-media = { version = "0.2.0" }
 
 [dev-dependencies]
-zencodec-media-testkit = { version = "0.1.0" }
-zencodec-io = { version = "0.1.0" }
+zencodec-media-testkit = { version = "0.2.0" }
+zencodec-io = { version = "0.2.0" }
 
 [lints.rust]
 unsafe_code = "forbid"

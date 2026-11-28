@@ -1,5 +1,5 @@
 //! The job's pulse governs an SVG render, however it reaches the job: a pulse
-//! that cannot report, one that can, the legacy `with_stop`, and the
+//! that cannot report, one that can, and the
 //! type-erased job's `set_pulse`.
 //! - A stop raised before the render refuses it, with its reason.
 //! - A one-shot stop at any later poll, including the poll between parsing the
@@ -9,7 +9,6 @@
 //!   polling, so a render at 100 times the pixels polls exactly as often. A
 //!   stop raised while resvg draws is seen once the draw returns.
 //! - An unstopped pulse leaves the pixels byte-identical to the native renderer's.
-#![allow(deprecated)] // The legacy `with_stop` arm, on purpose.
 
 use std::borrow::Cow;
 use std::sync::Arc;
@@ -97,20 +96,18 @@ enum Arm {
     Quiet,
     /// `with_pulse`, with a pulse that can report.
     Reporting,
-    /// The deprecated `with_stop`.
-    Legacy,
     /// `set_pulse` on the type-erased job.
     Erased,
 }
 
-const ARMS: [Arm; 4] = [Arm::Quiet, Arm::Reporting, Arm::Legacy, Arm::Erased];
+const ARMS: [Arm; 3] = [Arm::Quiet, Arm::Reporting, Arm::Erased];
 
 type Image = (u32, u32, Vec<u8>);
 
 fn image(output: &zencodec::decode::DecodeOutput) -> Image {
     let px = output.pixels();
-    let bytes = (0..px.rows()).flat_map(|y| px.row(y).to_vec()).collect();
-    (px.width(), px.rows(), bytes)
+    let bytes = (0..px.height()).flat_map(|y| px.row(y).to_vec()).collect();
+    (px.width(), px.height(), bytes)
 }
 
 /// Renders the fixture with `stop` installed through `arm`.
@@ -133,7 +130,7 @@ fn decode_with(config: SvgDecoderConfig, arm: Arm, stop: AtPoll) -> Result<Image
     let job = match arm {
         Arm::Quiet => job.with_pulse(SharedPulse::new(StopOnly::new(stop))),
         Arm::Reporting => job.with_pulse(SharedPulse::new(Reporting(stop))),
-        _ => job.with_stop(zencodec::StopToken::new(stop)),
+        Arm::Erased => unreachable!(),
     };
     job.decoder(Cow::Borrowed(SVG), &[])
         .and_then(|d| d.decode())
